@@ -575,6 +575,17 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .settings-content .setting-panel h2 { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
 .settings-content .segmented { background: #f8f7f4; }
 .settings-content .interval-preview div { background: #fbfaf8; }
+.appearance-setting-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-top: 22px; padding: 16px 0; border-top: 1px solid var(--line); }
+.appearance-setting-row strong, .appearance-setting-row span { display: block; }
+.appearance-setting-row strong { color: #34413b; font-size: 13px; }
+.appearance-setting-row span { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.switch-control { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; }
+.switch-control input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.switch-control > span { position: relative; display: block; width: 44px; height: 24px; border-radius: 999px; background: #d9ded9; cursor: pointer; transition: background .18s ease, box-shadow .18s ease; }
+.switch-control > span::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(37, 55, 46, .16); transition: transform .18s ease; }
+.switch-control input:checked + span { background: var(--green); box-shadow: 0 0 0 3px rgba(47, 125, 100, .12); }
+.switch-control input:checked + span::after { transform: translateX(20px); }
+.switch-control input:focus-visible + span { outline: 2px solid #78b69a; outline-offset: 3px; }
 .tree-folder-row .folder-glyph, .tree-doc-row .doc-glyph { color: #78958a; }
 .heatmap .heat-cell { outline: none; }
 .heatmap .heat-cell:focus-visible { box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--green); }
@@ -760,13 +771,14 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .group-dot.all { background: var(--green); }
 .rail-section-foot { margin: 18px 10px 0; padding-top: 12px; border-top: 1px solid var(--line); color: #aaa59d; font-size: 11px; }
 .card-manager { min-width: 0; padding: 18px 22px 34px; border-top: 0; background: #fbfaf8; overflow: auto; }
-.card-manager-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.card-manager-head { position: sticky; top: -18px; z-index: 8; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -18px -22px 14px; padding: 18px 22px 14px; border-bottom: 1px solid rgba(223, 217, 208, .85); background: rgba(251, 250, 248, .96); backdrop-filter: blur(12px); }
 .card-manager-head strong { display: inline-block; margin-right: 8px; color: #34413b; font-size: 16px; }
 .card-manager-head > div > span { color: var(--muted); font-size: 12px; }
 .manager-actions { display: flex; gap: 8px; }
 .manager-actions button svg, .ghost-button svg, .image-insert-button svg, .card-item-actions svg { width: 15px; height: 15px; }
 .card-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 0 0 20px; }
 .card-item { min-height: 166px; display: flex; flex-direction: column; gap: 10px; padding: 15px 16px; border: 1px solid var(--line); border-radius: 11px; background: #fff; box-shadow: 0 8px 22px rgba(37,34,30,.03); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
+.card-item-content { position: relative; min-height: 0; flex: 1; padding-right: 0; }
 .card-item { position: relative; }
 .card-item.bulk-selected { border-color: #78b69a; box-shadow: 0 0 0 3px rgba(47,125,100,.1); }
 .card-select { display: none; }
@@ -782,11 +794,14 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .card-item.drag-over, .sortable-group-row.drag-over { border-color: var(--green); box-shadow: 0 0 0 3px rgba(47,125,100,.12); }
 .sortable-group-row { cursor: grab; }
 .card-item-head, .card-item-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.card-item-foot { position: relative; min-height: 32px; padding-right: 72px; }
 .card-item h3 { margin: 0; color: #35403a; font-size: 14px; line-height: 1.55; }
 .card-item h3 img, .question-title img, .option-button img, .note-answer-content img { max-width: 100%; height: auto; border-radius: 7px; vertical-align: middle; }
 .card-item p, .card-note-preview { flex: 1; min-height: 20px; margin: 0; color: #8a9089; font-size: 12px; line-height: 1.55; }
 .card-note-preview { overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; }
 .card-note-preview.markdown-preview { color: #66756d; line-height: 1.65; }
+.note-card-item .card-note-preview.markdown-preview { display: block; width: 100%; overflow: visible; -webkit-line-clamp: unset; }
+.note-card-item .note-entry { width: 100%; }
 .card-note-preview.markdown-preview h1, .card-note-preview.markdown-preview h2, .card-note-preview.markdown-preview h3, .card-note-preview.markdown-preview h4, .card-note-preview.markdown-preview h5, .card-note-preview.markdown-preview h6 { margin: 0 0 4px; color: #35483e; font-size: 13px; line-height: 1.35; }
 .card-note-preview.markdown-preview p { margin: 3px 0; }
 .card-note-preview.markdown-preview ul, .card-note-preview.markdown-preview ol { margin: 3px 0; padding-left: 18px; }
@@ -799,7 +814,21 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .card-note-preview.markdown-preview a { color: #287c67; text-decoration: underline; text-underline-offset: 2px; }
 .card-status { padding: 3px 7px; border-radius: 999px; background: #f0f2ee; color: #818981; font-size: 11px; }
 .card-status.due { background: #fff0e6; color: #c26c35; }
-.card-item-actions { display: flex; gap: 5px; }
+.card-item-actions { position: absolute; right: 0; bottom: 0; z-index: 3; display: flex; gap: 5px; }
+.card-score { position: absolute; top: -2px; right: 0; color: #b63f3f; font-family: "Segoe Print", "Bradley Hand", cursive; font-size: 18px; font-weight: 800; line-height: 1; transform: rotate(-7deg); }
+.card-score small { margin-left: 2px; font-family: inherit; font-size: 10px; }
+.card-score.pending { color: #aaa59d; font-size: 15px; font-weight: 600; transform: rotate(-4deg); }
+.card-mastery-stamp { position: absolute; top: 8px; right: 4px; z-index: 2; width: 66px; height: 66px; display: grid; place-items: center; border: 2px solid currentColor; border-radius: 50%; background: rgba(239, 250, 244, .86); color: #2f8a68; transform: rotate(-9deg); pointer-events: none; animation: stamp-in .3s cubic-bezier(.2,.9,.25,1.25) both; }
+.card-mastery-stamp::before, .card-mastery-stamp::after { content: ''; position: absolute; inset: 5px; border: 1px solid currentColor; border-radius: 50%; }
+.card-mastery-stamp::after { inset: 9px; border-style: dashed; opacity: .65; }
+.card-mastery-stamp span { position: relative; z-index: 1; font-size: 11px; font-weight: 900; letter-spacing: .04em; }
+.card-mastery-stamp.fuzzy { color: #ae7b24; background: rgba(255, 248, 229, .9); transform: rotate(7deg); }
+.card-mastery-stamp.forgot { color: #b05252; background: rgba(255, 238, 238, .9); transform: rotate(-6deg); }
+.card-mastery-stamp.too-easy { color: #2d70a5; background: rgba(231, 243, 255, .9); transform: rotate(8deg); }
+.card-mastery-stamp { top: 50%; right: auto; left: 50%; z-index: 8; opacity: .58; transform: translate(-50%, -50%) rotate(-9deg); }
+.card-mastery-stamp.fuzzy { transform: translate(-50%, -50%) rotate(7deg); }
+.card-mastery-stamp.forgot { transform: translate(-50%, -50%) rotate(-6deg); }
+.card-mastery-stamp.too-easy { transform: translate(-50%, -50%) rotate(8deg); }
 .card-item-actions button { width: 29px; height: 29px; padding: 0; }
 
 /* Keep the compact review dock readable at narrow widths. */
@@ -985,6 +1014,7 @@ select option { color: #34413b; background: #fff; }
   .card-library-toolbar select { flex: 1 1 120px; min-width: 0; }
   .card-library-layout { grid-template-columns: 154px minmax(0, 1fr); }
   .card-manager { padding: 14px 12px 24px; }
+  .card-manager-head { top: -14px; margin: -14px -12px 14px; padding: 14px 12px 12px; }
   .manager-actions button { padding: 0 8px; }
 }
 @media (max-width: 760px) {
@@ -1036,7 +1066,7 @@ select option { color: #34413b; background: #fff; }
 .note-entry-label.topic { background: #e76b61; }
 .note-entry-label.question { background: #e9a62c; }
 .note-entry-label.example { background: #45b99a; }
-.note-entry-body { min-width: 0; }
+.note-entry-body { min-width: 0; width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
 .note-link-hint { color: #84918a; }
 .note-entry-body strong { color: #28aa91; font-weight: 800; }
 .note-entry-body a { color: #7d8b85; }
@@ -1057,14 +1087,14 @@ select option { color: #34413b; background: #fff; }
 .note-rating.too-easy span { font-size: 14px; font-weight: 900; }
 .note-rating.too-easy small { color: #6d94b6; font-size: 10px; font-weight: 600; }
 .note-review-body { position: relative; }
-.note-stamp { position: absolute; z-index: 2; top: 20px; right: 20px; width: 82px; height: 82px; display: grid; place-items: center; border: 2px solid currentColor; border-radius: 50%; opacity: .9; transform: rotate(-12deg); pointer-events: none; animation: stamp-in .32s cubic-bezier(.2,.9,.25,1.25) both; }
+.note-stamp { position: absolute; z-index: 8; top: 50%; left: 50%; width: 82px; height: 82px; display: grid; place-items: center; border: 2px solid currentColor; border-radius: 50%; opacity: .58; transform: translate(-50%, -50%) rotate(-12deg); pointer-events: none; animation: stamp-in .32s cubic-bezier(.2,.9,.25,1.25) both; }
 .note-stamp::before, .note-stamp::after { content: ''; position: absolute; inset: 5px; border: 1px solid currentColor; border-radius: 50%; }
 .note-stamp::after { inset: 10px; border-style: dashed; opacity: .7; }
 .note-stamp span { position: relative; z-index: 1; font-size: 15px; font-weight: 900; letter-spacing: .08em; }
 .note-stamp.familiar { color: #2f8a68; background: rgba(225, 246, 235, .72); }
-.note-stamp.fuzzy { color: #ae7b24; background: rgba(255, 246, 218, .78); transform: rotate(9deg); }
-.note-stamp.forgot { color: #b05252; background: rgba(255, 232, 232, .78); transform: rotate(-7deg); }
-.note-stamp.too-easy { top: 16px; right: 16px; width: 92px; height: 66px; border: 2px solid #377daf; border-radius: 10px 10px 10px 2px; color: #2d70a5; background: rgba(225, 241, 255, .9); transform: rotate(7deg); box-shadow: 3px 4px 0 rgba(45,112,165,.16); }
+.note-stamp.fuzzy { color: #ae7b24; background: rgba(255, 246, 218, .78); transform: translate(-50%, -50%) rotate(9deg); }
+.note-stamp.forgot { color: #b05252; background: rgba(255, 232, 232, .78); transform: translate(-50%, -50%) rotate(-7deg); }
+.note-stamp.too-easy { top: 50%; right: auto; left: 50%; width: 82px; height: 82px; border: 2px solid currentColor; border-radius: 50%; color: #2d70a5; background: rgba(225, 241, 255, .78); transform: translate(-50%, -50%) rotate(7deg); box-shadow: none; }
 .note-stamp.too-easy::before, .note-stamp.too-easy::after { inset: 5px; border: 1px solid currentColor; border-radius: 6px 6px 6px 2px; }
 .note-stamp.too-easy::after { inset: 9px; border-style: solid; opacity: .45; }
 .note-stamp.too-easy span { font-size: 14px; letter-spacing: .04em; }
@@ -1074,7 +1104,112 @@ select option { color: #34413b; background: #fff; }
 .review-stamp-mini.forgot { color: #b05252; background: #fff1f1; }
 .review-stamp-mini.too-easy { min-width: 52px; border-radius: 5px 5px 5px 1px; color: #2d70a5; background: #edf6ff; border-color: #8eb4d9; }
 .review-stamp-mini.pending { color: #a19c93; background: #f3f1ed; border-color: #ddd8d0; }
-@keyframes stamp-in { from { opacity: 0; transform: scale(1.45) rotate(-12deg); } to { opacity: .9; transform: scale(1) rotate(-12deg); } }
+
+/* Keep stamps inside their card layer and below the sticky library header. */
+.card-manager-head { z-index: 20; }
+.card-mastery-stamp,
+.note-stamp,
+.note-stamp.familiar,
+.note-stamp.fuzzy,
+.note-stamp.forgot,
+.note-stamp.too-easy,
+.card-mastery-stamp.fuzzy,
+.card-mastery-stamp.forgot,
+.card-mastery-stamp.too-easy {
+  z-index: 2;
+  opacity: .9;
+}
+.note-stamp,
+.card-mastery-stamp {
+  top: 50%;
+  right: auto;
+  left: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) rotate(-9deg);
+}
+.note-stamp.fuzzy,
+.card-mastery-stamp.fuzzy { transform: translate(-50%, -50%) rotate(7deg); }
+.note-stamp.forgot,
+.card-mastery-stamp.forgot { transform: translate(-50%, -50%) rotate(-6deg); }
+.note-stamp.too-easy,
+.card-mastery-stamp.too-easy { transform: translate(-50%, -50%) rotate(8deg); }
+.card-score {
+  position: static;
+  margin-left: auto;
+  color: #b63f3f;
+  font-family: "Segoe Print", "Bradley Hand", cursive;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  transform: rotate(-7deg);
+}
+.card-score.pending {
+  color: #aaa59d;
+  font-size: 15px;
+  font-weight: 600;
+  transform: rotate(-4deg);
+}
+.stamp-visibility-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #68716b;
+  cursor: pointer;
+}
+.stamp-visibility-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.stamp-visibility-switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d9ded9;
+  transition: background .18s ease;
+}
+.stamp-visibility-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(37, 55, 46, .16);
+  transition: transform .18s ease;
+}
+.stamp-visibility-control input:checked + .stamp-visibility-switch { background: var(--green); }
+.stamp-visibility-control input:checked + .stamp-visibility-switch::after { transform: translateX(12px); }
+.stamp-visibility-control input:focus-visible + .stamp-visibility-switch { outline: 2px solid #78b69a; outline-offset: 2px; }
+.stamp-visibility-control b { font-size: 12px; font-weight: 700; }
+@keyframes stamp-in { from { opacity: 0; } to { opacity: .9; } }
+
+/* Final stamp overrides: all review stamps are centered, translucent circles. */
+.note-stamp, .note-stamp.familiar, .note-stamp.fuzzy, .note-stamp.forgot, .note-stamp.too-easy,
+.card-mastery-stamp, .card-mastery-stamp.fuzzy, .card-mastery-stamp.forgot, .card-mastery-stamp.too-easy {
+  top: 50%;
+  right: auto;
+  left: 50%;
+  border-radius: 50%;
+  opacity: .58;
+  box-shadow: none;
+}
+.note-stamp, .card-mastery-stamp { transform: translate(-50%, -50%) rotate(-9deg); }
+.note-stamp.fuzzy, .card-mastery-stamp.fuzzy { transform: translate(-50%, -50%) rotate(7deg); }
+.note-stamp.forgot, .card-mastery-stamp.forgot { transform: translate(-50%, -50%) rotate(-6deg); }
+.note-stamp.too-easy, .card-mastery-stamp.too-easy { transform: translate(-50%, -50%) rotate(8deg); }
+.note-stamp.too-easy::before, .note-stamp.too-easy::after { border-radius: 50%; }
+@keyframes stamp-in { from { opacity: 0; } to { opacity: .58; } }
 
 @media (max-width: 900px) {
   .card-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1117,3 +1252,135 @@ select option { color: #34413b; background: #fff; }
 .completion-kicker { color: var(--green); font-size: 10px; font-weight: 800; letter-spacing: .16em; }
 .trash-item-main p { overflow: hidden; display: -webkit-box; margin: 4px 0 0; color: #9b9e99; font-size: 12px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .trash-item { align-items: flex-start; }
+
+/* Keep review actions visually consistent with physical keyboard keys. */
+.review-space-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 16px; }
+.space-key-button { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px; border: 1px solid #d9dfdb; border-bottom: 4px solid #b9c4bd; border-radius: 10px; background: #fff; color: #506059; font-weight: 700; transition: transform .16s ease, box-shadow .16s ease, background .16s ease; }
+.space-key-button:hover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(37, 55, 46, .1); }
+.space-key-button:active { transform: translateY(2px); border-bottom-width: 2px; }
+.space-key-button kbd { min-width: 54px; padding: 4px 8px; border: 1px solid #d9dfdb; border-bottom: 2px solid #b9c4bd; border-radius: 5px; background: #f5f7f5; color: #87928b; font: 11px Consolas, monospace; text-align: center; }
+.space-key-button.primary-space { border-color: #a8cfbd; border-bottom-color: #6fae91; background: #edf8f2; color: var(--green); }
+.search-highlight { padding: 0 2px; border-radius: 3px; background: #fff0a8; color: inherit; }
+.card-item-head { position: relative; }
+.card-index-editor { position: absolute; top: -2px; left: 50%; transform: translateX(-50%); padding: 2px 3px; border: 0; border-radius: 0; background: transparent; color: #7b8a81; font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; white-space: nowrap; }
+.card-index-editor:hover { color: var(--green); text-decoration: underline; text-underline-offset: 3px; }
+.card-index-input { width: 42px; height: 24px; padding: 0 3px; border: 1px solid #a8cfbd; border-radius: 4px; outline: none; background: #fff; color: var(--green); font: inherit; font-size: 12px; text-align: center; }
+.review-action-button { min-height: 48px; padding: 0 18px; border: 1px solid #d8e1db; border-bottom: 3px solid #b8c6be; border-radius: 10px; background: #fff; color: #4f6359; font-weight: 800; transition: transform .16s ease, box-shadow .16s ease, background .16s ease; }
+.review-action-button:hover { transform: translateY(-2px); background: #f5faf7; box-shadow: 0 7px 16px rgba(37, 55, 46, .08); }
+.review-action-button:active { transform: translateY(2px); border-bottom-width: 1px; }
+.review-action-button.primary-review-action { border-color: #a8cfbd; border-bottom-color: #6fae91; background: #edf8f2; color: var(--green); }
+.review-action-button.is-pressing, .review-action-button:focus-visible { animation: review-key-press .22s ease both; }
+@keyframes review-key-press { 0% { transform: translateY(0) scale(1); } 45% { transform: translateY(3px) scale(.98); } 100% { transform: translateY(0) scale(1); } }
+.option-button:active:not(:disabled), .fsrs-grade:active, .note-rating:active:not(:disabled) { transform: translateY(3px) scale(.985); box-shadow: 0 1px 0 rgba(37, 55, 46, .14); }
+@media (max-width: 600px) { .review-space-actions { grid-template-columns: 1fr; } }
+
+/* Card management keeps a visible, quiet scroll track without affecting other views. */
+.card-manager {
+  scrollbar-width: thin;
+  scrollbar-color: #b7cfc3 transparent;
+}
+.card-manager::-webkit-scrollbar { display: block; width: 8px; height: 8px; }
+.card-manager::-webkit-scrollbar-track { background: transparent; }
+.card-manager::-webkit-scrollbar-thumb { border: 2px solid #fbfaf8; border-radius: 999px; background: #b7cfc3; }
+.card-manager::-webkit-scrollbar-thumb:hover { background: #79aa91; }
+
+/* Use one stamped rectangle for every mastery state, including Easy. */
+.note-stamp.too-easy { top: 20px; right: 20px; width: 82px; height: 82px; border: 2px solid currentColor; border-radius: 50%; color: #2d70a5; background: rgba(225, 241, 255, .82); transform: rotate(7deg); box-shadow: none; }
+.note-stamp.too-easy::before, .note-stamp.too-easy::after { inset: 5px; border: 1px solid currentColor; border-radius: 50%; }
+.note-stamp.too-easy::after { inset: 10px; border-style: dashed; opacity: .7; }
+.note-stamp.too-easy span { font-size: 15px; letter-spacing: .08em; }
+.review-stamp-mini { min-width: 48px; height: 24px; padding: 0 8px; border-radius: 4px; background: transparent; font-size: 11px; letter-spacing: .02em; }
+.review-stamp-mini.familiar { color: #2f8a68; background: #edf9f1; }
+.review-stamp-mini.fuzzy { color: #ae7b24; background: #fff8e7; }
+.review-stamp-mini.forgot { color: #b05252; background: #fff1f1; }
+.review-stamp-mini.too-easy { min-width: 48px; border-radius: 4px; color: #2d70a5; background: #edf6ff; border-color: #8eb4d9; }
+.review-stamp-mini.pending { color: #a19c93; background: #f3f1ed; border-color: #ddd8d0; }
+
+/* Final stamp and card-library control overrides. */
+.card-manager-head { z-index: 20; }
+.card-mastery-stamp,
+.note-stamp,
+.note-stamp.familiar,
+.note-stamp.fuzzy,
+.note-stamp.forgot,
+.note-stamp.too-easy,
+.card-mastery-stamp.fuzzy,
+.card-mastery-stamp.forgot,
+.card-mastery-stamp.too-easy {
+  z-index: 2;
+  opacity: .9;
+}
+.note-stamp,
+.card-mastery-stamp {
+  top: 50%;
+  right: auto;
+  left: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) rotate(-9deg);
+}
+.note-stamp.fuzzy,
+.card-mastery-stamp.fuzzy { transform: translate(-50%, -50%) rotate(7deg); }
+.note-stamp.forgot,
+.card-mastery-stamp.forgot { transform: translate(-50%, -50%) rotate(-6deg); }
+.note-stamp.too-easy,
+.card-mastery-stamp.too-easy { transform: translate(-50%, -50%) rotate(8deg); }
+.card-score {
+  position: static;
+  margin-left: auto;
+  color: #b63f3f;
+  font-family: "Segoe Print", "Bradley Hand", cursive;
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  transform: rotate(-7deg);
+}
+.card-score.pending {
+  color: #aaa59d;
+  font-size: 15px;
+  font-weight: 600;
+  transform: rotate(-4deg);
+}
+.stamp-visibility-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: #68716b;
+  cursor: pointer;
+}
+.stamp-visibility-control input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.stamp-visibility-switch {
+  position: relative;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: #d9ded9;
+  transition: background .18s ease;
+}
+.stamp-visibility-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(37, 55, 46, .16);
+  transition: transform .18s ease;
+}
+.stamp-visibility-control input:checked + .stamp-visibility-switch { background: var(--green); }
+.stamp-visibility-control input:checked + .stamp-visibility-switch::after { transform: translateX(12px); }
+.stamp-visibility-control input:focus-visible + .stamp-visibility-switch { outline: 2px solid #78b69a; outline-offset: 2px; }
+.stamp-visibility-control b { font-size: 12px; font-weight: 700; }
+@keyframes stamp-in { from { opacity: 0; } to { opacity: .9; } }

@@ -24,6 +24,14 @@ const sampleDocs = [
   { id: 'doc-reading', folderId: 'folder-study', title: '高效阅读与知识整理', html: '<h1>高效阅读与知识整理</h1><p>阅读的目标不是划线数量，而是把信息转化为可检索、可解释和可复用的知识。</p><h2>阅读前</h2><ul><li>明确阅读问题</li><li>快速浏览目录和摘要</li></ul><h2>阅读后</h2><ul><li>用自己的语言写摘要</li><li>提炼概念并建立卡片</li></ul>' },
   { id: 'doc-react', folderId: 'folder-frontend', title: 'React Hooks 核心概念', html: '<h1>React Hooks 核心概念</h1><p>React Hooks 让函数组件拥有状态管理和生命周期能力。</p><h2>基础 Hooks</h2><ul><li><strong>useState</strong> - 状态管理</li><li><strong>useEffect</strong> - 副作用处理</li><li><strong>useMemo</strong> - 值记忆化</li></ul>' }
 ];
+sampleDocs.push({
+  id: 'doc-mastery-score-guide',
+  folderId: 'folder-study',
+  title: '卡片熟练度评分规则',
+  updatedAt: '2026-07-18T09:00:00.000Z',
+  createdAt: '2026-07-18T09:00:00.000Z',
+  html: `<h1>卡片熟练度评分规则</h1><p>卡片熟练度分数是 0 到 100 分的辅助指标，用于快速判断当前掌握程度。它不会替代 FSRS 的内部参数，FSRS 仍然根据每次复习评价安排下一次复习时间。</p><h2>一、分数构成</h2><p>分数由评价基准分、复习次数加成和复习间隔加成构成。</p><ul><li><strong>评价基准分：</strong>反映最近一次主观评价。</li><li><strong>复习次数加成：</strong>主动回忆次数越多，加成越高，最高 10 分。</li><li><strong>复习间隔加成：</strong>FSRS 安排的间隔越长，说明记忆稳定性越高，加成最高 8 分。</li></ul><h2>二、计算公式</h2><p>最终分数为以下公式的四舍五入结果，并限制在 0 到 100 分之间：</p><pre><code>评价基准分 + min(10, 复习次数 × 1.5) + min(8, ln(1 + 当前间隔天数) × 2.6)</code></pre><p>当前间隔天数取卡片 FSRS 计划中的 interval 值。“太简单”是唯一例外：无论复习次数和间隔如何，最终分数固定为 100 分。</p><h2>三、评价对应的基准分</h2><ul><li><strong>忘记了：</strong>20 分，表示本次没有成功回忆。</li><li><strong>模糊：</strong>55 分，表示部分回忆但答案不稳定。</li><li><strong>熟悉：</strong>80 分，表示能够正常回忆并基本答对。</li><li><strong>太简单：</strong>100 分，表示几乎无需思考即可回答。此卡片会暂停进入常规学习队列，但保留历史和分数。</li><li><strong>未评价：</strong>显示为 --，不计算分数。</li></ul><h2>四、计算示例</h2><p>一张最近评价为“熟悉”的卡片，复习 4 次，当前间隔 7 天：</p><pre><code>80 + min(10, 4 × 1.5) + min(8, ln(1 + 7) × 2.6) 约等于 91 分</code></pre><p>一张评价为“太简单”的卡片：</p><pre><code>最终分数 = 100 分</code></pre><h2>五、分数区间</h2><ul><li><strong>0 - 39 分：</strong>薄弱，建议尽快重新学习。</li><li><strong>40 - 69 分：</strong>发展中，仍需要较高频率的主动回忆。</li><li><strong>70 - 84 分：</strong>熟练，保持正常复习即可。</li><li><strong>85 - 99 分：</strong>稳定，通常会获得较长复习间隔。</li><li><strong>100 分：</strong>太简单或达到满分状态。</li></ul><h2>六、使用建议</h2><ol><li>根据真实回忆情况评价，不要为了提高分数而选择“太简单”。</li><li>分数用于快速查看，不是考试成绩。</li><li>如果分数高但经常答错，应相信真实答题结果并重新评价。</li><li>重置熟练度后，评价、FSRS 状态和分数都会回到未评价状态。</li><li>分数会立即显示在卡片库右上角的手写风格分数区域。</li></ol><p>请结合卡片内容质量、真实回忆体验和 FSRS 到期安排综合判断学习效果。</p>`
+});
 const sampleFolders = [
   { id: 'folder-study', name: '学习科学', color: '#2f7d64' },
   { id: 'folder-frontend', name: '前端技术', color: '#28a9c7' }
@@ -47,7 +55,7 @@ const base = {
   reviewEvents: [],
   schemaVersion: 3,
   algorithm: 'fsrs',
-  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10 },
+  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, showStamps: true },
   selectedCardId: sampleCards[0].id,
   extractedText: '',
   groups: ['学习科学', '前端技术'],
@@ -55,6 +63,7 @@ const base = {
 };
 
 let state = load();
+ensureCardOrder(state.cards);
 let els = {};
 let queue = [];
 let index = 0;
@@ -63,9 +72,11 @@ let answer = [];
 let pendingReviewCardId = '';
 let pendingCorrect = false;
 let reviewDisplayCard = null;
+let reviewSnapshot = null;
 let selectedCardIds = new Set();
 let lastNext = 0;
 let batchCardMode = false;
+let pendingCardOrder = null;
 let createMode = 'document';
 let renameTargetId = '';
 let actionTarget = null;
@@ -94,6 +105,7 @@ function normCard(card) {
     ease: Number(card.ease || 2.5),
     interval: Number(card.interval || 1),
     reviews: Number(card.reviews || 0),
+    order: Number.isFinite(Number(card.order)) && Number(card.order) > 0 ? Number(card.order) : 0,
     mastery: ['tooEasy', 'familiar', 'fuzzy', 'forgot'].includes(card.mastery) ? card.mastery : (card.noteRating || ''),
     fsrs: card.fsrs || null
   };
@@ -103,6 +115,17 @@ function normCard(card) {
   normalized.reviews = normalized.fsrs.reps;
   return normalized;
 }
+function ensureCardOrder(cards = []) {
+  const groups = new Map();
+  cards.forEach((card, index) => { const key = card.folder || '未分组'; if (!groups.has(key)) groups.set(key, []); groups.get(key).push({ card, index }); });
+  groups.forEach((items) => {
+    items.sort((a, b) => { const ao = Number(a.card.order); const bo = Number(b.card.order); const av = Number.isFinite(ao) && ao > 0 ? ao : Number.MAX_SAFE_INTEGER; const bv = Number.isFinite(bo) && bo > 0 ? bo : Number.MAX_SAFE_INTEGER; return av - bv || a.index - b.index; });
+    items.forEach(({ card }, index) => { card.order = index + 1; });
+  });
+}
+function groupCards(folder) { return state.cards.filter((card) => (card.folder || '未分组') === folder).sort((a, b) => Number(a.order || 0) - Number(b.order || 0)); }
+function cardPosition(card) { const list = groupCards(card.folder || '未分组'); return Math.max(1, list.findIndex((item) => item.id === card.id) + 1); }
+function sortCardsForDisplay(cards) { const groupOrder = new Map((state.groups || []).map((group, index) => [group, index])); return cards.sort((a, b) => (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b)); }
 function normDoc(doc) {
   return { ...doc, id: doc.id || id('doc'), folderId: doc.folderId || null, title: doc.title || '未命名文档', html: doc.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>', createdAt: doc.createdAt || new Date().toISOString(), updatedAt: doc.updatedAt || doc.createdAt || new Date().toISOString() };
 }
@@ -114,6 +137,7 @@ function load() {
     const documents = Array.isArray(saved.documents) && saved.documents.length ? saved.documents.map(normDoc) : structuredClone(sampleDocs);
     sampleDocs.forEach((doc) => { if (!documents.some((item) => item.id === doc.id)) documents.push(normDoc(doc)); });
     const cards = Array.isArray(saved.cards) && saved.cards.length ? saved.cards.map(normCard) : structuredClone(sampleCards);
+    ensureCardOrder(cards);
     const latestMastery = new Map();
     (Array.isArray(saved.reviewEvents) ? saved.reviewEvents : []).forEach((event) => { if (event.cardId && event.rating) latestMastery.set(event.cardId, event.rating === 'Easy' ? 'tooEasy' : event.rating === 'Good' ? 'familiar' : event.rating === 'Hard' ? 'fuzzy' : 'forgot'); });
     cards.forEach((card) => { if (!card.mastery && latestMastery.has(card.id)) card.mastery = latestMastery.get(card.id); });
@@ -126,7 +150,7 @@ function load() {
       reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
       schemaVersion: 3,
       algorithm: 'fsrs',
-      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9) },
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), showStamps: saved.settings?.showStamps !== false },
       trash: { ...base.trash, ...(saved.trash || {}) },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
       activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
@@ -136,19 +160,31 @@ function load() {
   }
 }
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('本地空间不足，请先导出备份。'); }
+  try { ensureCardOrder(state.cards); localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('本地空间不足，请先导出备份。'); }
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle'].forEach((key) => { els[key] = document.getElementById(key); });
 }
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
   if (!panel) return;
   panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div>';
 }
-function init() { cache(); ensureFSRSSettingsPanel(); cache(); enhanceSelectsPortal(); bind(); loadDoc(); syncSettings(); refresh(); }
-function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
+function init() { cache(); ensureFSRSSettingsPanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); bind(); loadDoc(); syncSettings(); refresh(); }
+function ensureStampSetting() {
+  const toggle = $('#showStampsToggle');
+  if (!toggle) return;
+  els.showStampsToggle = toggle;
+  toggle.checked = state.settings.showStamps !== false;
+  if (toggle.dataset.bound === 'true') return;
+  toggle.dataset.bound = 'true';
+  toggle.addEventListener('change', () => {
+    state.settings.showStamps = toggle.checked;
+    save();
+    refresh();
+  });
+}function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
 function toggleBatchCardMode() { batchCardMode = !batchCardMode; const button = $('#batchModeButton'); button?.classList.toggle('active', batchCardMode); button.textContent = batchCardMode ? '批量制卡中' : '批量制卡'; els.cardModal?.classList.toggle('batch-mode', batchCardMode); }
 function closeSelectMenus(except = null) { $$('.select-shell.open').filter((shell) => shell !== except).forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); shell._selectMenu?.classList.remove('portal-open'); }); }
 function positionSelectMenu(trigger, menu, select) { const rect = trigger.getBoundingClientRect(); const width = Math.max(rect.width, select.id === 'blockFormat' ? 96 : 120); const height = Math.min(300, Math.max(40, select.options.length * 36 + 10)); const above = rect.bottom + height + 7 > window.innerHeight && rect.top > height + 7; menu.style.minWidth = `${width}px`; menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`; menu.style.top = `${above ? Math.max(8, rect.top - height - 7) : rect.bottom + 7}px`; }
@@ -209,8 +245,8 @@ function bind() {
   $('#toggleCardGroupsButton').addEventListener('click', toggleCardGroups);
   $('#cardList').addEventListener('click', (event) => { const button = event.target.closest('[data-card-reset]'); if (!button) return; event.stopPropagation(); resetCardMastery(button.dataset.cardReset); });
   $('#newGroupButton').addEventListener('click', openCreateGroup);
-  $('#cancelDeleteGroupButton').addEventListener('click', () => $('#deleteGroupModal').close());
-  $('#confirmDeleteGroupButton').addEventListener('click', confirmDeleteCardGroup);
+  $('#cancelDeleteGroupButton').addEventListener('click', () => { pendingCardOrder = null; $('#deleteGroupModal').close(); });
+  $('#confirmDeleteGroupButton').addEventListener('click', confirmDeleteTarget);
   $('#closeGroupButton').addEventListener('click', () => $('#createGroupModal').close());
   $('#cancelGroupButton').addEventListener('click', () => $('#createGroupModal').close());
   $('#createGroupForm').addEventListener('submit', saveGroup);
@@ -241,9 +277,11 @@ function openDocumentEditor(docId = state.activeDocId) { if (docId) switchDoc(do
 function toggleKnowledgeAddMenu(event) { event.stopPropagation(); const menu = $('#knowledgeAddMenu'); const button = $('#knowledgeAddButton'); const open = !menu.classList.contains('open'); closeKnowledgeAddMenu(); if (!open) return; const rect = button.getBoundingClientRect(); menu.style.position = 'fixed'; menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))}px`; menu.style.top = `${rect.bottom + 8}px`; menu.classList.add('open'); button.setAttribute('aria-expanded', 'true'); }
 function closeKnowledgeAddMenu() { const menu = $('#knowledgeAddMenu'); menu?.classList.remove('open'); $('#knowledgeAddButton')?.setAttribute('aria-expanded', 'false'); }
 function documentMatches(doc) { return !documentQuery || [doc.title, state.folders.find((folder) => folder.id === doc.folderId)?.name || ''].join(' ').toLowerCase().includes(documentQuery); }
+function highlightText(value, query) { const safe = esc(value); const term = String(query || '').trim(); if (!term) return safe; const pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return safe.replace(new RegExp(pattern, 'ig'), (match) => `<mark class="search-highlight">${match}</mark>`); }
+function highlightHtml(value, query) { const term = String(query || '').trim(); if (!term) return value; const pattern = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); return String(value).split(/(<[^>]+>)/g).map((part) => part.startsWith('<') ? part : part.replace(new RegExp(pattern, 'ig'), (match) => `<mark class="search-highlight">${match}</mark>`)).join(''); }
 function documentUpdatedAt(doc) { return new Date(doc.updatedAt || doc.createdAt || 0); }
 function formatDocumentUpdatedAt(doc) { const value = documentUpdatedAt(doc); if (Number.isNaN(value.getTime())) return '未记录时间'; const now = new Date(); const sameDay = value.toDateString() === now.toDateString(); if (sameDay) return `今天 ${value.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`; const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1); if (value.toDateString() === yesterday.toDateString()) return `昨天 ${value.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`; return value.getFullYear() === now.getFullYear() ? value.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }) : value.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }); }
-function renderKnowledgeHome() { const list = $('#knowledgeDocumentList'); if (!list) return; const docs = state.documents.filter(documentMatches).sort((a, b) => documentUpdatedAt(b) - documentUpdatedAt(a)); $('#knowledgeDocumentCount').textContent = state.documents.length; list.innerHTML = docs.length ? docs.map((doc) => `<button type="button" class="knowledge-document-row${doc.id === state.activeDocId ? ' active' : ''}" data-knowledge-doc="${esc(doc.id)}"><span class="knowledge-document-name">${esc(doc.title)}</span><span class="knowledge-document-line" aria-hidden="true"></span><time>${formatDocumentUpdatedAt(doc)}</time></button>`).join('') : '<div class="knowledge-empty-result">没有找到匹配的文章</div>'; list.querySelectorAll('[data-knowledge-doc]').forEach((button) => button.addEventListener('click', () => openDocumentEditor(button.dataset.knowledgeDoc))); }
+function renderKnowledgeHome() { const list = $('#knowledgeDocumentList'); if (!list) return; const docs = state.documents.filter(documentMatches).sort((a, b) => documentUpdatedAt(b) - documentUpdatedAt(a)); $('#knowledgeDocumentCount').textContent = state.documents.length; list.innerHTML = docs.length ? docs.map((doc) => `<button type="button" class="knowledge-document-row" data-knowledge-doc="${esc(doc.id)}"><span class="knowledge-document-name">${highlightText(doc.title, documentQuery)}</span><span class="knowledge-document-line" aria-hidden="true"></span><time>${formatDocumentUpdatedAt(doc)}</time></button>`).join('') : '<div class="knowledge-empty-result">没有找到匹配的文章</div>'; list.querySelectorAll('[data-knowledge-doc]').forEach((button) => button.addEventListener('click', () => openDocumentEditor(button.dataset.knowledgeDoc))); }
 function toggleOutline() { const grid = document.querySelector('.doc-body-grid'); const pane = $('#outlinePane'); const button = $('#toggleOutlineButton'); const collapsed = grid.classList.toggle('outline-collapsed'); pane.classList.toggle('is-collapsed', collapsed); button.classList.toggle('active', collapsed); button.title = collapsed ? '展开大纲' : '收起大纲'; }
 function toggleReview() { const grid = document.querySelector('.doc-body-grid'); const dock = $('#reviewDock'); const button = $('#toggleReviewButton'); const collapsed = grid.classList.toggle('review-collapsed'); dock.classList.toggle('is-collapsed', collapsed); button.classList.toggle('active', collapsed); button.title = collapsed ? '展开复习栏' : '收起复习栏'; }
 function editorCommand(command, value) { focusEditorSelection(); if (command === 'formatBlock') { document.execCommand('formatBlock', false, `<${value}>`); } else if (command === 'createLink') { const url = prompt('链接地址', 'https://'); if (!url) return; document.execCommand('createLink', false, url); } else if (command === 'fontSize') { document.execCommand('fontSize', false, '7'); els.noteEditor.querySelectorAll('font[size="7"]').forEach((node) => { const span = document.createElement('span'); span.style.fontSize = `${value}px`; span.innerHTML = node.innerHTML; node.replaceWith(span); }); } else if (command === 'grayBlock') { const selection = window.getSelection(); const node = selection?.anchorNode?.parentElement?.closest('p,h1,h2,h3,h4,h5,h6,blockquote,li'); if (node && els.noteEditor.contains(node)) node.classList.toggle('gray-block'); else document.execCommand('backColor', false, value || '#f1f1f1'); } else document.execCommand(command, false, value || null); els.noteEditor.focus(); saveDoc(); outline(); }
@@ -266,12 +304,23 @@ function markdownUrl(value, fallback = '#') { const url = String(value || '').tr
 function cardHtml(value) { return esc(String(value || '')).replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, url) => `<img src="${markdownUrl(url)}" alt="${esc(alt)}" loading="lazy">`).replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => `<a href="${markdownUrl(url)}" target="_blank" rel="noreferrer">${label}</a>`).replace(/\n/g, '<br>'); }
 function noteMarkdownHtml(value) { const raw = String(value || '').trim(); if (!raw) return '<p class="note-empty-content">暂无速记内容</p>'; if (/^\s*<(p|h[1-6]|ul|ol|blockquote|pre|img|a)\b/i.test(raw)) return sanitizeClipboardHtml(raw); return markdownToHtml(raw, { noteEntries: true }); }
 function masteryMeta(card) { const value = card.mastery || (card.type === 'note' ? card.noteRating : ''); return value && NOTE_RATINGS[value] ? NOTE_RATINGS[value] : null; }
+function masteryScore(card) {
+  const rating = card.mastery || (card.type === 'note' ? card.noteRating : '');
+  if (!rating) return null;
+  if (rating === 'tooEasy') return 100;
+  const base = { forgot: 20, fuzzy: 55, familiar: 80, tooEasy: 94 }[rating] ?? 0;
+  const reviews = Math.max(0, Number(card.reviews || card.fsrs?.reps || 0));
+  const interval = Math.max(0, Number(card.interval || card.fsrs?.scheduledDays || 0));
+  const reviewBonus = Math.min(10, reviews * 1.5);
+  const intervalBonus = Math.min(8, Math.log1p(interval) * 2.6);
+  return Math.max(0, Math.min(100, Math.round(base + reviewBonus + intervalBonus)));
+}
 function noteRatingBadge(card) { const rating = masteryMeta(card); return rating ? `<span class="review-stamp-mini ${rating.className}">${rating.label}</span>` : '<span class="review-stamp-mini pending">未评价</span>'; }
 function saveCard(event) { event.preventDefault(); const type = els.cardTypeSelect.value; const folder = els.cardGroupSelect.value || '未分组'; const tags = String($('#tagInput').value || '').split(/[,，]/).map((item) => item.trim()).filter(Boolean); const options = { A: $('#optionA').value.trim(), B: $('#optionB').value.trim(), C: $('#optionC').value.trim(), D: $('#optionD').value.trim() }; const selected = [...document.querySelectorAll('input[name="answer"]:checked')].map((input) => input.value); const question = $('#questionInput').value.trim(); if (!question) return toast('请填写题干或词条。'); if (type === 'note') { if (!$('#noteContentInput').value.trim()) return toast('请填写速记内容。'); } else { if (!selected.length) return toast('请选择正确答案。'); if (type === 'multiple' && selected.length < 2) return toast('多选题至少选择两个答案。'); if (!Object.values(options).some(Boolean)) return toast('至少填写一个选项。'); } const data = normCard({ id: els.cardModal.dataset.editingId || id('card'), type, folder, question, options, answer: selected, noteContent: $('#noteContentInput').value.trim(), explanation: $('#explanationInput').value.trim(), tags: tags.length ? tags : [folder] }); const old = state.cards.findIndex((item) => item.id === data.id); if (old >= 0) state.cards[old] = { ...state.cards[old], ...data }; else state.cards.push(data); state.groups = [...new Set([...(state.groups || []), folder])]; state.selectedCardId = data.id; save(); answered = false; refresh(); if (old >= 0 || !batchCardMode) { els.cardModal.close(); toast(old >= 0 ? '卡片已更新。' : '卡片已保存。'); } else { resetBatchCardForm(); toast('卡片已保存，可继续创建下一张。'); } }
 function resetBatchCardForm() { const group = els.cardGroupSelect.value; const type = els.cardTypeSelect.value; els.cardForm.reset(); els.cardModal.dataset.editingId = ''; els.cardForm.dataset.autoTag = 'true'; els.cardGroupSelect.value = group; syncCustomSelect(els.cardGroupSelect); els.cardTypeSelect.value = type; syncCustomSelect(els.cardTypeSelect); $('#tagInput').value = group || '未分组'; renderCardTypeFields(); renderAnswerChoices(); $('#questionInput').focus(); }
 
 function renderTree() { const tree = $('#documentTree'); tree.innerHTML = ''; const opened = renderTree.opened || (renderTree.opened = new Set(state.folders.map((folder) => folder.id))); state.folders.forEach((folder) => { const folderDocs = state.documents.filter((doc) => doc.folderId === folder.id && documentMatches(doc)); if (documentQuery && !folderDocs.length && !folder.name.toLowerCase().includes(documentQuery)) return; const section = document.createElement('div'); section.className = 'tree-section'; const head = document.createElement('div'); head.className = 'tree-folder-row'; head.innerHTML = '<button class="tree-caret" title="展开或折叠"><svg><use href="#i-chevron-down"></use></svg></button><strong></strong>'; head.querySelector('strong').textContent = folder.name; head.appendChild(actionButton('folder', folder.id)); head.ondblclick = () => openRename('folder', folder.id); head.onclick = (event) => { if (event.target.closest('.tree-more-button') || event.target.closest('.tree-caret')) return; opened.has(folder.id) ? opened.delete(folder.id) : opened.add(folder.id); renderTree(); }; head.querySelector('.tree-caret').onclick = () => { opened.has(folder.id) ? opened.delete(folder.id) : opened.add(folder.id); renderTree(); }; head.ondragover = (event) => { event.preventDefault(); head.classList.add('drag-over'); }; head.ondragleave = () => head.classList.remove('drag-over'); head.ondrop = (event) => { event.preventDefault(); moveDoc(event.dataTransfer.getData('doc-id'), folder.id); }; section.appendChild(head); if (opened.has(folder.id) || documentQuery) folderDocs.forEach((doc) => section.appendChild(docRow(doc))); tree.appendChild(section); }); const loose = state.documents.filter((doc) => !doc.folderId && documentMatches(doc)); if (loose.length) { const section = document.createElement('div'); section.className = 'tree-section'; section.innerHTML = '<div class="tree-folder-row loose-folder-row"><strong>未分组文档</strong></div>'; loose.forEach((doc) => section.appendChild(docRow(doc))); tree.appendChild(section); } if (!tree.children.length) tree.innerHTML = '<div class="tree-empty">没有匹配的文章</div>'; }
-function docRow(doc) { const row = document.createElement('div'); row.className = `tree-doc-row${doc.id === state.activeDocId && libraryMode === 'editor' ? ' active' : ''}`; row.draggable = true; row.innerHTML = '<span class="tree-doc-title"></span>'; row.querySelector('.tree-doc-title').textContent = doc.title; row.appendChild(actionButton('document', doc.id)); row.onclick = (event) => { if (!event.target.closest('.tree-more-button')) openDocumentEditor(doc.id); }; row.ondblclick = () => openRename('document', doc.id); row.ondragstart = (event) => event.dataTransfer.setData('doc-id', doc.id); return row; }
+function docRow(doc) { const row = document.createElement('div'); row.className = `tree-doc-row${doc.id === state.activeDocId && libraryMode === 'editor' ? ' active' : ''}`; row.draggable = true; row.innerHTML = '<span class="tree-doc-title"></span>'; row.querySelector('.tree-doc-title').innerHTML = highlightText(doc.title, documentQuery); row.appendChild(actionButton('document', doc.id)); row.onclick = (event) => { if (!event.target.closest('.tree-more-button')) openDocumentEditor(doc.id); }; row.ondblclick = () => openRename('document', doc.id); row.ondragstart = (event) => event.dataTransfer.setData('doc-id', doc.id); return row; }
 function actionButton(type, targetId) { const button = document.createElement('button'); button.type = 'button'; button.className = 'tree-more-button'; button.title = '更多操作'; button.innerHTML = '<svg><use href="#i-more-vertical"></use></svg>'; button.onclick = (event) => { event.stopPropagation(); openTreeMenu(button, type, targetId); }; return button; }
 function openTreeMenu(anchor, type, targetId) { closeTreeMenus(); const menu = document.createElement('div'); menu.className = 'tree-context-menu'; menu.innerHTML = type === 'document' ? '<button data-action="rename">重命名</button><button data-action="edit">编辑文章</button><hr><button data-action="remove">移出目录</button><hr><button data-action="copy">复制</button><button data-action="move">移动…</button><button data-action="export">导出…</button><button data-action="pin">置顶文档</button><hr><button data-action="delete" class="danger">删除</button>' : '<button data-action="rename">重命名</button><button data-action="copy">复制</button><hr><button data-action="delete" class="danger">删除</button>'; document.body.appendChild(menu); const rect = anchor.getBoundingClientRect(); menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, rect.bottom + 4)}px`; menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, rect.left))}px`; menu.querySelectorAll('[data-action]').forEach((item) => item.onclick = () => handleTreeAction(item.dataset.action, type, targetId, menu)); menu.addEventListener('click', (event) => event.stopPropagation()); document.addEventListener('click', closeTreeMenus, { once: true }); }
 function closeTreeMenus() { $$('.tree-context-menu').forEach((menu) => menu.remove()); }
@@ -287,10 +336,58 @@ function rootDrop(event) { event.preventDefault(); event.currentTarget.classList
 function openRename(mode, targetId) { createMode = mode; renameTargetId = targetId; const target = mode === 'folder' ? state.folders.find((item) => item.id === targetId) : state.documents.find((item) => item.id === targetId); if (!target) return; $('#createModalTitle').textContent = mode === 'folder' ? '重命名分组' : '重命名文章'; $('#createNameInput').value = target.name || target.title; $('#createFolderLabel').style.display = 'none'; els.createModal.showModal(); }
 function openCreate(mode) { createMode = mode; renameTargetId = ''; $('#createModalTitle').textContent = mode === 'folder' ? '新建分组' : '新建文章'; $('#createNameInput').value = ''; $('#createFolderLabel').style.display = mode === 'folder' ? 'none' : 'grid'; $('#createFolderSelect').innerHTML = '<option value="">未分组</option>' + state.folders.map((folder) => `<option value="${folder.id}">${esc(folder.name)}</option>`).join(''); $('#createFolderSelect').value = activeDoc()?.folderId || ''; els.createModal.showModal(); closeKnowledgeAddMenu(); }
 function createItem(event) { event.preventDefault(); const name = $('#createNameInput').value.trim(); if (!name) return toast('请输入名称。'); const isRenaming = Boolean(renameTargetId); if (isRenaming) { if (createMode === 'folder') { const folder = state.folders.find((item) => item.id === renameTargetId); if (state.folders.some((item) => item.id !== renameTargetId && item.name === name)) return toast('分组名称已存在。'); if (folder) folder.name = name; } else { const doc = state.documents.find((item) => item.id === renameTargetId); if (state.documents.some((item) => item.id !== renameTargetId && item.title === name)) return toast('文章名称已存在。'); if (doc) { doc.title = name; doc.updatedAt = new Date().toISOString(); } } } else if (createMode === 'folder') { if (state.folders.some((folder) => folder.name === name)) return toast('分组已存在。'); state.folders.push({ id: id('folder'), name, color: ['#2f7d64', '#28a9c7', '#8b73d6', '#d88746'][state.folders.length % 4] }); } else { const now = new Date().toISOString(); const doc = { id: id('doc'), folderId: $('#createFolderSelect').value || null, title: name, html: `<h1>${esc(name)}</h1><p>开始记录你的知识。</p>`, createdAt: now, updatedAt: now }; state.documents.push(doc); state.activeDocId = doc.id; } save(); els.createModal.close(); renameTargetId = ''; if (!isRenaming && createMode === 'document') { libraryMode = 'editor'; document.querySelector('.document-workbench').classList.remove('home-mode'); } loadDoc(); refresh(); toast(isRenaming ? '名称已更新。' : createMode === 'folder' ? '分组已创建。' : '文章已创建。'); }
-function trashDoc(docId) { const at = state.documents.findIndex((doc) => doc.id === docId); if (at < 0) return; state.trash.documents.push(state.documents.splice(at, 1)[0]); if (state.activeDocId === docId) state.activeDocId = state.documents[0]?.id || ''; save(); loadDoc(); refresh(); toast('文档已移入回收站。'); }
-function trashFolder(folderId) { const at = state.folders.findIndex((folder) => folder.id === folderId); if (at < 0) return; const folder = state.folders.splice(at, 1)[0]; const documents = state.documents.filter((doc) => doc.folderId === folderId); state.documents = state.documents.filter((doc) => doc.folderId !== folderId); state.trash.folders.push({ folder, documents }); if (documents.some((doc) => doc.id === state.activeDocId)) state.activeDocId = state.documents[0]?.id || ''; save(); loadDoc(); refresh(); toast('文件夹已移入回收站。'); }
+function trashDoc(docId) { const doc = state.documents.find((item) => item.id === docId); if (!doc) return; openDeleteConfirm('document', docId, `删除文档“${doc.title}”？`, '文档将移入回收站，之后仍可恢复。'); }
+function trashFolder(folderId) { const folder = state.folders.find((item) => item.id === folderId); if (!folder) return; const count = state.documents.filter((doc) => doc.folderId === folderId).length; openDeleteConfirm('folder', folderId, `删除文件夹“${folder.name}”？`, count ? `其中 ${count} 篇文档将随文件夹移入回收站。` : '文件夹将移入回收站，之后仍可恢复。'); }
+function openDeleteConfirm(type, targetId, title, description, actionLabel = '确认删除') { const modal = $('#deleteGroupModal'); if (!modal) return; modal.dataset.deleteType = type; modal.dataset.deleteId = targetId; $('#deleteGroupTitle').textContent = title; $('#deleteGroupDescription').textContent = description; $('#confirmDeleteGroupButton').textContent = actionLabel; modal.showModal(); }
+function confirmDeleteTarget() {
+  const modal = $('#deleteGroupModal');
+  const type = modal?.dataset.deleteType;
+  const targetId = modal?.dataset.deleteId;
+  if (!type || !targetId) return;
+  if (type === 'card-order') { modal.close(); confirmCardOrderChange(); return; }
+  modal.close();
+  if (type === 'document') {
+    const at = state.documents.findIndex((doc) => doc.id === targetId);
+    if (at < 0) return;
+    state.trash.documents.push(state.documents.splice(at, 1)[0]);
+    if (state.activeDocId === targetId) state.activeDocId = state.documents[0]?.id || '';
+  } else if (type === 'folder') {
+    const at = state.folders.findIndex((folder) => folder.id === targetId);
+    if (at < 0) return;
+    const folder = state.folders.splice(at, 1)[0];
+    const documents = state.documents.filter((doc) => doc.folderId === targetId);
+    state.documents = state.documents.filter((doc) => doc.folderId !== targetId);
+    state.trash.folders.push({ folder, documents });
+    if (documents.some((doc) => doc.id === state.activeDocId)) state.activeDocId = state.documents[0]?.id || '';
+  } else if (type === 'card') {
+    const at = state.cards.findIndex((card) => card.id === targetId);
+    if (at < 0) return;
+    state.trash.cards.push(state.cards.splice(at, 1)[0]);
+    if (state.selectedCardId === targetId) state.selectedCardId = state.cards[0]?.id || '';
+  } else if (type === 'cards') {
+    const ids = new Set(targetId.split(','));
+    state.trash.cards.push(...state.cards.filter((card) => ids.has(card.id)));
+    state.cards = state.cards.filter((card) => !ids.has(card.id));
+    selectedCardIds.clear();
+  } else if (type === 'trash-item') {
+    state.trash[trashTab].splice(Number(targetId), 1);
+  } else if (type === 'trash-all') {
+    state.trash[trashTab] = [];
+  } else if (type === 'card-group') {
+    const cards = state.cards.filter((card) => card.folder === targetId);
+    state.trash.cards.push(...cards);
+    state.cards = state.cards.filter((card) => card.folder !== targetId);
+    state.groups = state.groups.filter((item) => item !== targetId);
+    if (els.folderFilter.value === targetId) els.folderFilter.value = '全部文件夹';
+    cards.forEach((card) => selectedCardIds.delete(card.id));
+  }
+  save();
+  loadDoc();
+  refresh();
+  toast('内容已移入回收站。');
+}
 
-function cardMatches(card) { const query = els.cardSearchInput.value.trim().toLowerCase(); const folder = els.folderFilter.value; const tag = els.tagFilter.value; const type = els.cardTypeFilter.value; const status = els.cardStatusFilter.value; const mastery = card.mastery || ''; return (!query || [card.question, card.folder, card.tags.join(' '), card.noteContent].join(' ').toLowerCase().includes(query)) && (!folder || folder === '全部文件夹' || card.folder === folder) && (!tag || tag === '全部标签' || card.tags.includes(tag)) && (!type || type === '全部类型' || card.type === type) && (!status || status === '全部熟练度' || (status === 'unrated' ? !mastery : mastery === status)); }
+function cardMatches(card) { const query = els.cardSearchInput.value.trim().toLowerCase(); const folder = els.folderFilter.value; const tag = els.tagFilter.value; const type = els.cardTypeFilter.value; const status = els.cardStatusFilter.value; const mastery = card.mastery || ''; return (!query || [card.question, card.folder, card.tags.join(' '), card.noteContent].join(' ').toLowerCase().includes(query)) && (!folder || folder === '全部文件夹' || card.folder === folder) && (!tag || tag === '全部标签' || card.tags.includes(tag)) && (!type || type === '全部类型' || card.type === type) && (!status || status === '全部熟练度' || (status === 'evaluated' ? Boolean(mastery) : status === 'unrated' ? !mastery : mastery === status)); }
 function renderCardSummary() { const due = state.cards.filter(isDue).length; const notes = state.cards.filter((card) => card.type === 'note').length; els.cardSummary.innerHTML = [['#i-layers', state.cards.length, '全部卡片'], ['#i-review', due, '待复习'], ['#i-book', notes, '速记词条'], ['#i-flame', totalReviews(), '累计复习']].map(([icon, value, label]) => `<div class="card-summary-item"><svg><use href="${icon}"></use></svg><div><b>${value}</b><span>${label}</span></div></div>`).join(''); $('#cardTotalBadge').textContent = `${state.cards.length} 张`; }
 function renderCardGroups() { const groups = [...new Set([...(state.groups || []), ...state.cards.map((card) => card.folder)])]; state.groups = groups; $('#cardGroupCount').textContent = groups.length; els.cardGroupRail.innerHTML = `<div class="card-group-row"><button class="card-group-link ${els.folderFilter.value === '全部文件夹' ? 'active' : ''}" data-group="全部文件夹"><span class="group-dot all"></span><span>全部卡片</span><b>${state.cards.length}</b></button></div>` + groups.map((group) => `<div class="card-group-row sortable-group-row" draggable="true" data-sort-group="${esc(group)}"><button class="card-group-link ${els.folderFilter.value === group ? 'active' : ''}" data-group="${esc(group)}"><span class="group-dot"></span><span>${esc(group)}</span><b>${state.cards.filter((card) => card.folder === group).length}</b></button><button class="card-group-delete" title="删除卡组" data-group-delete="${esc(group)}"><svg><use href="#i-trash"></use></svg></button></div>`).join(''); els.cardGroupRail.querySelectorAll('[data-group]').forEach((button) => button.addEventListener('click', () => { els.folderFilter.value = button.dataset.group; syncCustomSelect(els.folderFilter); renderCards(); })); els.cardGroupRail.querySelectorAll('[data-group-delete]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); deleteCardGroup(button.dataset.groupDelete); })); bindGroupSorting(); }
 function toggleCardGroups() { const layout = document.querySelector('.card-library-layout'); const button = $('#toggleCardGroupsButton'); const collapsed = layout.classList.toggle('groups-collapsed'); button.title = collapsed ? '显示卡组侧栏' : '隐藏卡组侧栏'; button.setAttribute('aria-label', button.title); button.classList.toggle('active', collapsed); }
@@ -300,20 +397,92 @@ function renderFilters() { const tags = ['全部标签', ...new Set(state.cards.
 function fill(select, values) { const old = select.value; select.innerHTML = values.map((value) => `<option>${esc(value)}</option>`).join(''); if (values.includes(old)) select.value = old; syncCustomSelect(select); }
 function enhanceSelectsLegacy() { $$('select').forEach((select) => { if (select.parentElement?.classList.contains('select-shell')) return; const shell = document.createElement('div'); shell.className = `select-shell${select.closest('.formatbar') ? ' format-select-shell' : ''}`; select.parentNode.insertBefore(shell, select); shell.appendChild(select); const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'select-trigger'; trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', select.title || select.getAttribute('aria-label') || '选择'); const menu = document.createElement('div'); menu.className = 'select-menu'; menu.setAttribute('role', 'listbox'); shell.append(trigger, menu); trigger.addEventListener('click', (event) => { event.stopPropagation(); const open = shell.classList.toggle('open'); trigger.setAttribute('aria-expanded', String(open)); $$('.select-shell.open').filter((item) => item !== shell).forEach((item) => { item.classList.remove('open'); item.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); if (open && (shell.classList.contains('format-select-shell') || shell.closest('.modal'))) { const rect = trigger.getBoundingClientRect(); menu.style.position = 'fixed'; menu.style.top = `${rect.bottom + 7}px`; menu.style.left = `${rect.left}px`; menu.style.right = 'auto'; menu.style.minWidth = `${Math.max(rect.width, select.id === 'blockFormat' ? 96 : 120)}px`; } }); menu.addEventListener('click', (event) => { const option = event.target.closest('[data-option]'); if (!option) return; select.value = option.dataset.option; select.dispatchEvent(new Event('change', { bubbles: true })); shell.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); }); select.addEventListener('change', () => syncCustomSelectLegacy(select)); syncCustomSelectLegacy(select); }); document.addEventListener('click', (event) => { if (!event.target.closest('.select-shell')) $$('.select-shell.open').forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); }); }
 function syncCustomSelectLegacy(select) { const shell = select?.parentElement?.classList.contains('select-shell') ? select.parentElement : null; if (!shell) return; const trigger = shell.querySelector('.select-trigger'); const menu = shell.querySelector('.select-menu'); const options = [...select.options]; trigger.textContent = options.find((option) => option.value === select.value)?.textContent || select.value || ''; menu.innerHTML = options.map((option) => `<button type="button" role="option" data-option="${esc(option.value)}" class="${option.value === select.value ? 'selected' : ''}">${esc(option.textContent)}</button>`).join(''); }
-function renderCards() { renderFilters(); renderCardSummary(); renderCardGroups(); const list = state.cards.filter(cardMatches); const folderName = els.folderFilter.value || '全部文件夹'; $('#cardListTitle').textContent = folderName === '全部文件夹' ? '全部卡片' : folderName; $('#cardListMeta').textContent = `${list.length} 张卡片`; els.cardList.innerHTML = list.length ? list.map((card) => { const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'; const status = noteRatingBadge(card); const preview = card.type === 'note' ? noteMarkdownHtml(card.noteContent) : cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`); return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><span class="question-type">${typeLabel}</span>${status}</div><h3>${cardHtml(card.question)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${esc(tag)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button><button class="card-reset-mastery" title="重置熟练度" data-card-reset="${card.id}"><svg><use href="#i-reset"></use></svg></button></div></div></article>`; }).join('') : '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>'; $$('#cardList .card-item').forEach((row) => row.addEventListener('click', (event) => { if (event.target.closest('[data-card-edit], [data-card-reset]')) return; const cardId = row.dataset.card; if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId); state.selectedCardId = cardId; save(); renderCards(); })); $$('#cardList [data-card-edit]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openCard(button.dataset.cardEdit); })); bindCardSorting(); updateBulkSelection(list); }
+function renderCards() { renderFilters(); renderCardSummary(); renderCardGroups(); const list = sortCardsForDisplay(state.cards.filter(cardMatches)); const folderName = els.folderFilter.value || '全部文件夹'; $('#cardListTitle').textContent = folderName === '全部文件夹' ? '全部卡片' : folderName; $('#cardListMeta').textContent = `${list.length} 张卡片`; els.cardList.innerHTML = list.length ? list.map((card) => { const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'; const score = masteryScore(card); const scoreMarkup = score === null ? '<span class="card-score pending">--</span>' : `<span class="card-score">${score}<small>分</small></span>`; const query = els.cardSearchInput.value; const preview = card.type === 'note' ? highlightHtml(noteMarkdownHtml(card.noteContent), query) : highlightHtml(cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`), query); const stamp = state.settings.showStamps !== false && score !== null ? `<div class="card-mastery-stamp ${masteryMeta(card)?.className || ''}"><span>${masteryMeta(card)?.label || '已评价'}</span></div>` : ''; return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><button type="button" class="card-index-editor" title="点击修改卡组内顺序" data-card-order="${card.id}">-${cardPosition(card)}-</button><span class="question-type">${typeLabel}</span>${scoreMarkup}</div><div class="card-item-content"><h3>${highlightText(card.question, query)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div>${stamp}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${highlightText(tag, query)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button><button class="card-reset-mastery" title="重置熟练度" data-card-reset="${card.id}"><svg><use href="#i-reset"></use></svg></button></div></div></article>`; }).join('') : '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>'; $$('#cardList .card-item').forEach((row) => row.addEventListener('click', (event) => { if (event.target.closest('[data-card-edit], [data-card-reset], [data-card-order]')) return; const cardId = row.dataset.card; if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId); state.selectedCardId = cardId; save(); renderCards(); })); $$('#cardList [data-card-edit]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openCard(button.dataset.cardEdit); })); $$('#cardList [data-card-order]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); beginCardOrderEdit(button); })); bindCardSorting(); updateBulkSelection(list); }
 function bindCardSorting() { $$('#cardList [data-card]').forEach((row) => { row.addEventListener('dragstart', (event) => { if (event.target.closest('button')) { event.preventDefault(); return; } event.dataTransfer.setData('card-id', row.dataset.card); row.classList.add('dragging'); }); row.addEventListener('dragend', () => row.classList.remove('dragging')); row.addEventListener('dragover', (event) => { event.preventDefault(); row.classList.add('drag-over'); }); row.addEventListener('dragleave', () => row.classList.remove('drag-over')); row.addEventListener('drop', (event) => { event.preventDefault(); row.classList.remove('drag-over'); reorderCards(event.dataTransfer.getData('card-id'), row.dataset.card); }); }); }
-function reorderCards(source, target) { if (!source || !target || source === target) return; const from = state.cards.findIndex((card) => card.id === source); const to = state.cards.findIndex((card) => card.id === target); if (from < 0 || to < 0) return; const [card] = state.cards.splice(from, 1); state.cards.splice(to, 0, card); save(); renderCards(); toast('卡片顺序已更新。'); }
+function reorderCards(source, target) {
+  if (!source || !target || source === target) return;
+  const sourceCard = state.cards.find((card) => card.id === source);
+  const targetCard = state.cards.find((card) => card.id === target);
+  if (!sourceCard || !targetCard) return;
+  if ((sourceCard.folder || '未分组') !== (targetCard.folder || '未分组')) return toast('卡片只能在同一卡组内排序。');
+  const items = groupCards(sourceCard.folder || '未分组');
+  const targetPosition = Math.max(1, items.findIndex((card) => card.id === target) + 1);
+  pendingCardOrder = { cardId: source, target: targetPosition };
+  openDeleteConfirm('card-order', source, `调整卡片顺序为 -${targetPosition}-？`, '同卡组其他卡片会自动顺延。');
+}
 function updateBulkSelection(list = state.cards.filter(cardMatches)) { const count = selectedCardIds.size; els.selectedCardCount.textContent = `已选择 ${count} 张`; els.bulkSelectionBar.classList.toggle('active', count > 0); els.bulkDeleteCardsButton.disabled = count === 0; $('#selectAllCardsButton').classList.toggle('active', list.length > 0 && list.every((card) => selectedCardIds.has(card.id))); }
 function toggleSelectAllCards() { const list = state.cards.filter(cardMatches); if (list.every((card) => selectedCardIds.has(card.id))) list.forEach((card) => selectedCardIds.delete(card.id)); else list.forEach((card) => selectedCardIds.add(card.id)); renderCards(); }
 function clearCardSelection() { selectedCardIds.clear(); renderCards(); }
-function bulkDeleteCards() { const ids = new Set(selectedCardIds); if (!ids.size) return; state.trash.cards.push(...state.cards.filter((card) => ids.has(card.id))); state.cards = state.cards.filter((card) => !ids.has(card.id)); selectedCardIds.clear(); save(); refresh(); toast(`已将 ${ids.size} 张卡片移入回收站。`); }
+function bulkDeleteCards() { const ids = new Set(selectedCardIds); if (!ids.size) return; openDeleteConfirm('cards', [...ids].join(','), `删除 ${ids.size} 张卡片？`, '选中的卡片将移入回收站，之后仍可恢复。'); }
 function clearCardFilters() { els.cardSearchInput.value = ''; els.folderFilter.value = '全部文件夹'; els.tagFilter.value = '全部标签'; els.cardTypeFilter.value = '全部类型'; els.cardStatusFilter.value = '全部熟练度'; [els.folderFilter, els.tagFilter, els.cardTypeFilter, els.cardStatusFilter].forEach(syncCustomSelect); renderCards(); }
 function resetCardMastery(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; card.mastery = ''; card.noteRating = ''; card.suspended = false; card.fsrs = window.knowledgeFSRS.reset(); card.dueAt = card.fsrs.due; card.interval = card.fsrs.scheduledDays; card.reviews = card.fsrs.reps; card.updatedAt = new Date().toISOString(); save(); refresh(); toast('熟练度已重置，卡片重新加入学习计划。'); }
-function trashCard(cardId) { const at = state.cards.findIndex((card) => card.id === cardId); if (at < 0) return; state.trash.cards.push(state.cards.splice(at, 1)[0]); if (state.selectedCardId === cardId) state.selectedCardId = state.cards[0]?.id || ''; save(); refresh(); toast('卡片已移入回收站。'); }
+function trashCard(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; openDeleteConfirm('card', cardId, `删除卡片“${card.question}”？`, '卡片将移入回收站，之后仍可恢复。'); }
 function openCreateGroup() { $('#createGroupName').value = ''; $('#createGroupModal').showModal(); $('#createGroupName').focus(); }
 function saveGroup(event) { event.preventDefault(); const name = $('#createGroupName').value.trim(); if (!name) return toast('请输入卡组名称。'); if (state.groups.includes(name)) return toast('卡组已存在。'); state.groups.push(name); save(); $('#createGroupModal').close(); renderCards(); toast('卡组已创建。'); }
 
 function renderQuestionLegacy(box, card, standalone) { const shell = box.closest('.review-shell'); if (!card) { shell?.classList.add('is-complete'); box.innerHTML = '<div class="review-complete"><div class="complete-mark"><svg><use href="#i-review"></use></svg></div><div class="completion-kicker">REVIEW SESSION</div><h2>今日复习已完成</h2><p>本次复习计划已经完成，明天继续保持。</p><button class="secondary-action" data-view="cards">查看卡片库</button></div>'; box.querySelector('[data-view]')?.addEventListener('click', () => view('cards')); els.nextButton.disabled = true; return; } shell?.classList.remove('is-complete'); const selected = Array.isArray(answer) ? answer : []; const head = `<div class="tag-row"><span class="tag">${esc(card.tags[0] || '未分组')}</span><span class="question-type">${card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'}</span></div><div class="question-title">${cardHtml(card.question)}</div>`; if (card.type === 'note') { box.innerHTML = `${head}<div class="note-answer-content">${cardHtml(card.noteContent)}</div><div class="note-rating-block"><p>根据回忆程度选择反馈</p><div class="note-rating-actions">${[['familiar', '熟悉'], ['fuzzy', '模糊'], ['forgot', '没印象']].map(([value, label]) => `<button class="note-rating ${answered ? 'is-disabled' : ''}" data-rating="${value}" ${answered ? 'disabled' : ''}>${label}</button>`).join('')}</div></div>${answered && card.noteContent ? `<div class="explanation"><strong>速记内容</strong>${cardHtml(card.noteContent)}</div>` : ''}`; box.querySelectorAll('[data-rating]').forEach((button) => button.addEventListener('click', () => answerNoteCard(card, button.dataset.rating))); } else { box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}`; const block = box.querySelector('.options-block'); OPTS.forEach((key) => { const button = document.createElement('button'); button.className = 'option-button'; if (!answered && selected.includes(key)) button.classList.add('selected'); if (answered && card.answer.includes(key)) button.classList.add('correct'); if (answered && selected.includes(key) && !card.answer.includes(key)) button.classList.add('wrong'); button.innerHTML = `<span class="key">${key}</span><span>${cardHtml(card.options[key] || '未填写选项')}</span>`; button.disabled = answered; button.addEventListener('click', () => answerCard(card, key)); block.appendChild(button); }); if (card.type === 'multiple' && !answered) { const submit = document.createElement('button'); submit.className = 'next-button submit-answer'; submit.textContent = '提交答案'; submit.disabled = !selected.length; submit.addEventListener('click', () => finalizeMultiple(card)); box.appendChild(submit); } } els.nextButton.disabled = !answered; if (standalone && answered) { const nextButton = document.createElement('button'); nextButton.className = 'next-button'; nextButton.textContent = '下一题'; nextButton.addEventListener('click', next); box.appendChild(nextButton); } }
+function beginCardOrderEdit(button) {
+  const cardId = button.dataset.cardOrder;
+  const card = state.cards.find((item) => item.id === cardId);
+  if (!card || button.querySelector('input')) return;
+  const current = cardPosition(card);
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.min = '1';
+  input.max = String(groupCards(card.folder || '未分组').length);
+  input.value = String(current);
+  input.className = 'card-index-input';
+  button.textContent = '';
+  button.appendChild(input);
+  input.focus();
+  input.select();
+  const finish = () => {
+    const value = Number(input.value);
+    button.textContent = `-${current}-`;
+    if (!Number.isFinite(value)) return;
+    const target = Math.max(1, Math.min(Number(input.max), Math.round(value)));
+    if (target === current) return;
+    pendingCardOrder = { cardId, target, current };
+    openDeleteConfirm('card-order', cardId, `调整卡片顺序为 -${target}-？`, `当前顺序为 -${current}-，同卡组其他卡片会自动顺延。`);
+  };
+  input.addEventListener('blur', finish, { once: true });
+  input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); input.blur(); } if (event.key === 'Escape') { event.preventDefault(); input.value = String(current); input.blur(); } });
+}
+
+function changeCardOrder(cardId) {
+  const card = state.cards.find((item) => item.id === cardId);
+  if (!card) return;
+  const items = groupCards(card.folder || '未分组');
+  const current = cardPosition(card);
+  const input = window.prompt(`请输入新的卡组内顺序（1-${items.length}）：`, String(current));
+  if (input === null) return;
+  const value = Number(input);
+  if (!Number.isFinite(value)) return toast('请输入有效的卡组内顺序。');
+  const target = Math.max(1, Math.min(items.length, Math.round(value)));
+  if (target === current) return;
+  pendingCardOrder = { cardId, target, current };
+  openDeleteConfirm('card-order', cardId, `调整卡片顺序为 -${target}-？`, `当前顺序为 -${current}-，同卡组其他卡片会自动顺延。`);
+}
+
+function confirmCardOrderChange() {
+  const change = pendingCardOrder;
+  pendingCardOrder = null;
+  if (!change) return;
+  const card = state.cards.find((item) => item.id === change.cardId);
+  if (!card) return;
+  const items = groupCards(card.folder || '未分组');
+  const current = cardPosition(card);
+  const target = Math.max(1, Math.min(items.length, Math.round(change.target)));
+  if (target === current) return;
+  if (target < current) items.forEach((item) => { if (item.id !== card.id && item.order >= target && item.order < current) item.order += 1; });
+  else items.forEach((item) => { if (item.id !== card.id && item.order > current && item.order <= target) item.order -= 1; });
+  card.order = target;
+  ensureCardOrder(state.cards);
+  save();
+  renderCards();
+  toast(`已调整为卡组第 ${target} 张。`);
+}
+
 function buildQueue() {
   const reviewedToday = state.reviewLog[today()] || 0;
   const remaining = Math.max(0, (Number(state.settings.dailyLimit) || 50) - reviewedToday);
@@ -332,6 +501,8 @@ function answerCard(card, selected, submit = false) { if (answered) return; if (
 function answerNoteCardLegacy(card, rating) { if (answered) return; recordReviewLegacy(card, rating); }
 function recordReviewLegacy(card, rating) { recordReview(card, rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : 'Again'); }
 function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisplayCard = null; index += 1; buildQueue(); renderDock(); renderStandalone(); }
+function retryCurrentReview() { if (!reviewDisplayCard) return; answered = false; answer = []; pendingCorrect = false; pendingReviewCardId = ''; reviewSnapshot = null; renderDock(); renderStandalone(); }
+function reviewActionButtons(card) { return `<div class="review-space-actions"><button type="button" class="review-action-button" data-review-action="retry">再选一次</button><button type="button" class="review-action-button primary-review-action" data-review-action="next">${card.type === 'note' ? '下一条' : '下一题'}</button></div>`; }
 function progress() {
   const done = Number(state.reviewLog[today()] || 0);
   const planned = Math.max(done + queue.length, done, 1);
@@ -351,9 +522,9 @@ function renderHeatmaps() { renderGithubHeatmap(els.heatmap); renderGithubHeatma
 function renderGithubHeatmap(box) { if (!box) return; const weeks = box.classList.contains('compact') ? 26 : 52; const totalDays = weeks * 7; const now = new Date(); now.setHours(0, 0, 0, 0); const start = new Date(now.getTime() - (totalDays - 1) * DAY); box.classList.remove('monthly-heatmap'); box.classList.add('github-heatmap'); box.innerHTML = ''; for (let i = 0; i < totalDays; i += 1) { const date = new Date(start.getTime() + i * DAY); const key = dateKey(date); const count = state.reviewLog[key] || 0; const cell = document.createElement('button'); cell.type = 'button'; cell.className = `heat-cell ${count > 30 ? 'heat-3' : count > 10 ? 'heat-2' : count ? 'heat-1' : ''}`; cell.title = `${key} · ${count} 次复习${i === totalDays - 1 ? ' · 今天' : ''}`; cell.setAttribute('aria-label', `${key}，${count} 次复习${i === totalDays - 1 ? '，今天' : ''}`); cell.dataset.date = key; if (i === totalDays - 1) cell.classList.add('today-cell'); cell.addEventListener('click', () => { $$('.heat-cell.selected').forEach((item) => item.classList.remove('selected')); cell.classList.add('selected'); toast(`${key} · ${count} 次复习`); }); box.appendChild(cell); } }
 
 function renderProfile() { const todayCount = state.reviewLog[today()] || 0; const stats = [['#i-folder-plus', state.folders.length, '文件夹'], ['#i-file', state.documents.length, '文档'], ['#i-layers', state.cards.length, '卡片'], ['#i-review', todayCount, '今日复习'], ['#i-flame', `${streak()}天`, '连续打卡'], ['#i-review', totalReviews(), '累计复习']]; $('#profileStats').innerHTML = stats.map(([icon, value, label]) => `<div class="stat-box"><svg><use href="${icon}"></use></svg><b>${value}</b><span>${label}</span></div>`).join(''); renderGithubHeatmap(els.profileHeatmap); $('#profileDays').textContent = `${Object.keys(state.reviewLog).length} 天有记录`; $('#profileReviewCount').textContent = `共 ${totalReviews()} 次复习`; }
-function renderTrash() { $$('.trash-tabs [data-trash-tab]').forEach((button) => button.classList.toggle('active', button.dataset.trashTab === trashTab)); const list = state.trash[trashTab] || []; const box = $('#trashContent'); if (!list.length) { box.innerHTML = '<div class="trash-empty"><div class="trash-empty-icon"><svg><use href="#i-trash"></use></svg></div><strong>回收站为空</strong><p>删除的内容会显示在这里，你可以随时恢复。</p></div>'; return; } const icon = trashTab === 'folders' ? '#i-folder' : trashTab === 'cards' ? '#i-layers' : '#i-file'; box.innerHTML = list.map((item, i) => { const data = trashTab === 'folders' ? item.folder : item; const label = trashTab === 'folders' ? `包含 ${item.documents.length} 篇文档` : trashTab === 'cards' ? `${data.type === 'note' ? '速记词条' : '复习卡片'} · ${data.tags?.join('、') || '未分组'}` : '知识文档'; const preview = trashTab === 'folders' ? item.documents.map((doc) => doc.title).join('、') || '文件夹为空' : trashTab === 'cards' ? (data.type === 'note' ? data.noteContent : data.explanation || Object.values(data.options || {}).filter(Boolean).join(' · ')) : String(data.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); return `<article class="trash-item"><div class="trash-item-icon"><svg><use href="${icon}"></use></svg></div><div class="trash-item-main"><strong>${esc(data.name || data.title || data.question)}</strong><span>${esc(label)}</span><p>${esc(preview || '暂无内容预览')}</p></div><div class="trash-item-actions"><button data-restore="${i}">恢复</button><button class="danger" data-permanent="${i}">彻底删除</button></div></article>`; }).join(''); box.querySelectorAll('[data-restore]').forEach((button) => button.addEventListener('click', () => restoreTrash(Number(button.dataset.restore)))); box.querySelectorAll('[data-permanent]').forEach((button) => button.addEventListener('click', () => { state.trash[trashTab].splice(Number(button.dataset.permanent), 1); save(); renderTrash(); })); }
+function renderTrash() { $$('.trash-tabs [data-trash-tab]').forEach((button) => button.classList.toggle('active', button.dataset.trashTab === trashTab)); const list = state.trash[trashTab] || []; const box = $('#trashContent'); if (!list.length) { box.innerHTML = '<div class="trash-empty"><div class="trash-empty-icon"><svg><use href="#i-trash"></use></svg></div><strong>回收站为空</strong><p>删除的内容会显示在这里，你可以随时恢复。</p></div>'; return; } const icon = trashTab === 'folders' ? '#i-folder' : trashTab === 'cards' ? '#i-layers' : '#i-file'; box.innerHTML = list.map((item, i) => { const data = trashTab === 'folders' ? item.folder : item; const label = trashTab === 'folders' ? `包含 ${item.documents.length} 篇文档` : trashTab === 'cards' ? `${data.type === 'note' ? '速记词条' : '复习卡片'} · ${data.tags?.join('、') || '未分组'}` : '知识文档'; const preview = trashTab === 'folders' ? item.documents.map((doc) => doc.title).join('、') || '文件夹为空' : trashTab === 'cards' ? (data.type === 'note' ? data.noteContent : data.explanation || Object.values(data.options || {}).filter(Boolean).join(' · ')) : String(data.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); return `<article class="trash-item"><div class="trash-item-icon"><svg><use href="${icon}"></use></svg></div><div class="trash-item-main"><strong>${esc(data.name || data.title || data.question)}</strong><span>${esc(label)}</span><p>${esc(preview || '暂无内容预览')}</p></div><div class="trash-item-actions"><button data-restore="${i}">恢复</button><button class="danger" data-permanent="${i}">彻底删除</button></div></article>`; }).join(''); box.querySelectorAll('[data-restore]').forEach((button) => button.addEventListener('click', () => restoreTrash(Number(button.dataset.restore)))); box.querySelectorAll('[data-permanent]').forEach((button) => button.addEventListener('click', () => { const index = Number(button.dataset.permanent); const item = state.trash[trashTab][index]; const name = trashTab === 'folders' ? item.folder.name : item.title || item.question || '此内容'; openDeleteConfirm('trash-item', String(index), `永久删除“${name}”？`, '永久删除后无法恢复。', '永久删除'); })); }
 function restoreTrash(at) { const item = state.trash[trashTab][at]; if (!item) return; if (trashTab === 'documents') state.documents.push(normDoc(item)); if (trashTab === 'cards') state.cards.push(normCard(item)); if (trashTab === 'folders') { state.folders.push(item.folder); state.documents.push(...item.documents.map(normDoc)); } state.trash[trashTab].splice(at, 1); save(); refresh(); toast('内容已恢复。'); }
-function emptyTrash() { if (!state.trash[trashTab]?.length) return toast('当前分类没有内容。'); if (!confirm('确定彻底删除当前分类吗？')) return; state.trash[trashTab] = []; save(); renderTrash(); toast('回收站已清理。'); }
+function emptyTrash() { if (!state.trash[trashTab]?.length) return toast('当前分类没有内容。'); openDeleteConfirm('trash-all', trashTab, '清空当前回收站分类？', '此操作会永久删除当前分类中的全部内容，无法恢复。', '永久删除'); }
 function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(days * 24 * 60))} 分钟`; if (days < 2) return `${Math.max(1, Math.round(days * 24))} 小时`; return `${Math.round(days)} 天`; }
 function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); if ($('#storagePath')) $('#storagePath').textContent = state.settings.dataDirectory || '尚未选择外部数据目录'; }
 function settings() { if (Number(els.dailyLimit.value) <= 0 || Number(els.dailyNewLimit.value) < 0) { els.dailyLimit.value = Math.max(1, Number(els.dailyLimit.value) || 1); els.dailyNewLimit.value = Math.max(0, Number(els.dailyNewLimit.value) || 0); return toast('复习上限必须有效。'); } state.settings.desiredRetention = Math.min(0.99, Math.max(0.8, Number(els.desiredRetention.value) || 0.9)); state.settings.dailyLimit = Number(els.dailyLimit.value); state.settings.dailyNewLimit = Number(els.dailyNewLimit.value); save(); syncSettings(); buildQueue(); progress(); }
@@ -379,7 +550,7 @@ function renderQuestion(box, card, standalone) {
     box.innerHTML = '<div class="review-complete"><div class="complete-mark"><svg><use href="#i-review"></use></svg></div><div class="completion-kicker">REVIEW SESSION</div><h2>今日复习已完成</h2><p>本次复习计划已经完成，明天继续保持。</p><button class="secondary-action" data-view="cards">查看卡片库</button></div>';
     box.querySelector('[data-view]')?.addEventListener('click', () => view('cards'));
     els.nextButton.disabled = true;
-    els.nextButton.textContent = '下一条';
+    els.nextButton.hidden = true;
     return;
   }
   shell?.classList.remove('is-complete');
@@ -387,7 +558,7 @@ function renderQuestion(box, card, standalone) {
   const head = `<div class="tag-row"><span class="tag">${esc(card.tags[0] || '未分组')}</span><span class="question-type">${card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'}</span></div><div class="question-title">${cardHtml(card.question)}</div>`;
   if (card.type === 'note') {
     const rating = NOTE_RATINGS[card.noteRating];
-    const stamp = answered && rating ? `<div class="note-stamp ${rating.className}" aria-label="${rating.label}"><span>${rating.label}</span></div>` : '';
+    const stamp = state.settings.showStamps !== false && answered && rating ? `<div class="note-stamp ${rating.className}" aria-label="${rating.label}"><span>${rating.label}</span></div>` : '';
     box.innerHTML = `${head}<div class="note-review-body ${answered ? 'is-reviewed' : ''}">${stamp}<div class="note-answer-content">${noteMarkdownHtml(card.noteContent)}</div></div><div class="note-rating-block ${answered ? 'is-complete' : ''}">${answered ? '' : '<p>根据回忆程度选择反馈</p><div class="note-rating-actions"><div class="note-rating-main">' + Object.entries(NOTE_RATINGS).map(([value, meta], index) => `<button class="note-rating ${meta.className}" data-rating="${value}" data-shortcut="${index + 1}"><span class="keycap">${index + 1}</span><strong>${meta.label}</strong></button>`).join('') + '</div></div>'}</div>`;
     box.querySelectorAll('[data-rating]').forEach((button) => button.addEventListener('click', () => answerNoteCard(card, button.dataset.rating)));
     els.nextButton.textContent = '下一条';
@@ -415,14 +586,10 @@ function renderQuestion(box, card, standalone) {
     }
     els.nextButton.textContent = '下一题';
   }
-  els.nextButton.disabled = !answered || pendingReviewCardId === card.id;
-  if (standalone && answered && !pendingReviewCardId) {
-    const nextButton = document.createElement('button');
-    nextButton.className = 'next-button';
-    nextButton.textContent = card.type === 'note' ? '下一条' : '下一题';
-    nextButton.addEventListener('click', next);
-    box.appendChild(nextButton);
-  }
+  els.nextButton.disabled = true;
+  els.nextButton.hidden = true;
+  if (answered && reviewDisplayCard?.id === card.id) box.insertAdjacentHTML('beforeend', reviewActionButtons(card));
+  box.querySelectorAll('[data-review-action]').forEach((button) => button.addEventListener('click', () => button.dataset.reviewAction === 'retry' ? retryCurrentReview() : next()));
   box.querySelectorAll('[data-fsrs-grade]').forEach((button) => button.addEventListener('click', () => recordReview(card, button.dataset.fsrsGrade)));
 }
 
@@ -442,6 +609,13 @@ function answerNoteCard(card, rating) {
 
 document.addEventListener('keydown', (event) => {
   if (event.target.matches('input, textarea, select, [contenteditable="true"]')) return;
+  const key = event.key.toLowerCase();
+  if (answered && reviewDisplayCard && (key === 'q' || key === 'e')) {
+    event.preventDefault();
+    if (key === 'q') retryCurrentReview();
+    else next();
+    return;
+  }
   if (!queue[index] || answered) return;
   const button = $(`#questionCard [data-shortcut="${event.key}"]`);
   if (button) { event.preventDefault(); button.click(); }
@@ -478,6 +652,7 @@ function recordReview(card, rating) {
     elapsedDays: result.log.elapsedDays,
     scheduledDays: result.log.scheduledDays
   });
+  reviewDisplayCard = card;
   pendingReviewCardId = '';
   pendingCorrect = false;
   save();
@@ -493,5 +668,5 @@ function toast(message) { const box = els.toast; const label = box.querySelector
 document.addEventListener('DOMContentLoaded', init);
 
 // Replace the native confirmation with the themed dialog when the card-library code calls it.
-function deleteCardGroup(group) { const cards = state.cards.filter((card) => card.folder === group); const modal = $('#deleteGroupModal'); if (!modal) return; modal.dataset.group = group; $('#deleteGroupTitle').textContent = `删除“${group}”？`; $('#deleteGroupDescription').textContent = cards.length ? `该卡组包含 ${cards.length} 张卡片，删除后卡片会移入回收站。` : '该卡组没有卡片，删除后仍可在回收站中恢复。'; modal.showModal(); }
+function deleteCardGroup(group) { const cards = state.cards.filter((card) => card.folder === group); openDeleteConfirm('card-group', group, `删除卡组“${group}”？`, cards.length ? `该卡组包含 ${cards.length} 张卡片，删除后卡片会移入回收站。` : '该卡组没有卡片，删除后仍可在回收站中恢复。'); }
 function confirmDeleteCardGroup() { const modal = $('#deleteGroupModal'); const group = modal?.dataset.group; if (!group) return; const cards = state.cards.filter((card) => card.folder === group); state.trash.cards.push(...cards); state.cards = state.cards.filter((card) => card.folder !== group); state.groups = state.groups.filter((item) => item !== group); if (els.folderFilter.value === group) { els.folderFilter.value = '全部文件夹'; syncCustomSelect(els.folderFilter); } cards.forEach((card) => selectedCardIds.delete(card.id)); save(); modal.close(); refresh(); toast(`卡组“${group}”已移入回收站。`); }
