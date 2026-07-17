@@ -17,10 +17,10 @@ if (process.env.KR_DISABLE_GPU !== '0') {
 
 const createWindow = () => {
   const win = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 1120,
-    minHeight: 720,
+    width: 1600,
+    height: 1000,
+    minWidth: 1200,
+    minHeight: 760,
     frame: false,
     resizable: true,
     title: '知识管理与复习工具',
