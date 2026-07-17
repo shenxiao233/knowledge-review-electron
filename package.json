@@ -1,22 +1,26 @@
-﻿{
-    "name":  "knowledge-review-electron",
-    "version":  "0.1.0",
-    "description":  "Knowledge management and spaced-review desktop app built with Electron.",
-    "main":  "src/main.js",
-    "scripts":  {
-                    "start":  "electron .",
-                    "dev":  "electron .",
-                    "check":  "node --check src/main.js \u0026\u0026 node --check src/preload.js \u0026\u0026 node --check src/renderer.js",
-                    "doctor":  "node scripts/doctor.js"
-                },
-    "keywords":  [
-                     "electron",
-                     "knowledge-management",
-                     "spaced-repetition",
-                     "markdown"
-                 ],
-    "license":  "MIT",
-    "devDependencies":  {
-                            "electron":  "^28.3.3"
-                        }
+{
+    "name": "knowledge-review-electron",
+    "version": "0.1.0",
+    "description": "Knowledge management and spaced-review desktop app built with Electron.",
+    "main": "src/main.js",
+    "scripts": {
+        "start": "electron .",
+        "dev": "electron .",
+        "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js",
+        "doctor": "node scripts/doctor.js",
+        "test:fsrs": "node scripts/test-fsrs.js"
+    },
+    "keywords": [
+        "electron",
+        "knowledge-management",
+        "spaced-repetition",
+        "markdown"
+    ],
+    "license": "MIT",
+    "devDependencies": {
+        "electron": "^28.3.3"
+    },
+    "dependencies": {
+        "ts-fsrs": "^5.4.1"
+    }
 }

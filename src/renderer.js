@@ -3,7 +3,8 @@ const OPTS = ['A', 'B', 'C', 'D'];
 const NOTE_RATINGS = {
   familiar: { label: '熟悉', className: 'familiar' },
   fuzzy: { label: '模糊', className: 'fuzzy' },
-  forgot: { label: '没印象', className: 'forgot' }
+  forgot: { label: '没印象', className: 'forgot' },
+  tooEasy: { label: '太简单', className: 'too-easy' }
 };
 const DAY = 86400000;
 const $ = (q) => document.querySelector(q);
@@ -18,6 +19,7 @@ const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&':
 const formatDate = (value) => new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
 
 const sampleDocs = [
+  { id: 'doc-fsrs-guide', folderId: 'folder-study', title: 'FSRS 复习算法更新说明与使用指南', updatedAt: '2026-07-17T09:00:00.000Z', createdAt: '2026-07-17T09:00:00.000Z', html: '<h1>FSRS 复习算法更新说明与使用指南</h1><p>本次版本将原有的简化间隔公式升级为 FSRS（Free Spaced Repetition Scheduler），根据每次复习评分估算记忆稳定性和难度，并安排更适合你的下一次复习时间。</p><h2>一、本次更新</h2><ul><li>使用成熟的 FSRS 调度算法替代旧的 ease 和 interval 计算。</li><li>保留已有卡片、标签、复习次数和打卡记录，首次启动时自动迁移卡片状态。</li><li>复习记录增加评分、记忆状态、稳定性、难度和下次复习时间。</li><li>新增每日新卡上限和目标记忆保持率设置。</li></ul><h2>二、如何复习</h2><h3>选择题</h3><ol><li>选择一个答案，系统立即显示对错和解析。</li><li>答题后选择本次回忆质量：Again、Hard、Good 或 Easy。</li><li>完成评分后点击“下一题”，FSRS 会保存新的复习计划。</li></ol><h3>速记词条</h3><ol><li>阅读词条和 Markdown 格式的内容。</li><li>根据实际回忆程度选择“没印象、模糊、熟悉”。</li><li>系统会在卡片上盖上对应熟练度印章，并进入下一条。</li></ol><h2>三、评分含义</h2><ul><li><strong>Again</strong>：没有回忆起来，需要尽快重新学习。</li><li><strong>Hard</strong>：想起来了，但过程比较困难或不稳定。</li><li><strong>Good</strong>：正常回忆，答案基本准确。</li><li><strong>Easy</strong>：非常熟练，几乎不需要思考。</li></ul><p>选择题答错后系统只提供 Again；答对后建议根据真实回忆难度选择 Hard、Good 或 Easy，不要因为“猜对”就选择 Easy。</p><h2>四、FSRS 设置</h2><h3>目标记忆保持率</h3><p>表示希望在计划复习时仍能回忆起来的概率，默认值为 90%。数值越高，复习间隔越短、复习频率越高；数值越低，间隔会更长。建议先使用 90%，连续使用一段时间后再调整。</p><h3>每日复习上限</h3><p>限制当天最多完成的复习操作次数。同一张卡片当天因 Again 再次出现时，每次复习都会计入上限。</p><h3>每日新卡上限</h3><p>限制当天首次进入学习流程的新卡数量。建议从 5 到 10 张开始，避免一次引入过多新内容。</p><h2>五、间隔预览</h2><p>设置页面会展示新卡在 Again、Hard、Good、Easy 四种评分下的首次安排时间。实际间隔还会受到卡片历史、上次复习时间和记忆状态影响。</p><h2>六、数据与迁移</h2><p>卡片和复习数据仍保存在应用本地存储中。升级到 FSRS 时不会清空数据；旧卡片会根据原有复习次数和间隔生成兼容的 FSRS 初始状态。建议在设置页面先导出一份完整数据备份。</p><h2>七、使用建议</h2><ul><li>根据真实回忆情况评分，不要为了延长间隔而高估熟练度。</li><li>每天保持稳定复习，优先完成到期卡片。</li><li>速记词条内容支持标题、列表、引用、代码、链接和图片等 Markdown 展示。</li><li>观察一到两周后再调整目标记忆保持率。</li></ul>' },
   { id: 'doc-study', folderId: 'folder-study', title: '间隔重复学习法', html: '<h1>间隔重复学习法</h1><p>间隔重复是在遗忘曲线下降之前安排复习，逐步拉长复习间隔。</p><h2>核心原则</h2><ul><li>主动回忆</li><li>逐步延长间隔</li><li>错误内容及时再现</li></ul>' },
   { id: 'doc-reading', folderId: 'folder-study', title: '高效阅读与知识整理', html: '<h1>高效阅读与知识整理</h1><p>阅读的目标不是划线数量，而是把信息转化为可检索、可解释和可复用的知识。</p><h2>阅读前</h2><ul><li>明确阅读问题</li><li>快速浏览目录和摘要</li></ul><h2>阅读后</h2><ul><li>用自己的语言写摘要</li><li>提炼概念并建立卡片</li></ul>' },
   { id: 'doc-react', folderId: 'folder-frontend', title: 'React Hooks 核心概念', html: '<h1>React Hooks 核心概念</h1><p>React Hooks 让函数组件拥有状态管理和生命周期能力。</p><h2>基础 Hooks</h2><ul><li><strong>useState</strong> - 状态管理</li><li><strong>useEffect</strong> - 副作用处理</li><li><strong>useMemo</strong> - 值记忆化</li></ul>' }
@@ -42,7 +44,10 @@ const base = {
   activeDocId: 'doc-react',
   cards: sampleCards,
   reviewLog: {},
-  settings: { forgettingFactor: 2.5, dailyLimit: 50 },
+  reviewEvents: [],
+  schemaVersion: 3,
+  algorithm: 'fsrs',
+  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10 },
   selectedCardId: sampleCards[0].id,
   extractedText: '',
   groups: ['学习科学', '前端技术'],
@@ -55,6 +60,9 @@ let queue = [];
 let index = 0;
 let answered = false;
 let answer = [];
+let pendingReviewCardId = '';
+let pendingCorrect = false;
+let reviewDisplayCard = null;
 let selectedCardIds = new Set();
 let lastNext = 0;
 let batchCardMode = false;
@@ -69,7 +77,7 @@ let documentQuery = '';
 function normCard(card) {
   const type = ['single', 'multiple', 'note'].includes(card.type) ? card.type : 'single';
   const answers = Array.isArray(card.answer) ? card.answer : card.answer ? [card.answer] : [];
-  return {
+  const normalized = {
     ...card,
     id: card.id || id('card'),
     type,
@@ -85,8 +93,15 @@ function normCard(card) {
     createdAt: card.createdAt || new Date().toISOString(),
     ease: Number(card.ease || 2.5),
     interval: Number(card.interval || 1),
-    reviews: Number(card.reviews || 0)
+    reviews: Number(card.reviews || 0),
+    mastery: ['tooEasy', 'familiar', 'fuzzy', 'forgot'].includes(card.mastery) ? card.mastery : (card.noteRating || ''),
+    fsrs: card.fsrs || null
   };
+  normalized.fsrs = window.knowledgeFSRS.migrate(normalized);
+  normalized.dueAt = normalized.fsrs.due;
+  normalized.interval = normalized.fsrs.scheduledDays;
+  normalized.reviews = normalized.fsrs.reps;
+  return normalized;
 }
 function normDoc(doc) {
   return { ...doc, id: doc.id || id('doc'), folderId: doc.folderId || null, title: doc.title || '未命名文档', html: doc.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>', createdAt: doc.createdAt || new Date().toISOString(), updatedAt: doc.updatedAt || doc.createdAt || new Date().toISOString() };
@@ -97,15 +112,21 @@ function load() {
     if (!raw) return { ...structuredClone(base), documents: sampleDocs.map(normDoc) };
     const saved = JSON.parse(raw);
     const documents = Array.isArray(saved.documents) && saved.documents.length ? saved.documents.map(normDoc) : structuredClone(sampleDocs);
-    sampleDocs.forEach((doc) => { if (!documents.some((item) => item.id === doc.id)) documents.push(structuredClone(doc)); });
+    sampleDocs.forEach((doc) => { if (!documents.some((item) => item.id === doc.id)) documents.push(normDoc(doc)); });
     const cards = Array.isArray(saved.cards) && saved.cards.length ? saved.cards.map(normCard) : structuredClone(sampleCards);
+    const latestMastery = new Map();
+    (Array.isArray(saved.reviewEvents) ? saved.reviewEvents : []).forEach((event) => { if (event.cardId && event.rating) latestMastery.set(event.cardId, event.rating === 'Easy' ? 'tooEasy' : event.rating === 'Good' ? 'familiar' : event.rating === 'Hard' ? 'fuzzy' : 'forgot'); });
+    cards.forEach((card) => { if (!card.mastery && latestMastery.has(card.id)) card.mastery = latestMastery.get(card.id); });
     return {
       ...structuredClone(base), ...saved,
       folders: Array.isArray(saved.folders) && saved.folders.length ? saved.folders : structuredClone(sampleFolders),
       documents,
       cards,
       reviewLog: saved.reviewLog || {},
-      settings: { ...base.settings, ...(saved.settings || {}) },
+      reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
+      schemaVersion: 3,
+      algorithm: 'fsrs',
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9) },
       trash: { ...base.trash, ...(saved.trash || {}) },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
       activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
@@ -119,9 +140,14 @@ function save() {
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'forgettingFactor', 'forgettingValue', 'dailyLimit', 'intervalPreview'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview'].forEach((key) => { els[key] = document.getElementById(key); });
 }
-function init() { cache(); enhanceSelectsPortal(); bind(); loadDoc(); syncSettings(); refresh(); }
+function ensureFSRSSettingsPanel() {
+  const panel = $('#algorithmPanel');
+  if (!panel) return;
+  panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div>';
+}
+function init() { cache(); ensureFSRSSettingsPanel(); cache(); enhanceSelectsPortal(); bind(); loadDoc(); syncSettings(); refresh(); }
 function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
 function toggleBatchCardMode() { batchCardMode = !batchCardMode; const button = $('#batchModeButton'); button?.classList.toggle('active', batchCardMode); button.textContent = batchCardMode ? '批量制卡中' : '批量制卡'; els.cardModal?.classList.toggle('batch-mode', batchCardMode); }
 function closeSelectMenus(except = null) { $$('.select-shell.open').filter((shell) => shell !== except).forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); shell._selectMenu?.classList.remove('portal-open'); }); }
@@ -173,7 +199,6 @@ function bind() {
   $('#confirmExportButton').addEventListener('click', exportCards);
   $('#importButton').addEventListener('click', importCards);
   els.cardSearchInput.addEventListener('input', renderCards);
-  els.folderFilter.addEventListener('change', renderCards);
   els.tagFilter.addEventListener('change', renderCards);
   els.cardTypeFilter.addEventListener('change', renderCards);
   els.cardStatusFilter.addEventListener('change', renderCards);
@@ -181,6 +206,8 @@ function bind() {
   $('#selectAllCardsButton').addEventListener('click', toggleSelectAllCards);
   $('#clearCardSelectionButton').addEventListener('click', clearCardSelection);
   $('#bulkDeleteCardsButton').addEventListener('click', bulkDeleteCards);
+  $('#toggleCardGroupsButton').addEventListener('click', toggleCardGroups);
+  $('#cardList').addEventListener('click', (event) => { const button = event.target.closest('[data-card-reset]'); if (!button) return; event.stopPropagation(); resetCardMastery(button.dataset.cardReset); });
   $('#newGroupButton').addEventListener('click', openCreateGroup);
   $('#cancelDeleteGroupButton').addEventListener('click', () => $('#deleteGroupModal').close());
   $('#confirmDeleteGroupButton').addEventListener('click', confirmDeleteCardGroup);
@@ -200,7 +227,7 @@ function bind() {
   $('#toggleOutlineButton').addEventListener('click', toggleOutline);
   $('#toggleReviewButton').addEventListener('click', toggleReview);
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => setting(button.dataset.setting)));
-  [els.forgettingFactor, els.dailyLimit].forEach((input) => input.addEventListener('input', settings));
+  [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
 }
 function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') renderStandalone(); if (name === 'profile') renderProfile(); if (name === 'trash') renderTrash(); }
@@ -238,7 +265,8 @@ function insertCardImage(targetId) { const url = prompt('图片地址', 'https:/
 function markdownUrl(value, fallback = '#') { const url = String(value || '').trim(); return /^(https?:|mailto:|#|data:image\/)/i.test(url) ? esc(url) : fallback; }
 function cardHtml(value) { return esc(String(value || '')).replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_, alt, url) => `<img src="${markdownUrl(url)}" alt="${esc(alt)}" loading="lazy">`).replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => `<a href="${markdownUrl(url)}" target="_blank" rel="noreferrer">${label}</a>`).replace(/\n/g, '<br>'); }
 function noteMarkdownHtml(value) { const raw = String(value || '').trim(); if (!raw) return '<p class="note-empty-content">暂无速记内容</p>'; if (/^\s*<(p|h[1-6]|ul|ol|blockquote|pre|img|a)\b/i.test(raw)) return sanitizeClipboardHtml(raw); return markdownToHtml(raw, { noteEntries: true }); }
-function noteRatingBadge(card) { const rating = NOTE_RATINGS[card.noteRating]; return rating ? `<span class="review-stamp-mini ${rating.className}">${rating.label}</span>` : '<span class="review-stamp-mini pending">未评价</span>'; }
+function masteryMeta(card) { const value = card.mastery || (card.type === 'note' ? card.noteRating : ''); return value && NOTE_RATINGS[value] ? NOTE_RATINGS[value] : null; }
+function noteRatingBadge(card) { const rating = masteryMeta(card); return rating ? `<span class="review-stamp-mini ${rating.className}">${rating.label}</span>` : '<span class="review-stamp-mini pending">未评价</span>'; }
 function saveCard(event) { event.preventDefault(); const type = els.cardTypeSelect.value; const folder = els.cardGroupSelect.value || '未分组'; const tags = String($('#tagInput').value || '').split(/[,，]/).map((item) => item.trim()).filter(Boolean); const options = { A: $('#optionA').value.trim(), B: $('#optionB').value.trim(), C: $('#optionC').value.trim(), D: $('#optionD').value.trim() }; const selected = [...document.querySelectorAll('input[name="answer"]:checked')].map((input) => input.value); const question = $('#questionInput').value.trim(); if (!question) return toast('请填写题干或词条。'); if (type === 'note') { if (!$('#noteContentInput').value.trim()) return toast('请填写速记内容。'); } else { if (!selected.length) return toast('请选择正确答案。'); if (type === 'multiple' && selected.length < 2) return toast('多选题至少选择两个答案。'); if (!Object.values(options).some(Boolean)) return toast('至少填写一个选项。'); } const data = normCard({ id: els.cardModal.dataset.editingId || id('card'), type, folder, question, options, answer: selected, noteContent: $('#noteContentInput').value.trim(), explanation: $('#explanationInput').value.trim(), tags: tags.length ? tags : [folder] }); const old = state.cards.findIndex((item) => item.id === data.id); if (old >= 0) state.cards[old] = { ...state.cards[old], ...data }; else state.cards.push(data); state.groups = [...new Set([...(state.groups || []), folder])]; state.selectedCardId = data.id; save(); answered = false; refresh(); if (old >= 0 || !batchCardMode) { els.cardModal.close(); toast(old >= 0 ? '卡片已更新。' : '卡片已保存。'); } else { resetBatchCardForm(); toast('卡片已保存，可继续创建下一张。'); } }
 function resetBatchCardForm() { const group = els.cardGroupSelect.value; const type = els.cardTypeSelect.value; els.cardForm.reset(); els.cardModal.dataset.editingId = ''; els.cardForm.dataset.autoTag = 'true'; els.cardGroupSelect.value = group; syncCustomSelect(els.cardGroupSelect); els.cardTypeSelect.value = type; syncCustomSelect(els.cardTypeSelect); $('#tagInput').value = group || '未分组'; renderCardTypeFields(); renderAnswerChoices(); $('#questionInput').focus(); }
 
@@ -262,37 +290,61 @@ function createItem(event) { event.preventDefault(); const name = $('#createName
 function trashDoc(docId) { const at = state.documents.findIndex((doc) => doc.id === docId); if (at < 0) return; state.trash.documents.push(state.documents.splice(at, 1)[0]); if (state.activeDocId === docId) state.activeDocId = state.documents[0]?.id || ''; save(); loadDoc(); refresh(); toast('文档已移入回收站。'); }
 function trashFolder(folderId) { const at = state.folders.findIndex((folder) => folder.id === folderId); if (at < 0) return; const folder = state.folders.splice(at, 1)[0]; const documents = state.documents.filter((doc) => doc.folderId === folderId); state.documents = state.documents.filter((doc) => doc.folderId !== folderId); state.trash.folders.push({ folder, documents }); if (documents.some((doc) => doc.id === state.activeDocId)) state.activeDocId = state.documents[0]?.id || ''; save(); loadDoc(); refresh(); toast('文件夹已移入回收站。'); }
 
-function cardMatches(card) { const query = els.cardSearchInput.value.trim().toLowerCase(); const folder = els.folderFilter.value; const tag = els.tagFilter.value; const type = els.cardTypeFilter.value; const status = els.cardStatusFilter.value; return (!query || [card.question, card.folder, card.tags.join(' '), card.noteContent].join(' ').toLowerCase().includes(query)) && (!folder || folder === '全部文件夹' || card.folder === folder) && (!tag || tag === '全部标签' || card.tags.includes(tag)) && (!type || type === '全部类型' || card.type === type) && (!status || status === '全部状态' || status === (isDue(card) ? 'due' : 'mastered')); }
+function cardMatches(card) { const query = els.cardSearchInput.value.trim().toLowerCase(); const folder = els.folderFilter.value; const tag = els.tagFilter.value; const type = els.cardTypeFilter.value; const status = els.cardStatusFilter.value; const mastery = card.mastery || ''; return (!query || [card.question, card.folder, card.tags.join(' '), card.noteContent].join(' ').toLowerCase().includes(query)) && (!folder || folder === '全部文件夹' || card.folder === folder) && (!tag || tag === '全部标签' || card.tags.includes(tag)) && (!type || type === '全部类型' || card.type === type) && (!status || status === '全部熟练度' || (status === 'unrated' ? !mastery : mastery === status)); }
 function renderCardSummary() { const due = state.cards.filter(isDue).length; const notes = state.cards.filter((card) => card.type === 'note').length; els.cardSummary.innerHTML = [['#i-layers', state.cards.length, '全部卡片'], ['#i-review', due, '待复习'], ['#i-book', notes, '速记词条'], ['#i-flame', totalReviews(), '累计复习']].map(([icon, value, label]) => `<div class="card-summary-item"><svg><use href="${icon}"></use></svg><div><b>${value}</b><span>${label}</span></div></div>`).join(''); $('#cardTotalBadge').textContent = `${state.cards.length} 张`; }
 function renderCardGroups() { const groups = [...new Set([...(state.groups || []), ...state.cards.map((card) => card.folder)])]; state.groups = groups; $('#cardGroupCount').textContent = groups.length; els.cardGroupRail.innerHTML = `<div class="card-group-row"><button class="card-group-link ${els.folderFilter.value === '全部文件夹' ? 'active' : ''}" data-group="全部文件夹"><span class="group-dot all"></span><span>全部卡片</span><b>${state.cards.length}</b></button></div>` + groups.map((group) => `<div class="card-group-row sortable-group-row" draggable="true" data-sort-group="${esc(group)}"><button class="card-group-link ${els.folderFilter.value === group ? 'active' : ''}" data-group="${esc(group)}"><span class="group-dot"></span><span>${esc(group)}</span><b>${state.cards.filter((card) => card.folder === group).length}</b></button><button class="card-group-delete" title="删除卡组" data-group-delete="${esc(group)}"><svg><use href="#i-trash"></use></svg></button></div>`).join(''); els.cardGroupRail.querySelectorAll('[data-group]').forEach((button) => button.addEventListener('click', () => { els.folderFilter.value = button.dataset.group; syncCustomSelect(els.folderFilter); renderCards(); })); els.cardGroupRail.querySelectorAll('[data-group-delete]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); deleteCardGroup(button.dataset.groupDelete); })); bindGroupSorting(); }
+function toggleCardGroups() { const layout = document.querySelector('.card-library-layout'); const button = $('#toggleCardGroupsButton'); const collapsed = layout.classList.toggle('groups-collapsed'); button.title = collapsed ? '显示卡组侧栏' : '隐藏卡组侧栏'; button.setAttribute('aria-label', button.title); button.classList.toggle('active', collapsed); }
 function bindGroupSorting() { $$('#cardGroupRail [data-sort-group]').forEach((row) => { row.addEventListener('dragstart', (event) => { event.dataTransfer.setData('group-name', row.dataset.sortGroup); row.classList.add('dragging'); }); row.addEventListener('dragend', () => row.classList.remove('dragging')); row.addEventListener('dragover', (event) => { event.preventDefault(); row.classList.add('drag-over'); }); row.addEventListener('dragleave', () => row.classList.remove('drag-over')); row.addEventListener('drop', (event) => { event.preventDefault(); row.classList.remove('drag-over'); reorderGroups(event.dataTransfer.getData('group-name'), row.dataset.sortGroup); }); }); }
 function reorderGroups(source, target) { if (!source || !target || source === target) return; const from = state.groups.indexOf(source); const to = state.groups.indexOf(target); if (from < 0 || to < 0) return; const [group] = state.groups.splice(from, 1); state.groups.splice(to, 0, group); save(); renderCards(); toast('卡组顺序已更新。'); }
-function renderFilters() { const folders = ['全部文件夹', ...new Set(state.cards.map((card) => card.folder))]; const tags = ['全部标签', ...new Set(state.cards.flatMap((card) => card.tags))]; fill(els.folderFilter, folders); fill(els.tagFilter, tags); }
+function renderFilters() { const tags = ['全部标签', ...new Set(state.cards.flatMap((card) => card.tags))]; fill(els.tagFilter, tags); if (!els.folderFilter.value) els.folderFilter.value = '全部文件夹'; }
 function fill(select, values) { const old = select.value; select.innerHTML = values.map((value) => `<option>${esc(value)}</option>`).join(''); if (values.includes(old)) select.value = old; syncCustomSelect(select); }
 function enhanceSelectsLegacy() { $$('select').forEach((select) => { if (select.parentElement?.classList.contains('select-shell')) return; const shell = document.createElement('div'); shell.className = `select-shell${select.closest('.formatbar') ? ' format-select-shell' : ''}`; select.parentNode.insertBefore(shell, select); shell.appendChild(select); const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'select-trigger'; trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', select.title || select.getAttribute('aria-label') || '选择'); const menu = document.createElement('div'); menu.className = 'select-menu'; menu.setAttribute('role', 'listbox'); shell.append(trigger, menu); trigger.addEventListener('click', (event) => { event.stopPropagation(); const open = shell.classList.toggle('open'); trigger.setAttribute('aria-expanded', String(open)); $$('.select-shell.open').filter((item) => item !== shell).forEach((item) => { item.classList.remove('open'); item.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); if (open && (shell.classList.contains('format-select-shell') || shell.closest('.modal'))) { const rect = trigger.getBoundingClientRect(); menu.style.position = 'fixed'; menu.style.top = `${rect.bottom + 7}px`; menu.style.left = `${rect.left}px`; menu.style.right = 'auto'; menu.style.minWidth = `${Math.max(rect.width, select.id === 'blockFormat' ? 96 : 120)}px`; } }); menu.addEventListener('click', (event) => { const option = event.target.closest('[data-option]'); if (!option) return; select.value = option.dataset.option; select.dispatchEvent(new Event('change', { bubbles: true })); shell.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); }); select.addEventListener('change', () => syncCustomSelectLegacy(select)); syncCustomSelectLegacy(select); }); document.addEventListener('click', (event) => { if (!event.target.closest('.select-shell')) $$('.select-shell.open').forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); }); }
 function syncCustomSelectLegacy(select) { const shell = select?.parentElement?.classList.contains('select-shell') ? select.parentElement : null; if (!shell) return; const trigger = shell.querySelector('.select-trigger'); const menu = shell.querySelector('.select-menu'); const options = [...select.options]; trigger.textContent = options.find((option) => option.value === select.value)?.textContent || select.value || ''; menu.innerHTML = options.map((option) => `<button type="button" role="option" data-option="${esc(option.value)}" class="${option.value === select.value ? 'selected' : ''}">${esc(option.textContent)}</button>`).join(''); }
-function renderCards() { renderFilters(); renderCardSummary(); renderCardGroups(); const list = state.cards.filter(cardMatches); const folderName = els.folderFilter.value || '全部文件夹'; $('#cardListTitle').textContent = folderName; $('#cardListMeta').textContent = `${list.length} 张卡片`; els.cardList.innerHTML = list.length ? list.map((card) => { const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'; const status = card.type === 'note' ? noteRatingBadge(card) : isDue(card) ? '<span class="card-status due">待复习</span>' : '<span class="card-status">已掌握</span>'; const preview = card.type === 'note' ? noteMarkdownHtml(card.noteContent) : cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`); return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><span class="question-type">${typeLabel}</span>${status}</div><h3>${cardHtml(card.question)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${esc(tag)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button></div></div></article>`; }).join('') : '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>'; $$('#cardList .card-item').forEach((row) => row.addEventListener('click', (event) => { if (event.target.closest('[data-card-edit]')) return; const cardId = row.dataset.card; if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId); state.selectedCardId = cardId; save(); renderCards(); })); $$('#cardList [data-card-edit]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openCard(button.dataset.cardEdit); })); bindCardSorting(); updateBulkSelection(list); }
+function renderCards() { renderFilters(); renderCardSummary(); renderCardGroups(); const list = state.cards.filter(cardMatches); const folderName = els.folderFilter.value || '全部文件夹'; $('#cardListTitle').textContent = folderName === '全部文件夹' ? '全部卡片' : folderName; $('#cardListMeta').textContent = `${list.length} 张卡片`; els.cardList.innerHTML = list.length ? list.map((card) => { const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'; const status = noteRatingBadge(card); const preview = card.type === 'note' ? noteMarkdownHtml(card.noteContent) : cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`); return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><span class="question-type">${typeLabel}</span>${status}</div><h3>${cardHtml(card.question)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${esc(tag)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button><button class="card-reset-mastery" title="重置熟练度" data-card-reset="${card.id}"><svg><use href="#i-reset"></use></svg></button></div></div></article>`; }).join('') : '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>'; $$('#cardList .card-item').forEach((row) => row.addEventListener('click', (event) => { if (event.target.closest('[data-card-edit], [data-card-reset]')) return; const cardId = row.dataset.card; if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId); state.selectedCardId = cardId; save(); renderCards(); })); $$('#cardList [data-card-edit]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openCard(button.dataset.cardEdit); })); bindCardSorting(); updateBulkSelection(list); }
 function bindCardSorting() { $$('#cardList [data-card]').forEach((row) => { row.addEventListener('dragstart', (event) => { if (event.target.closest('button')) { event.preventDefault(); return; } event.dataTransfer.setData('card-id', row.dataset.card); row.classList.add('dragging'); }); row.addEventListener('dragend', () => row.classList.remove('dragging')); row.addEventListener('dragover', (event) => { event.preventDefault(); row.classList.add('drag-over'); }); row.addEventListener('dragleave', () => row.classList.remove('drag-over')); row.addEventListener('drop', (event) => { event.preventDefault(); row.classList.remove('drag-over'); reorderCards(event.dataTransfer.getData('card-id'), row.dataset.card); }); }); }
 function reorderCards(source, target) { if (!source || !target || source === target) return; const from = state.cards.findIndex((card) => card.id === source); const to = state.cards.findIndex((card) => card.id === target); if (from < 0 || to < 0) return; const [card] = state.cards.splice(from, 1); state.cards.splice(to, 0, card); save(); renderCards(); toast('卡片顺序已更新。'); }
 function updateBulkSelection(list = state.cards.filter(cardMatches)) { const count = selectedCardIds.size; els.selectedCardCount.textContent = `已选择 ${count} 张`; els.bulkSelectionBar.classList.toggle('active', count > 0); els.bulkDeleteCardsButton.disabled = count === 0; $('#selectAllCardsButton').classList.toggle('active', list.length > 0 && list.every((card) => selectedCardIds.has(card.id))); }
 function toggleSelectAllCards() { const list = state.cards.filter(cardMatches); if (list.every((card) => selectedCardIds.has(card.id))) list.forEach((card) => selectedCardIds.delete(card.id)); else list.forEach((card) => selectedCardIds.add(card.id)); renderCards(); }
 function clearCardSelection() { selectedCardIds.clear(); renderCards(); }
 function bulkDeleteCards() { const ids = new Set(selectedCardIds); if (!ids.size) return; state.trash.cards.push(...state.cards.filter((card) => ids.has(card.id))); state.cards = state.cards.filter((card) => !ids.has(card.id)); selectedCardIds.clear(); save(); refresh(); toast(`已将 ${ids.size} 张卡片移入回收站。`); }
-function clearCardFilters() { els.cardSearchInput.value = ''; els.folderFilter.value = '全部文件夹'; els.tagFilter.value = '全部标签'; els.cardTypeFilter.value = '全部类型'; els.cardStatusFilter.value = '全部状态'; [els.folderFilter, els.tagFilter, els.cardTypeFilter, els.cardStatusFilter].forEach(syncCustomSelect); renderCards(); }
+function clearCardFilters() { els.cardSearchInput.value = ''; els.folderFilter.value = '全部文件夹'; els.tagFilter.value = '全部标签'; els.cardTypeFilter.value = '全部类型'; els.cardStatusFilter.value = '全部熟练度'; [els.folderFilter, els.tagFilter, els.cardTypeFilter, els.cardStatusFilter].forEach(syncCustomSelect); renderCards(); }
+function resetCardMastery(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; card.mastery = ''; card.noteRating = ''; card.suspended = false; card.fsrs = window.knowledgeFSRS.reset(); card.dueAt = card.fsrs.due; card.interval = card.fsrs.scheduledDays; card.reviews = card.fsrs.reps; card.updatedAt = new Date().toISOString(); save(); refresh(); toast('熟练度已重置，卡片重新加入学习计划。'); }
 function trashCard(cardId) { const at = state.cards.findIndex((card) => card.id === cardId); if (at < 0) return; state.trash.cards.push(state.cards.splice(at, 1)[0]); if (state.selectedCardId === cardId) state.selectedCardId = state.cards[0]?.id || ''; save(); refresh(); toast('卡片已移入回收站。'); }
 function openCreateGroup() { $('#createGroupName').value = ''; $('#createGroupModal').showModal(); $('#createGroupName').focus(); }
 function saveGroup(event) { event.preventDefault(); const name = $('#createGroupName').value.trim(); if (!name) return toast('请输入卡组名称。'); if (state.groups.includes(name)) return toast('卡组已存在。'); state.groups.push(name); save(); $('#createGroupModal').close(); renderCards(); toast('卡组已创建。'); }
 
 function renderQuestionLegacy(box, card, standalone) { const shell = box.closest('.review-shell'); if (!card) { shell?.classList.add('is-complete'); box.innerHTML = '<div class="review-complete"><div class="complete-mark"><svg><use href="#i-review"></use></svg></div><div class="completion-kicker">REVIEW SESSION</div><h2>今日复习已完成</h2><p>本次复习计划已经完成，明天继续保持。</p><button class="secondary-action" data-view="cards">查看卡片库</button></div>'; box.querySelector('[data-view]')?.addEventListener('click', () => view('cards')); els.nextButton.disabled = true; return; } shell?.classList.remove('is-complete'); const selected = Array.isArray(answer) ? answer : []; const head = `<div class="tag-row"><span class="tag">${esc(card.tags[0] || '未分组')}</span><span class="question-type">${card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'}</span></div><div class="question-title">${cardHtml(card.question)}</div>`; if (card.type === 'note') { box.innerHTML = `${head}<div class="note-answer-content">${cardHtml(card.noteContent)}</div><div class="note-rating-block"><p>根据回忆程度选择反馈</p><div class="note-rating-actions">${[['familiar', '熟悉'], ['fuzzy', '模糊'], ['forgot', '没印象']].map(([value, label]) => `<button class="note-rating ${answered ? 'is-disabled' : ''}" data-rating="${value}" ${answered ? 'disabled' : ''}>${label}</button>`).join('')}</div></div>${answered && card.noteContent ? `<div class="explanation"><strong>速记内容</strong>${cardHtml(card.noteContent)}</div>` : ''}`; box.querySelectorAll('[data-rating]').forEach((button) => button.addEventListener('click', () => answerNoteCard(card, button.dataset.rating))); } else { box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}`; const block = box.querySelector('.options-block'); OPTS.forEach((key) => { const button = document.createElement('button'); button.className = 'option-button'; if (!answered && selected.includes(key)) button.classList.add('selected'); if (answered && card.answer.includes(key)) button.classList.add('correct'); if (answered && selected.includes(key) && !card.answer.includes(key)) button.classList.add('wrong'); button.innerHTML = `<span class="key">${key}</span><span>${cardHtml(card.options[key] || '未填写选项')}</span>`; button.disabled = answered; button.addEventListener('click', () => answerCard(card, key)); block.appendChild(button); }); if (card.type === 'multiple' && !answered) { const submit = document.createElement('button'); submit.className = 'next-button submit-answer'; submit.textContent = '提交答案'; submit.disabled = !selected.length; submit.addEventListener('click', () => finalizeMultiple(card)); box.appendChild(submit); } } els.nextButton.disabled = !answered; if (standalone && answered) { const nextButton = document.createElement('button'); nextButton.className = 'next-button'; nextButton.textContent = '下一题'; nextButton.addEventListener('click', next); box.appendChild(nextButton); } }
-function buildQueue() { queue = state.cards.filter(isDue).sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt)).slice(0, Number(state.settings.dailyLimit) || 50); if (index >= queue.length) index = 0; }
-function renderDock() { if (!answered) buildQueue(); renderQuestion(els.questionCard, queue[index], false); progress(); }
-function renderStandalone() { if (!answered) buildQueue(); renderQuestion($('#standaloneQuestion'), queue[index], true); progress(); }
+function buildQueue() {
+  const reviewedToday = state.reviewLog[today()] || 0;
+  const remaining = Math.max(0, (Number(state.settings.dailyLimit) || 50) - reviewedToday);
+  const due = state.cards.filter((card) => !card.suspended && isDue(card)).sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  const reviewCards = due.filter((card) => card.fsrs?.state !== 'New');
+  const newCards = due.filter((card) => card.fsrs?.state === 'New');
+  const newReviewedToday = state.reviewEvents.filter((event) => event.reviewedAt?.slice(0, 10) === today() && event.previousState === 'New').length;
+  const allowedNew = Math.max(0, (Number(state.settings.dailyNewLimit) || 0) - newReviewedToday);
+  queue = [...reviewCards, ...newCards.slice(0, allowedNew)].slice(0, remaining);
+  if (index >= queue.length) index = 0;
+}
+function renderDock() { if (!answered) buildQueue(); renderQuestion(els.questionCard, reviewDisplayCard || queue[index], false); progress(); }
+function renderStandalone() { if (!answered) buildQueue(); renderQuestion($('#standaloneQuestion'), reviewDisplayCard || queue[index], true); progress(); }
 function finalizeMultiple(card) { if (!answer.length) return toast('请至少选择一个选项。'); answerCard(card, null, true); }
-function answerCard(card, selected, submit = false) { if (answered) return; if (card.type === 'multiple' && !submit) { answer = answer.includes(selected) ? answer.filter((key) => key !== selected) : [...answer, selected]; renderDock(); renderStandalone(); return; } if (card.type === 'single') answer = [selected]; const correct = answer.length === card.answer.length && answer.every((key) => card.answer.includes(key)); recordReview(card, correct ? 'correct' : 'wrong'); }
+function answerCard(card, selected, submit = false) { if (answered) return; if (card.type === 'multiple' && !submit) { answer = answer.includes(selected) ? answer.filter((key) => key !== selected) : [...answer, selected]; renderDock(); renderStandalone(); return; } if (card.type === 'single') answer = [selected]; const correct = answer.length === card.answer.length && answer.every((key) => card.answer.includes(key)); answered = true; pendingReviewCardId = card.id; pendingCorrect = correct; renderDock(); renderStandalone(); }
 function answerNoteCardLegacy(card, rating) { if (answered) return; recordReviewLegacy(card, rating); }
-function recordReviewLegacy(card, rating) { answered = true; card.reviews += 1; const score = rating === 'familiar' || rating === 'correct'; if (score) { card.ease = Math.min(5, card.ease + 0.18); card.interval = Math.max(1, Math.round(card.interval * (card.ease + Number(state.settings.forgettingFactor) / 5))); card.dueAt = new Date(Date.now() + card.interval * DAY).toISOString(); } else { card.ease = Math.max(1.3, card.ease - 0.3); card.interval = rating === 'fuzzy' ? 0.25 : 0; card.dueAt = new Date(Date.now() + (rating === 'fuzzy' ? 6 : 1) * 3600000).toISOString(); } state.reviewLog[today()] = (state.reviewLog[today()] || 0) + 1; save(); renderDock(); renderStandalone(); renderHeatmaps(); renderProfile(); badges(); }
-function next() { if (Date.now() - lastNext < 450) return; lastNext = Date.now(); answered = false; answer = []; index += 1; buildQueue(); renderDock(); renderStandalone(); }
-function progress() { const done = state.reviewLog[today()] || 0; const total = Math.max(done + queue.length, 1); const current = queue.length ? Math.min(index + 1, queue.length) : total; const percent = Math.min(100, Math.round((current / total) * 100)); els.progressRing.style.background = `conic-gradient(var(--green) ${percent * 3.6}deg, #ece9e4 0deg)`; els.progressRing.querySelector('span').textContent = `${percent}%`; els.remainingText.textContent = `当前第 ${current} 题 / 共 ${total} 题`; els.reviewProgressText.textContent = queue.length ? `待复习 ${queue.length} 张` : '今日已完成'; $('#standaloneProgress').textContent = `${current} / ${total}`; $('#standalonePercent').textContent = `${percent}%`; $('#standaloneBar').style.width = `${percent}%`; $('#reviewedTodayTop').textContent = done; }
+function recordReviewLegacy(card, rating) { recordReview(card, rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : 'Again'); }
+function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisplayCard = null; index += 1; buildQueue(); renderDock(); renderStandalone(); }
+function progress() {
+  const done = Number(state.reviewLog[today()] || 0);
+  const planned = Math.max(done + queue.length, done, 1);
+  const percent = Math.min(100, Math.round((done / planned) * 100));
+  els.progressRing.style.background = `conic-gradient(var(--green) ${percent * 3.6}deg, #ece9e4 0deg)`;
+  els.progressRing.querySelector('span').textContent = `${percent}%`;
+  els.remainingText.textContent = `已复习 ${done} / ${planned} 张`;
+  els.reviewProgressText.textContent = queue.length ? `待复习 ${queue.length} 张` : '今日已完成';
+  $('#standaloneProgress').textContent = `${done} / ${planned}`;
+  $('#standalonePercent').textContent = `${percent}%`;
+  $('#standaloneBar').style.width = `${percent}%`;
+  $('#reviewedTodayTop').textContent = done;
+}
 
 function shiftHeatmapMonth(offset) { heatmapMonth = new Date(heatmapMonth.getFullYear(), heatmapMonth.getMonth() + offset, 1); renderHeatmaps(); }
 function renderHeatmaps() { renderGithubHeatmap(els.heatmap); renderGithubHeatmap(els.profileHeatmap); els.todayCount.textContent = `共 ${state.reviewLog[today()] || 0} 次复习`; }
@@ -302,8 +354,9 @@ function renderProfile() { const todayCount = state.reviewLog[today()] || 0; con
 function renderTrash() { $$('.trash-tabs [data-trash-tab]').forEach((button) => button.classList.toggle('active', button.dataset.trashTab === trashTab)); const list = state.trash[trashTab] || []; const box = $('#trashContent'); if (!list.length) { box.innerHTML = '<div class="trash-empty"><div class="trash-empty-icon"><svg><use href="#i-trash"></use></svg></div><strong>回收站为空</strong><p>删除的内容会显示在这里，你可以随时恢复。</p></div>'; return; } const icon = trashTab === 'folders' ? '#i-folder' : trashTab === 'cards' ? '#i-layers' : '#i-file'; box.innerHTML = list.map((item, i) => { const data = trashTab === 'folders' ? item.folder : item; const label = trashTab === 'folders' ? `包含 ${item.documents.length} 篇文档` : trashTab === 'cards' ? `${data.type === 'note' ? '速记词条' : '复习卡片'} · ${data.tags?.join('、') || '未分组'}` : '知识文档'; const preview = trashTab === 'folders' ? item.documents.map((doc) => doc.title).join('、') || '文件夹为空' : trashTab === 'cards' ? (data.type === 'note' ? data.noteContent : data.explanation || Object.values(data.options || {}).filter(Boolean).join(' · ')) : String(data.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); return `<article class="trash-item"><div class="trash-item-icon"><svg><use href="${icon}"></use></svg></div><div class="trash-item-main"><strong>${esc(data.name || data.title || data.question)}</strong><span>${esc(label)}</span><p>${esc(preview || '暂无内容预览')}</p></div><div class="trash-item-actions"><button data-restore="${i}">恢复</button><button class="danger" data-permanent="${i}">彻底删除</button></div></article>`; }).join(''); box.querySelectorAll('[data-restore]').forEach((button) => button.addEventListener('click', () => restoreTrash(Number(button.dataset.restore)))); box.querySelectorAll('[data-permanent]').forEach((button) => button.addEventListener('click', () => { state.trash[trashTab].splice(Number(button.dataset.permanent), 1); save(); renderTrash(); })); }
 function restoreTrash(at) { const item = state.trash[trashTab][at]; if (!item) return; if (trashTab === 'documents') state.documents.push(normDoc(item)); if (trashTab === 'cards') state.cards.push(normCard(item)); if (trashTab === 'folders') { state.folders.push(item.folder); state.documents.push(...item.documents.map(normDoc)); } state.trash[trashTab].splice(at, 1); save(); refresh(); toast('内容已恢复。'); }
 function emptyTrash() { if (!state.trash[trashTab]?.length) return toast('当前分类没有内容。'); if (!confirm('确定彻底删除当前分类吗？')) return; state.trash[trashTab] = []; save(); renderTrash(); toast('回收站已清理。'); }
-function syncSettings() { els.forgettingFactor.value = state.settings.forgettingFactor; els.dailyLimit.value = state.settings.dailyLimit; els.forgettingValue.textContent = Number(state.settings.forgettingFactor).toFixed(1); els.intervalPreview.innerHTML = [1, 2, 3, 4].map((n) => `<div><strong>第 ${n} 次答对</strong><br>${Math.round(n * n * state.settings.forgettingFactor)} 天后复习</div>`).join(''); if ($('#storagePath')) $('#storagePath').textContent = state.settings.dataDirectory || '尚未选择外部数据目录'; }
-function settings() { if (Number(els.dailyLimit.value) <= 0) { els.dailyLimit.value = 1; return toast('每日上限必须大于 0。'); } state.settings.forgettingFactor = Number(els.forgettingFactor.value); state.settings.dailyLimit = Number(els.dailyLimit.value); save(); syncSettings(); progress(); }
+function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(days * 24 * 60))} 分钟`; if (days < 2) return `${Math.max(1, Math.round(days * 24))} 小时`; return `${Math.round(days)} 天`; }
+function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); if ($('#storagePath')) $('#storagePath').textContent = state.settings.dataDirectory || '尚未选择外部数据目录'; }
+function settings() { if (Number(els.dailyLimit.value) <= 0 || Number(els.dailyNewLimit.value) < 0) { els.dailyLimit.value = Math.max(1, Number(els.dailyLimit.value) || 1); els.dailyNewLimit.value = Math.max(0, Number(els.dailyNewLimit.value) || 0); return toast('复习上限必须有效。'); } state.settings.desiredRetention = Math.min(0.99, Math.max(0.8, Number(els.desiredRetention.value) || 0.9)); state.settings.dailyLimit = Number(els.dailyLimit.value); state.settings.dailyNewLimit = Number(els.dailyNewLimit.value); save(); syncSettings(); buildQueue(); progress(); }
 async function chooseDataDirectory() { const result = await window.reviewBridge.chooseDataDirectory(); if (!result || result.canceled) return; state.settings.dataDirectory = result.directory; save(); $('#storagePath').textContent = result.directory; toast('数据目录已选择。'); }
 async function migrateData() { const directory = state.settings.dataDirectory || (await window.reviewBridge.chooseDataDirectory())?.directory; if (!directory) return toast('请先选择数据目录。'); state.settings.dataDirectory = directory; const result = await window.reviewBridge.writeStorageSnapshot({ directory, content: JSON.stringify(state, null, 2) }); if (!result?.ok) return toast('数据迁移失败。'); save(); $('#storagePath').textContent = directory; toast('当前数据已迁移到所选目录。'); }
 async function exportAllState() { const result = await window.reviewBridge.saveExportFile({ format: 'json', filename: 'knowledge-review-backup', content: JSON.stringify(state, null, 2) }); if (!result?.canceled) toast('全部数据导出完成。'); }
@@ -314,8 +367,8 @@ function pdfExport(cards) { const list = Array.isArray(cards) ? cards : [cards];
 async function exportCards() { const scope = $('#exportScope').value; const format = $('#exportFormat').value; const list = scope === 'selected' ? state.cards.filter((card) => selectedCardIds.size ? selectedCardIds.has(card.id) : card.id === state.selectedCardId) : scope === 'folder' ? state.cards.filter((card) => card.folder === els.folderFilter.value) : state.cards; if (!list.length) return toast('没有可导出的卡片。'); const content = format === 'markdown' ? list.map(markdownExport).join('\n\n---\n\n') : format === 'pdf' ? pdfExport(list) : JSON.stringify(list, null, 2); const result = await window.reviewBridge.saveExportFile({ format, filename: 'knowledge-cards', content }); els.exportModal.close(); if (!result?.canceled) toast('导出完成。'); }
 function parseMarkdownCards(content) { return content.split(/\n---\n/).map((chunk) => { const lines = chunk.split('\n'); const question = lines.find((line) => /^#\s+/.test(line))?.replace(/^#\s+/, '').trim(); const type = lines.find((line) => /^Type:\s*/i.test(line))?.replace(/^Type:\s*/i, '').trim(); if (!question) return null; if (type === 'note') return normCard({ type: 'note', question, noteContent: lines.slice(3).join('\n').split(/\nTags:/i)[0].trim(), tags: ['导入'] }); const options = {}; OPTS.forEach((key) => { options[key] = lines.find((line) => new RegExp(`^${key}\\.\\s*`).test(line))?.replace(new RegExp(`^${key}\\.\\s*`), '').trim() || ''; }); const answer = lines.find((line) => /^Answer:/i.test(line))?.replace(/^Answer:\s*/i, '').split(/[,，]/).map((value) => value.trim()).filter(Boolean) || []; const explanation = lines.find((line) => /^Explanation:/i.test(line))?.replace(/^Explanation:\s*/i, '').trim() || ''; return normCard({ question, type: type === 'multiple' ? 'multiple' : 'single', options, answer, explanation, tags: ['导入'] }); }).filter(Boolean); }
 async function importCards() { const file = await window.reviewBridge.openCardsFile(); if (!file || !file.content.trim()) return toast('请选择有效文件。'); try { const cards = file.extension === '.json' ? (Array.isArray(JSON.parse(file.content)) ? JSON.parse(file.content) : [JSON.parse(file.content)]).map(normCard) : parseMarkdownCards(file.content); const valid = cards.filter((card) => card.question && (card.type === 'note' ? card.noteContent : card.answer.length)); if (!valid.length) return toast('文件格式或字段不完整。'); state.cards = [...valid, ...state.cards]; state.groups = [...new Set([...(state.groups || []), ...valid.map((card) => card.folder)])]; save(); refresh(); toast(`已导入 ${valid.length} 张卡片。`); } catch { toast('无法解析导入文件。'); } }
-function badges() { $('#reviewBadge').textContent = state.cards.filter(isDue).length; $('#reviewedTodayTop').textContent = state.reviewLog[today()] || 0; }
-function isDue(card) { return new Date(card.dueAt).getTime() <= Date.now(); }
+function badges() { const badge = $('#reviewBadge'); if (badge) badge.textContent = state.cards.filter(isDue).length; $('#reviewedTodayTop').textContent = state.reviewLog[today()] || 0; }
+function isDue(card) { return !card.suspended && new Date(card.dueAt).getTime() <= Date.now(); }
 function totalReviews() { return Object.values(state.reviewLog).reduce((sum, count) => sum + Number(count || 0), 0); }
 
 // Note cards keep Markdown as source text and render it only in the review surface.
@@ -335,11 +388,11 @@ function renderQuestion(box, card, standalone) {
   if (card.type === 'note') {
     const rating = NOTE_RATINGS[card.noteRating];
     const stamp = answered && rating ? `<div class="note-stamp ${rating.className}" aria-label="${rating.label}"><span>${rating.label}</span></div>` : '';
-    box.innerHTML = `${head}<div class="note-review-body ${answered ? 'is-reviewed' : ''}">${stamp}<div class="note-answer-content">${noteMarkdownHtml(card.noteContent)}</div></div><div class="note-rating-block ${answered ? 'is-complete' : ''}">${answered ? '' : '<p>根据回忆程度选择反馈</p><div class="note-rating-actions">' + Object.entries(NOTE_RATINGS).map(([value, meta]) => `<button class="note-rating ${meta.className}" data-rating="${value}">${meta.label}</button>`).join('') + '</div>'}</div>`;
+    box.innerHTML = `${head}<div class="note-review-body ${answered ? 'is-reviewed' : ''}">${stamp}<div class="note-answer-content">${noteMarkdownHtml(card.noteContent)}</div></div><div class="note-rating-block ${answered ? 'is-complete' : ''}">${answered ? '' : '<p>根据回忆程度选择反馈</p><div class="note-rating-actions"><div class="note-rating-main">' + Object.entries(NOTE_RATINGS).map(([value, meta], index) => `<button class="note-rating ${meta.className}" data-rating="${value}" data-shortcut="${index + 1}"><span class="keycap">${index + 1}</span><strong>${meta.label}</strong></button>`).join('') + '</div></div>'}</div>`;
     box.querySelectorAll('[data-rating]').forEach((button) => button.addEventListener('click', () => answerNoteCard(card, button.dataset.rating)));
     els.nextButton.textContent = '下一条';
   } else {
-    box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}`;
+    box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}${answered && pendingReviewCardId === card.id ? reviewGradeActions(card) : ''}`;
     const block = box.querySelector('.options-block');
     OPTS.forEach((key) => {
       const button = document.createElement('button');
@@ -362,38 +415,73 @@ function renderQuestion(box, card, standalone) {
     }
     els.nextButton.textContent = '下一题';
   }
-  els.nextButton.disabled = !answered;
-  if (standalone && answered) {
+  els.nextButton.disabled = !answered || pendingReviewCardId === card.id;
+  if (standalone && answered && !pendingReviewCardId) {
     const nextButton = document.createElement('button');
     nextButton.className = 'next-button';
     nextButton.textContent = card.type === 'note' ? '下一条' : '下一题';
     nextButton.addEventListener('click', next);
     box.appendChild(nextButton);
   }
+  box.querySelectorAll('[data-fsrs-grade]').forEach((button) => button.addEventListener('click', () => recordReview(card, button.dataset.fsrsGrade)));
+}
+
+function reviewGradeActions(card) {
+  const hint = pendingCorrect ? '答对了，选择这次回忆的难度' : '答错了，将按 Again 重新安排';
+  const grades = pendingCorrect ? [['Hard', 'Hard', '有些犹豫'], ['Good', 'Good', '正常回忆'], ['Easy', 'Easy', '非常熟练']] : [['Again', 'Again', '重新学习']];
+  return `<div class="fsrs-grade-panel"><p>${hint}</p><div class="fsrs-grade-actions">${grades.map(([value, label, detail]) => `<button type="button" class="fsrs-grade ${value.toLowerCase()}" data-fsrs-grade="${value}"><strong>${label}</strong><span>${detail}</span></button>`).join('')}</div></div>`;
 }
 
 function answerNoteCard(card, rating) {
   if (answered || !NOTE_RATINGS[rating]) return;
   card.noteRating = rating;
+  card.suspended = rating === 'tooEasy';
+  reviewDisplayCard = card;
   recordReview(card, rating);
 }
 
+document.addEventListener('keydown', (event) => {
+  if (event.target.matches('input, textarea, select, [contenteditable="true"]')) return;
+  if (!queue[index] || answered) return;
+  const button = $(`#questionCard [data-shortcut="${event.key}"]`);
+  if (button) { event.preventDefault(); button.click(); }
+});
+
 function recordReview(card, rating) {
   answered = true;
-  card.reviews += 1;
-  if (card.type === 'note') card.noteRating = NOTE_RATINGS[rating] ? rating : '';
-  const score = rating === 'familiar' || rating === 'correct';
-  if (score) {
-    card.ease = Math.min(5, card.ease + 0.18);
-    card.interval = Math.max(1, Math.round(card.interval * (card.ease + Number(state.settings.forgettingFactor) / 5)));
-    card.dueAt = new Date(Date.now() + card.interval * DAY).toISOString();
-  } else {
-    card.ease = Math.max(1.3, card.ease - 0.3);
-    card.interval = rating === 'fuzzy' ? 0.25 : 0;
-    card.dueAt = new Date(Date.now() + (rating === 'fuzzy' ? 6 : 1) * 3600000).toISOString();
-  }
+  const grade = rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : rating === 'tooEasy' ? 'Easy' : rating === 'forgot' || rating === 'wrong' ? 'Again' : rating;
+  const mastery = grade === 'Easy' ? 'tooEasy' : grade === 'Good' ? 'familiar' : grade === 'Hard' ? 'fuzzy' : 'forgot';
+  card.mastery = mastery;
+  const previous = window.knowledgeFSRS.normalize(card);
+  const result = window.knowledgeFSRS.next(card, grade, state.settings);
+  card.fsrs = result.fsrs;
+  card.dueAt = result.dueAt;
+  card.interval = result.interval;
+  card.reviews = result.reviews;
+  card.ease = result.ease;
+  card.updatedAt = new Date().toISOString();
+  if (card.type === 'note') card.noteRating = NOTE_RATINGS[rating] ? rating : card.noteRating;
+  if (card.type === 'note' && rating === 'tooEasy') card.suspended = true;
   state.reviewLog[today()] = (state.reviewLog[today()] || 0) + 1;
+  state.reviewEvents.push({
+    id: id('review'),
+    cardId: card.id,
+    rating: result.log.rating,
+    ratingValue: result.log.ratingValue,
+    previousState: previous.state,
+    state: result.log.state,
+    reviewedAt: result.log.review,
+    previousDue: previous.due.toISOString(),
+    nextDue: result.dueAt,
+    stability: result.log.stability,
+    difficulty: result.log.difficulty,
+    elapsedDays: result.log.elapsedDays,
+    scheduledDays: result.log.scheduledDays
+  });
+  pendingReviewCardId = '';
+  pendingCorrect = false;
   save();
+  buildQueue();
   renderDock();
   renderStandalone();
   renderHeatmaps();
