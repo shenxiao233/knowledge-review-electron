@@ -73,7 +73,7 @@ ipcMain.handle('dialog:openCards', async () => {
 });
 
 ipcMain.handle('dialog:saveExport', async (_event, payload) => {
-  const extension = payload.format === 'markdown' ? 'md' : 'json';
+  const extension = payload.format === 'markdown' ? 'md' : payload.format === 'pdf' ? 'pdf' : 'json';
   const defaultPath = `${payload.filename || 'knowledge-cards'}.${extension}`;
   const result = await dialog.showSaveDialog({
     title: '导出卡片',
@@ -81,11 +81,26 @@ ipcMain.handle('dialog:saveExport', async (_event, payload) => {
     filters: [
       payload.format === 'markdown'
         ? { name: 'Markdown', extensions: ['md'] }
-        : { name: 'JSON', extensions: ['json'] }
+        : payload.format === 'pdf'
+          ? { name: 'PDF', extensions: ['pdf'] }
+          : { name: 'JSON', extensions: ['json'] }
     ]
   });
 
   if (result.canceled || !result.filePath) return { canceled: true };
+  if (payload.format === 'pdf') {
+    const sourceWindow = BrowserWindow.fromWebContents(_event.sender);
+    const printWindow = new BrowserWindow({ show: false, width: 900, height: 1200, webPreferences: { sandbox: true } });
+    try {
+      await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(payload.content || '')}`);
+      const buffer = await printWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4', marginsType: 'default' });
+      await fs.writeFile(result.filePath, buffer);
+      return { canceled: false, filePath: result.filePath };
+    } finally {
+      if (!printWindow.isDestroyed()) printWindow.close();
+      if (sourceWindow && !sourceWindow.isDestroyed()) sourceWindow.focus();
+    }
+  }
   await fs.writeFile(result.filePath, payload.content, 'utf8');
   return { canceled: false, filePath: result.filePath };
 });
