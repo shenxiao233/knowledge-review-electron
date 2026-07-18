@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
@@ -140,3 +140,8 @@ ipcMain.handle('window:toggleMaximize', (event) => {
   return win.isMaximized();
 });
 ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+ipcMain.handle('shell:openExternal', async (_event, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return { ok: false };
+  await shell.openExternal(url);
+  return { ok: true };
+});

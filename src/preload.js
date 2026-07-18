@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('reviewBridge', {
   chooseDataDirectory: () => ipcRenderer.invoke('dialog:chooseDataDirectory'),
   writeStorageSnapshot: (payload) => ipcRenderer.invoke('storage:writeSnapshot', payload),
   readStorageSnapshot: (directory) => ipcRenderer.invoke('storage:readSnapshot', directory),
+  openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   windowControls: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
