@@ -56,6 +56,7 @@ const base = {
   schemaVersion: 3,
   algorithm: 'fsrs',
   settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, showStamps: true },
+  reviewPlan: { group: 'all' },
   selectedCardId: sampleCards[0].id,
   extractedText: '',
   groups: ['学习科学', '前端技术'],
@@ -63,6 +64,7 @@ const base = {
 };
 
 let state = load();
+syncReviewLog();
 ensureCardOrder(state.cards);
 let els = {};
 let queue = [];
@@ -84,6 +86,7 @@ let trashTab = 'documents';
 let heatmapMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let libraryMode = 'home';
 let documentQuery = '';
+let reviewStudyActive = false;
 
 function normCard(card) {
   const type = ['single', 'multiple', 'note'].includes(card.type) ? card.type : 'single';
@@ -107,6 +110,7 @@ function normCard(card) {
     reviews: Number(card.reviews || 0),
     order: Number.isFinite(Number(card.order)) && Number(card.order) > 0 ? Number(card.order) : 0,
     mastery: ['tooEasy', 'familiar', 'fuzzy', 'forgot'].includes(card.mastery) ? card.mastery : (card.noteRating || ''),
+    resetAt: card.resetAt || '',
     fsrs: card.fsrs || null
   };
   normalized.fsrs = window.knowledgeFSRS.migrate(normalized);
@@ -151,6 +155,7 @@ function load() {
       schemaVersion: 3,
       algorithm: 'fsrs',
       settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), showStamps: saved.settings?.showStamps !== false },
+      reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}) },
       trash: { ...base.trash, ...(saved.trash || {}) },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
       activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
@@ -160,11 +165,18 @@ function load() {
   }
 }
 function save() {
-  try { ensureCardOrder(state.cards); localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('本地空间不足，请先导出备份。'); }
+  try { ensureCardOrder(state.cards); syncReviewLog(); localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('本地空间不足，请先导出备份。'); }
+}
+function syncReviewLog() {
+  if (!state?.reviewEvents || !state?.reviewLog) return;
+  const key = today();
+  const count = state.reviewEvents.filter((event) => event.reviewedAt?.slice(0, 10) === key && reviewEventIsActive(event)).length;
+  if (count) state.reviewLog[key] = count;
+  else delete state.reviewLog[key];
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewDockGroupSelect', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel'].forEach((key) => { els[key] = document.getElementById(key); });
 }
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
@@ -225,6 +237,12 @@ function bind() {
   $('#tagInput').addEventListener('input', () => { els.cardForm.dataset.autoTag = 'false'; });
   $$('.image-insert-button').forEach((button) => button.addEventListener('click', () => insertCardImage(button.dataset.cardImage)));
   els.nextButton.addEventListener('click', next);
+  els.reviewGroupSelect?.addEventListener('change', (event) => changeReviewGroup(event.target.value));
+  els.reviewDockGroupSelect?.addEventListener('change', (event) => changeReviewGroup(event.target.value));
+  els.reviewHistoryButton?.addEventListener('click', toggleReviewHistory);
+  els.reviewStudyBack?.addEventListener('click', exitReviewStudy);
+  els.reviewHome?.addEventListener('click', handleReviewHomeClick);
+  document.addEventListener('click', (event) => { if (!event.target.closest('.review-history-wrap')) closeReviewHistory(); if (!event.target.closest('.review-book-actions')) closeReviewBookMenus(); if (!event.target.closest('.card-group-row')) closeCardGroupMenus(); });
   $('#exportTopButton').addEventListener('click', () => openExport('all'));
   $('#exportSelectedButton').addEventListener('click', () => openExport('selected'));
   $('#exportFolderButton').addEventListener('click', () => openExport('folder'));
@@ -243,6 +261,7 @@ function bind() {
   $('#clearCardSelectionButton').addEventListener('click', clearCardSelection);
   $('#bulkDeleteCardsButton').addEventListener('click', bulkDeleteCards);
   $('#toggleCardGroupsButton').addEventListener('click', toggleCardGroups);
+  els.cardGroupRail.addEventListener('click', handleCardGroupRailClick);
   $('#cardList').addEventListener('click', (event) => { const button = event.target.closest('[data-card-reset]'); if (!button) return; event.stopPropagation(); resetCardMastery(button.dataset.cardReset); });
   $('#newGroupButton').addEventListener('click', openCreateGroup);
   $('#cancelDeleteGroupButton').addEventListener('click', () => { pendingCardOrder = null; $('#deleteGroupModal').close(); });
@@ -266,8 +285,8 @@ function bind() {
   [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
 }
-function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') renderStandalone(); if (name === 'profile') renderProfile(); if (name === 'trash') renderTrash(); }
-function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderDock(); renderCards(); renderProfile(); renderTrash(); badges(); }
+function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'profile') renderProfile(); if (name === 'trash') renderTrash(); }
+function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderProfile(); renderTrash(); badges(); }
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
 function saveDoc() { const doc = activeDoc(); if (!doc) return; doc.html = els.noteEditor.innerHTML; doc.updatedAt = new Date().toISOString(); save(); }
 function loadDoc() { const doc = activeDoc(); els.noteEditor.innerHTML = /(^|\n)#{1,6}\s|(^|\n)[-*+]\s/.test(doc?.html || '') ? markdownToHtml(doc.html) : doc?.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>'; els.noteEditor.scrollTop = 0; outline(); updateEditorWordCount(); }
@@ -345,6 +364,7 @@ function confirmDeleteTarget() {
   const targetId = modal?.dataset.deleteId;
   if (!type || !targetId) return;
   if (type === 'card-order') { modal.close(); confirmCardOrderChange(); return; }
+  if (type === 'relearn-card-group') { modal.close(); confirmRelearnCardGroup(targetId); return; }
   modal.close();
   if (type === 'document') {
     const at = state.documents.findIndex((doc) => doc.id === targetId);
@@ -389,12 +409,132 @@ function confirmDeleteTarget() {
 
 function cardMatches(card) { const query = els.cardSearchInput.value.trim().toLowerCase(); const folder = els.folderFilter.value; const tag = els.tagFilter.value; const type = els.cardTypeFilter.value; const status = els.cardStatusFilter.value; const mastery = card.mastery || ''; return (!query || [card.question, card.folder, card.tags.join(' '), card.noteContent].join(' ').toLowerCase().includes(query)) && (!folder || folder === '全部文件夹' || card.folder === folder) && (!tag || tag === '全部标签' || card.tags.includes(tag)) && (!type || type === '全部类型' || card.type === type) && (!status || status === '全部熟练度' || (status === 'evaluated' ? Boolean(mastery) : status === 'unrated' ? !mastery : mastery === status)); }
 function renderCardSummary() { const due = state.cards.filter(isDue).length; const notes = state.cards.filter((card) => card.type === 'note').length; els.cardSummary.innerHTML = [['#i-layers', state.cards.length, '全部卡片'], ['#i-review', due, '待复习'], ['#i-book', notes, '速记词条'], ['#i-flame', totalReviews(), '累计复习']].map(([icon, value, label]) => `<div class="card-summary-item"><svg><use href="${icon}"></use></svg><div><b>${value}</b><span>${label}</span></div></div>`).join(''); $('#cardTotalBadge').textContent = `${state.cards.length} 张`; }
-function renderCardGroups() { const groups = [...new Set([...(state.groups || []), ...state.cards.map((card) => card.folder)])]; state.groups = groups; $('#cardGroupCount').textContent = groups.length; els.cardGroupRail.innerHTML = `<div class="card-group-row"><button class="card-group-link ${els.folderFilter.value === '全部文件夹' ? 'active' : ''}" data-group="全部文件夹"><span class="group-dot all"></span><span>全部卡片</span><b>${state.cards.length}</b></button></div>` + groups.map((group) => `<div class="card-group-row sortable-group-row" draggable="true" data-sort-group="${esc(group)}"><button class="card-group-link ${els.folderFilter.value === group ? 'active' : ''}" data-group="${esc(group)}"><span class="group-dot"></span><span>${esc(group)}</span><b>${state.cards.filter((card) => card.folder === group).length}</b></button><button class="card-group-delete" title="删除卡组" data-group-delete="${esc(group)}"><svg><use href="#i-trash"></use></svg></button></div>`).join(''); els.cardGroupRail.querySelectorAll('[data-group]').forEach((button) => button.addEventListener('click', () => { els.folderFilter.value = button.dataset.group; syncCustomSelect(els.folderFilter); renderCards(); })); els.cardGroupRail.querySelectorAll('[data-group-delete]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); deleteCardGroup(button.dataset.groupDelete); })); bindGroupSorting(); }
+function renderCardGroups() { const groups = [...new Set([...(state.groups || []), ...state.cards.map((card) => card.folder)])]; state.groups = groups; $('#cardGroupCount').textContent = groups.length; els.cardGroupRail.innerHTML = `<div class="card-group-row"><button class="card-group-link ${els.folderFilter.value === '全部文件夹' ? 'active' : ''}" data-group="全部文件夹"><span class="group-dot all"></span><span>全部卡片</span><b>${state.cards.length}</b></button></div>` + groups.map((group) => `<div class="card-group-row sortable-group-row" draggable="true" data-sort-group="${esc(group)}"><button class="card-group-link ${els.folderFilter.value === group ? 'active' : ''}" data-group="${esc(group)}"><span class="group-dot"></span><span>${esc(group)}</span><b>${state.cards.filter((card) => card.folder === group).length}</b></button><button type="button" class="card-group-more" data-group-menu="${esc(group)}" aria-label="${esc(group)}更多操作" aria-expanded="false"><svg><use href="#i-more-vertical"></use></svg></button><div class="card-group-menu" data-group-menu-panel="${esc(group)}"><button type="button" data-group-relearn="${esc(group)}">重学此卡组</button><button type="button" class="danger" data-group-delete="${esc(group)}">删除卡组</button></div></div>`).join(''); bindGroupSorting(); }
+function handleCardGroupRailClick(event) { const groupButton = event.target.closest('[data-group]'); if (groupButton) { els.folderFilter.value = groupButton.dataset.group; syncCustomSelect(els.folderFilter); renderCards(); return; } const menuButton = event.target.closest('[data-group-menu]'); if (menuButton) { event.stopPropagation(); const menu = menuButton.parentElement?.querySelector(`[data-group-menu-panel="${CSS.escape(menuButton.dataset.groupMenu)}"]`); const open = menu && !menu.classList.contains('open'); closeCardGroupMenus(); if (menu && open) { menu.classList.add('open'); menuButton.setAttribute('aria-expanded', 'true'); } return; } const action = event.target.closest('[data-group-relearn], [data-group-delete]'); if (!action) return; event.stopPropagation(); closeCardGroupMenus(); if (action.dataset.groupRelearn) relearnCardGroup(action.dataset.groupRelearn); else deleteCardGroup(action.dataset.groupDelete); }
+function closeCardGroupMenus() { $$('.card-group-menu.open').forEach((menu) => menu.classList.remove('open')); $$('.card-group-more[aria-expanded="true"]').forEach((button) => button.setAttribute('aria-expanded', 'false')); }
 function toggleCardGroups() { const layout = document.querySelector('.card-library-layout'); const button = $('#toggleCardGroupsButton'); const collapsed = layout.classList.toggle('groups-collapsed'); button.title = collapsed ? '显示卡组侧栏' : '隐藏卡组侧栏'; button.setAttribute('aria-label', button.title); button.classList.toggle('active', collapsed); }
-function bindGroupSorting() { $$('#cardGroupRail [data-sort-group]').forEach((row) => { row.addEventListener('dragstart', (event) => { event.dataTransfer.setData('group-name', row.dataset.sortGroup); row.classList.add('dragging'); }); row.addEventListener('dragend', () => row.classList.remove('dragging')); row.addEventListener('dragover', (event) => { event.preventDefault(); row.classList.add('drag-over'); }); row.addEventListener('dragleave', () => row.classList.remove('drag-over')); row.addEventListener('drop', (event) => { event.preventDefault(); row.classList.remove('drag-over'); reorderGroups(event.dataTransfer.getData('group-name'), row.dataset.sortGroup); }); }); }
+function bindGroupSorting() { $$('#cardGroupRail [data-sort-group]').forEach((row) => { row.addEventListener('dragstart', (event) => { if (event.target.closest('button')) { event.preventDefault(); return; } event.dataTransfer.setData('group-name', row.dataset.sortGroup); row.classList.add('dragging'); }); row.addEventListener('dragend', () => row.classList.remove('dragging')); row.addEventListener('dragover', (event) => { event.preventDefault(); row.classList.add('drag-over'); }); row.addEventListener('dragleave', () => row.classList.remove('drag-over')); row.addEventListener('drop', (event) => { event.preventDefault(); row.classList.remove('drag-over'); reorderGroups(event.dataTransfer.getData('group-name'), row.dataset.sortGroup); }); }); }
 function reorderGroups(source, target) { if (!source || !target || source === target) return; const from = state.groups.indexOf(source); const to = state.groups.indexOf(target); if (from < 0 || to < 0) return; const [group] = state.groups.splice(from, 1); state.groups.splice(to, 0, group); save(); renderCards(); toast('卡组顺序已更新。'); }
 function renderFilters() { const tags = ['全部标签', ...new Set(state.cards.flatMap((card) => card.tags))]; fill(els.tagFilter, tags); if (!els.folderFilter.value) els.folderFilter.value = '全部文件夹'; }
 function fill(select, values) { const old = select.value; select.innerHTML = values.map((value) => `<option>${esc(value)}</option>`).join(''); if (values.includes(old)) select.value = old; syncCustomSelect(select); }
+function reviewGroups() { return [...new Set([...(state.groups || []), ...state.cards.map((card) => card.folder).filter(Boolean)])]; }
+function reviewGroupLabel(value) { return value === 'all' ? '全部卡组' : value; }
+function renderReviewPlanControls() {
+  const groups = reviewGroups();
+  const values = ['all', ...groups];
+  const selected = values.includes(state.reviewPlan?.group) ? state.reviewPlan.group : 'all';
+  state.reviewPlan = { ...(state.reviewPlan || {}), group: selected };
+  [els.reviewGroupSelect, els.reviewDockGroupSelect].filter(Boolean).forEach((select) => {
+    const current = select.value;
+    select.innerHTML = values.map((value) => `<option value="${esc(value)}">${esc(reviewGroupLabel(value))}</option>`).join('');
+    select.value = values.includes(current) && current === selected ? current : selected;
+    syncCustomSelect(select);
+  });
+}
+function changeReviewGroup(group) {
+  const selected = ['all', ...reviewGroups()].includes(group) ? group : 'all';
+  state.reviewPlan = { ...(state.reviewPlan || {}), group: selected };
+  save();
+  answered = false;
+  answer = [];
+  pendingReviewCardId = '';
+  pendingCorrect = false;
+  reviewDisplayCard = null;
+  reviewSnapshot = null;
+  index = 0;
+  renderReviewPlanControls();
+  buildQueue();
+  renderDock();
+  renderStandalone();
+  renderReviewPlan();
+  renderReviewHistory();
+  toast(`${reviewGroupLabel(selected)}复习计划已切换。`);
+}
+function reviewGroupCards(group) { return group === 'all' ? state.cards : state.cards.filter((card) => card.folder === group); }
+function reviewEventIsActive(event) {
+  const card = state.cards.find((item) => item.id === event.cardId);
+  if (!card?.resetAt || !event.reviewedAt) return true;
+  return new Date(event.reviewedAt).getTime() > new Date(card.resetAt).getTime();
+}
+function reviewEventMatchesGroup(event, group) {
+  if (group === 'all') return true;
+  if (event.folder === group) return true;
+  return state.cards.find((card) => card.id === event.cardId)?.folder === group;
+}
+function todayReviewEvents() {
+  return state.reviewEvents
+    .filter((event) => event.reviewedAt?.slice(0, 10) === today())
+    .sort((a, b) => new Date(b.reviewedAt) - new Date(a.reviewedAt));
+}
+function reviewStateSnapshot(group = state.reviewPlan?.group || 'all') {
+  const cards = reviewGroupCards(group);
+  const events = todayReviewEvents().filter((event) => reviewEventIsActive(event) && reviewEventMatchesGroup(event, group));
+  const due = cards.filter((card) => !card.suspended && isDue(card)).length;
+  const planned = Math.max(events.length + due, events.length, 1);
+  return { cards, events, done: events.length, due, planned, percent: Math.min(100, Math.round((events.length / planned) * 100)) };
+}
+function reviewGroupStats(group) {
+  return reviewStateSnapshot(group);
+}
+function renderReviewHome() {
+  if (!els.reviewHome || !els.reviewStudy) return;
+  els.reviewHome.hidden = reviewStudyActive;
+  els.reviewStudy.hidden = !reviewStudyActive;
+  if (reviewStudyActive) {
+    return;
+  }
+  const groups = reviewGroups();
+  const selected = state.reviewPlan?.group || 'all';
+  const current = reviewGroupStats(selected);
+  const currentLabel = reviewGroupLabel(selected);
+  const groupCards = groups.map((group) => {
+    const stats = reviewGroupStats(group);
+    const isSelected = group === selected;
+    const actionLabel = isSelected ? '学习中' : '学习此书';
+    return `<article class="review-book-card ${isSelected ? 'is-selected' : ''}"><div class="review-book-cover"><span>KNOWLEDGE</span><strong>${esc(group)}</strong><small>SPACED REVIEW</small></div><div class="review-book-body"><div class="review-book-actions"><button type="button" class="review-book-more" data-review-group-menu="${esc(group)}" aria-label="${esc(group)}更多操作" aria-expanded="false"><svg><use href="#i-more-vertical"></use></svg></button><div class="review-book-menu" data-review-menu="${esc(group)}"><button type="button" data-review-group-action="relearn" data-review-group="${esc(group)}">重学此卡组</button><button type="button" class="danger" data-review-group-action="delete" data-review-group="${esc(group)}">删除卡组</button></div></div><div class="review-book-title-row"><h3>${esc(group)}</h3><span class="review-book-type">卡组</span></div><p>已完成 ${stats.done} / ${stats.planned} 张</p><div class="review-book-progress"><i style="width:${stats.percent}%"></i></div><div class="review-book-meta"><span>待学习 ${stats.due} 张</span><button type="button" class="review-book-start ${isSelected ? 'is-selected' : ''}" data-review-start="${esc(group)}">${actionLabel}</button></div></div></article>`;
+  }).join('');
+  els.reviewHome.innerHTML = `<section class="review-welcome"><div><span class="review-eyebrow">LEARNING CENTER</span><h1>今天也来复习一点</h1><p>选择一个卡组，按当前学习计划完成今天的复习。</p></div><div class="review-welcome-stat"><strong>${current.done}</strong><span>今日已复习</span></div></section><section class="review-feature-card"><div class="review-feature-cover"><span>KNOWLEDGE REVIEW</span><strong>${esc(currentLabel)}</strong><small>FSRS LEARNING PLAN</small></div><div class="review-feature-content"><div class="review-feature-heading"><div><span class="review-eyebrow">CURRENT PLAN</span><h2>${esc(currentLabel)}</h2></div><span class="review-feature-chip">${current.due ? '今日待学习' : '计划已完成'}</span></div><div class="review-feature-stats"><div><strong>${current.due}</strong><span>待学习</span></div><div><strong>${current.done}</strong><span>已完成</span></div><div><strong>${current.cards.length}</strong><span>卡片总数</span></div></div><div class="review-feature-progress"><div><span>今日完成度</span><b>${current.done} / ${current.planned}</b></div><div class="review-feature-line"><i style="width:${current.percent}%"></i></div></div><button type="button" class="review-start-button" data-review-start="${esc(selected)}">${current.due ? '开始学习' : '查看学习计划'}<kbd>Enter</kbd></button></div></section><section class="review-books-section"><div class="review-section-heading"><div><span class="review-eyebrow">MY CARD GROUPS</span><h2>我的卡组</h2></div><span>${groups.length} 个卡组</span></div><div class="review-book-grid">${groupCards || '<div class="review-home-empty">还没有卡组，先去卡片库创建一组卡片。</div>'}</div></section>`;
+}
+function handleReviewHomeClick(event) {
+  const menuButton = event.target.closest('[data-review-group-menu]');
+  if (menuButton) {
+    event.stopPropagation();
+    const menu = menuButton.parentElement?.querySelector(`[data-review-menu="${CSS.escape(menuButton.dataset.reviewGroupMenu)}"]`);
+    const open = menu && !menu.classList.contains('open');
+    closeReviewBookMenus();
+    if (menu && open) {
+      menu.classList.add('open');
+      menuButton.setAttribute('aria-expanded', 'true');
+    }
+    return;
+  }
+  const action = event.target.closest('[data-review-group-action]');
+  if (action) {
+    event.stopPropagation();
+    closeReviewBookMenus();
+    const group = action.dataset.reviewGroup;
+    if (action.dataset.reviewGroupAction === 'relearn') return relearnCardGroup(group);
+    if (action.dataset.reviewGroupAction === 'delete') return deleteCardGroup(group);
+  }
+  const button = event.target.closest('[data-review-start]');
+  if (button) startReviewStudy(button.dataset.reviewStart);
+}
+function closeReviewBookMenus() {
+  $$('.review-book-menu.open').forEach((menu) => menu.classList.remove('open'));
+  $$('.review-book-more[aria-expanded="true"]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+}
+function startReviewStudy(group = state.reviewPlan?.group || 'all') {
+  const selected = ['all', ...reviewGroups()].includes(group) ? group : 'all';
+  if (state.reviewPlan?.group !== selected) changeReviewGroup(selected);
+  reviewStudyActive = true;
+  renderReviewHome();
+  renderStandalone();
+}
+function exitReviewStudy() {
+  reviewStudyActive = false;
+  closeReviewHistory();
+  renderReviewHome();
+}
 function enhanceSelectsLegacy() { $$('select').forEach((select) => { if (select.parentElement?.classList.contains('select-shell')) return; const shell = document.createElement('div'); shell.className = `select-shell${select.closest('.formatbar') ? ' format-select-shell' : ''}`; select.parentNode.insertBefore(shell, select); shell.appendChild(select); const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'select-trigger'; trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', select.title || select.getAttribute('aria-label') || '选择'); const menu = document.createElement('div'); menu.className = 'select-menu'; menu.setAttribute('role', 'listbox'); shell.append(trigger, menu); trigger.addEventListener('click', (event) => { event.stopPropagation(); const open = shell.classList.toggle('open'); trigger.setAttribute('aria-expanded', String(open)); $$('.select-shell.open').filter((item) => item !== shell).forEach((item) => { item.classList.remove('open'); item.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); if (open && (shell.classList.contains('format-select-shell') || shell.closest('.modal'))) { const rect = trigger.getBoundingClientRect(); menu.style.position = 'fixed'; menu.style.top = `${rect.bottom + 7}px`; menu.style.left = `${rect.left}px`; menu.style.right = 'auto'; menu.style.minWidth = `${Math.max(rect.width, select.id === 'blockFormat' ? 96 : 120)}px`; } }); menu.addEventListener('click', (event) => { const option = event.target.closest('[data-option]'); if (!option) return; select.value = option.dataset.option; select.dispatchEvent(new Event('change', { bubbles: true })); shell.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); }); select.addEventListener('change', () => syncCustomSelectLegacy(select)); syncCustomSelectLegacy(select); }); document.addEventListener('click', (event) => { if (!event.target.closest('.select-shell')) $$('.select-shell.open').forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); }); }
 function syncCustomSelectLegacy(select) { const shell = select?.parentElement?.classList.contains('select-shell') ? select.parentElement : null; if (!shell) return; const trigger = shell.querySelector('.select-trigger'); const menu = shell.querySelector('.select-menu'); const options = [...select.options]; trigger.textContent = options.find((option) => option.value === select.value)?.textContent || select.value || ''; menu.innerHTML = options.map((option) => `<button type="button" role="option" data-option="${esc(option.value)}" class="${option.value === select.value ? 'selected' : ''}">${esc(option.textContent)}</button>`).join(''); }
 function renderCards() { renderFilters(); renderCardSummary(); renderCardGroups(); const list = sortCardsForDisplay(state.cards.filter(cardMatches)); const folderName = els.folderFilter.value || '全部文件夹'; $('#cardListTitle').textContent = folderName === '全部文件夹' ? '全部卡片' : folderName; $('#cardListMeta').textContent = `${list.length} 张卡片`; els.cardList.innerHTML = list.length ? list.map((card) => { const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'; const score = masteryScore(card); const scoreMarkup = score === null ? '<span class="card-score pending">--</span>' : `<span class="card-score">${score}<small>分</small></span>`; const query = els.cardSearchInput.value; const preview = card.type === 'note' ? highlightHtml(noteMarkdownHtml(card.noteContent), query) : highlightHtml(cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`), query); const stamp = state.settings.showStamps !== false && score !== null ? `<div class="card-mastery-stamp ${masteryMeta(card)?.className || ''}"><span>${masteryMeta(card)?.label || '已评价'}</span></div>` : ''; return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><button type="button" class="card-index-editor" title="点击修改卡组内顺序" data-card-order="${card.id}">-${cardPosition(card)}-</button><span class="question-type">${typeLabel}</span>${scoreMarkup}</div><div class="card-item-content"><h3>${highlightText(card.question, query)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div>${stamp}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${highlightText(tag, query)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button><button class="card-reset-mastery" title="重置熟练度" data-card-reset="${card.id}"><svg><use href="#i-reset"></use></svg></button></div></div></article>`; }).join('') : '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>'; $$('#cardList .card-item').forEach((row) => row.addEventListener('click', (event) => { if (event.target.closest('[data-card-edit], [data-card-reset], [data-card-order]')) return; const cardId = row.dataset.card; if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId); state.selectedCardId = cardId; save(); renderCards(); })); $$('#cardList [data-card-edit]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openCard(button.dataset.cardEdit); })); $$('#cardList [data-card-order]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); beginCardOrderEdit(button); })); bindCardSorting(); updateBulkSelection(list); }
@@ -415,10 +555,33 @@ function toggleSelectAllCards() { const list = state.cards.filter(cardMatches); 
 function clearCardSelection() { selectedCardIds.clear(); renderCards(); }
 function bulkDeleteCards() { const ids = new Set(selectedCardIds); if (!ids.size) return; openDeleteConfirm('cards', [...ids].join(','), `删除 ${ids.size} 张卡片？`, '选中的卡片将移入回收站，之后仍可恢复。'); }
 function clearCardFilters() { els.cardSearchInput.value = ''; els.folderFilter.value = '全部文件夹'; els.tagFilter.value = '全部标签'; els.cardTypeFilter.value = '全部类型'; els.cardStatusFilter.value = '全部熟练度'; [els.folderFilter, els.tagFilter, els.cardTypeFilter, els.cardStatusFilter].forEach(syncCustomSelect); renderCards(); }
-function resetCardMastery(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; card.mastery = ''; card.noteRating = ''; card.suspended = false; card.fsrs = window.knowledgeFSRS.reset(); card.dueAt = card.fsrs.due; card.interval = card.fsrs.scheduledDays; card.reviews = card.fsrs.reps; card.updatedAt = new Date().toISOString(); save(); refresh(); toast('熟练度已重置，卡片重新加入学习计划。'); }
+function resetCardMastery(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; card.mastery = ''; card.noteRating = ''; card.suspended = false; card.resetAt = new Date().toISOString(); card.fsrs = window.knowledgeFSRS.reset(); card.dueAt = card.fsrs.due; card.interval = card.fsrs.scheduledDays; card.reviews = card.fsrs.reps; card.updatedAt = new Date().toISOString(); save(); refresh(); toast('熟练度已重置，卡片重新加入学习计划。'); }
+function confirmRelearnCardGroup(group) {
+  const cards = state.cards.filter((card) => card.folder === group);
+  const resetAt = new Date().toISOString();
+  cards.forEach((card) => {
+    card.mastery = '';
+    card.noteRating = '';
+    card.suspended = false;
+    card.resetAt = resetAt;
+    card.fsrs = window.knowledgeFSRS.reset();
+    card.dueAt = card.fsrs.due;
+    card.interval = card.fsrs.scheduledDays;
+    card.reviews = card.fsrs.reps;
+    card.updatedAt = new Date().toISOString();
+  });
+  save();
+  refresh();
+  toast(`“${group}”已重新纳入学习计划。`);
+}
 function trashCard(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; openDeleteConfirm('card', cardId, `删除卡片“${card.question}”？`, '卡片将移入回收站，之后仍可恢复。'); }
 function openCreateGroup() { $('#createGroupName').value = ''; $('#createGroupModal').showModal(); $('#createGroupName').focus(); }
 function saveGroup(event) { event.preventDefault(); const name = $('#createGroupName').value.trim(); if (!name) return toast('请输入卡组名称。'); if (state.groups.includes(name)) return toast('卡组已存在。'); state.groups.push(name); save(); $('#createGroupModal').close(); renderCards(); toast('卡组已创建。'); }
+function relearnCardGroup(group) {
+  const cards = state.cards.filter((card) => card.folder === group);
+  if (!cards.length) return toast('该卡组暂无卡片。');
+  openDeleteConfirm('relearn-card-group', group, `重新学习“${group}”？`, `将重置该卡组的 ${cards.length} 张卡片，并重新纳入学习计划。`, '确认重学');
+}
 
 function renderQuestionLegacy(box, card, standalone) { const shell = box.closest('.review-shell'); if (!card) { shell?.classList.add('is-complete'); box.innerHTML = '<div class="review-complete"><div class="complete-mark"><svg><use href="#i-review"></use></svg></div><div class="completion-kicker">REVIEW SESSION</div><h2>今日复习已完成</h2><p>本次复习计划已经完成，明天继续保持。</p><button class="secondary-action" data-view="cards">查看卡片库</button></div>'; box.querySelector('[data-view]')?.addEventListener('click', () => view('cards')); els.nextButton.disabled = true; return; } shell?.classList.remove('is-complete'); const selected = Array.isArray(answer) ? answer : []; const head = `<div class="tag-row"><span class="tag">${esc(card.tags[0] || '未分组')}</span><span class="question-type">${card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'}</span></div><div class="question-title">${cardHtml(card.question)}</div>`; if (card.type === 'note') { box.innerHTML = `${head}<div class="note-answer-content">${cardHtml(card.noteContent)}</div><div class="note-rating-block"><p>根据回忆程度选择反馈</p><div class="note-rating-actions">${[['familiar', '熟悉'], ['fuzzy', '模糊'], ['forgot', '没印象']].map(([value, label]) => `<button class="note-rating ${answered ? 'is-disabled' : ''}" data-rating="${value}" ${answered ? 'disabled' : ''}>${label}</button>`).join('')}</div></div>${answered && card.noteContent ? `<div class="explanation"><strong>速记内容</strong>${cardHtml(card.noteContent)}</div>` : ''}`; box.querySelectorAll('[data-rating]').forEach((button) => button.addEventListener('click', () => answerNoteCard(card, button.dataset.rating))); } else { box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}`; const block = box.querySelector('.options-block'); OPTS.forEach((key) => { const button = document.createElement('button'); button.className = 'option-button'; if (!answered && selected.includes(key)) button.classList.add('selected'); if (answered && card.answer.includes(key)) button.classList.add('correct'); if (answered && selected.includes(key) && !card.answer.includes(key)) button.classList.add('wrong'); button.innerHTML = `<span class="key">${key}</span><span>${cardHtml(card.options[key] || '未填写选项')}</span>`; button.disabled = answered; button.addEventListener('click', () => answerCard(card, key)); block.appendChild(button); }); if (card.type === 'multiple' && !answered) { const submit = document.createElement('button'); submit.className = 'next-button submit-answer'; submit.textContent = '提交答案'; submit.disabled = !selected.length; submit.addEventListener('click', () => finalizeMultiple(card)); box.appendChild(submit); } } els.nextButton.disabled = !answered; if (standalone && answered) { const nextButton = document.createElement('button'); nextButton.className = 'next-button'; nextButton.textContent = '下一题'; nextButton.addEventListener('click', next); box.appendChild(nextButton); } }
 function beginCardOrderEdit(button) {
@@ -484,12 +647,14 @@ function confirmCardOrderChange() {
 }
 
 function buildQueue() {
-  const reviewedToday = state.reviewLog[today()] || 0;
+  const activeGroup = state.reviewPlan?.group || 'all';
+  const inPlan = (item) => activeGroup === 'all' || item.folder === activeGroup || state.cards.find((card) => card.id === item.cardId)?.folder === activeGroup;
+  const reviewedToday = todayReviewEvents().filter((event) => reviewEventIsActive(event) && inPlan(event)).length;
   const remaining = Math.max(0, (Number(state.settings.dailyLimit) || 50) - reviewedToday);
-  const due = state.cards.filter((card) => !card.suspended && isDue(card)).sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
+  const due = state.cards.filter((card) => inPlan(card) && !card.suspended && isDue(card)).sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt));
   const reviewCards = due.filter((card) => card.fsrs?.state !== 'New');
   const newCards = due.filter((card) => card.fsrs?.state === 'New');
-  const newReviewedToday = state.reviewEvents.filter((event) => event.reviewedAt?.slice(0, 10) === today() && event.previousState === 'New').length;
+  const newReviewedToday = todayReviewEvents().filter((event) => reviewEventIsActive(event) && event.previousState === 'New' && inPlan(event)).length;
   const allowedNew = Math.max(0, (Number(state.settings.dailyNewLimit) || 0) - newReviewedToday);
   queue = [...reviewCards, ...newCards.slice(0, allowedNew)].slice(0, remaining);
   if (index >= queue.length) index = 0;
@@ -500,11 +665,55 @@ function finalizeMultiple(card) { if (!answer.length) return toast('请至少选
 function answerCard(card, selected, submit = false) { if (answered) return; if (card.type === 'multiple' && !submit) { answer = answer.includes(selected) ? answer.filter((key) => key !== selected) : [...answer, selected]; renderDock(); renderStandalone(); return; } if (card.type === 'single') answer = [selected]; const correct = answer.length === card.answer.length && answer.every((key) => card.answer.includes(key)); answered = true; pendingReviewCardId = card.id; pendingCorrect = correct; renderDock(); renderStandalone(); }
 function answerNoteCardLegacy(card, rating) { if (answered) return; recordReviewLegacy(card, rating); }
 function recordReviewLegacy(card, rating) { recordReview(card, rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : 'Again'); }
-function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisplayCard = null; index += 1; buildQueue(); renderDock(); renderStandalone(); }
+function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisplayCard = null; index += 1; buildQueue(); renderDock(); renderStandalone(); renderReviewPlan(); }
 function retryCurrentReview() { if (!reviewDisplayCard) return; answered = false; answer = []; pendingCorrect = false; pendingReviewCardId = ''; reviewSnapshot = null; renderDock(); renderStandalone(); }
 function reviewActionButtons(card) { return `<div class="review-space-actions"><button type="button" class="review-action-button" data-review-action="retry">再选一次</button><button type="button" class="review-action-button primary-review-action" data-review-action="next">${card.type === 'note' ? '下一条' : '下一题'}</button></div>`; }
+function reviewEventMatchesPlan(event) {
+  const activeGroup = state.reviewPlan?.group || 'all';
+  return reviewEventMatchesGroup(event, activeGroup) && reviewEventIsActive(event);
+}
+function todayPlanEvents() {
+  return todayReviewEvents().filter(reviewEventMatchesPlan);
+}
+function closeReviewHistory() {
+  if (!els.reviewHistoryPopover) return;
+  els.reviewHistoryPopover.hidden = true;
+  els.reviewHistoryButton?.setAttribute('aria-expanded', 'false');
+}
+function toggleReviewHistory(event) {
+  event?.stopPropagation();
+  if (!els.reviewHistoryPopover) return;
+  const open = els.reviewHistoryPopover.hidden;
+  els.reviewHistoryPopover.hidden = !open;
+  els.reviewHistoryButton?.setAttribute('aria-expanded', String(open));
+}
+function reviewPlanItems() {
+  const items = [];
+  const seen = new Set();
+  todayPlanEvents().reverse().forEach((event) => {
+    if (!event.cardId || seen.has(event.cardId)) return;
+    seen.add(event.cardId);
+    items.push({ id: event.cardId, title: event.question || '已删除卡片', completed: true });
+  });
+  queue.forEach((card) => {
+    if (seen.has(card.id)) return;
+    seen.add(card.id);
+    items.push({ id: card.id, title: card.question || '未命名卡片', completed: false });
+  });
+  return items;
+}
+function renderReviewPlan() {
+  if (!els.reviewPlanList) return;
+  const items = reviewPlanItems();
+  els.reviewPlanMeta.textContent = `${items.length} 张卡片`;
+  if (!items.length) {
+    els.reviewPlanList.innerHTML = '<div class="review-plan-empty"><svg><use href="#i-check"></use></svg><strong>今日学习计划已完成</strong><span>当前卡组暂无待学习卡片。</span></div>';
+    return;
+  }
+  els.reviewPlanList.innerHTML = items.map((item, i) => `<div class="review-plan-item ${item.completed ? 'is-complete' : ''}"><span class="review-plan-index">${i + 1}</span><span class="review-plan-title">${esc(item.title)}</span>${item.completed ? '<svg aria-label="已完成"><use href="#i-check"></use></svg>' : ''}</div>`).join('');
+}
 function progress() {
-  const done = Number(state.reviewLog[today()] || 0);
+  const done = todayPlanEvents().length;
   const planned = Math.max(done + queue.length, done, 1);
   const percent = Math.min(100, Math.round((done / planned) * 100));
   els.progressRing.style.background = `conic-gradient(var(--green) ${percent * 3.6}deg, #ece9e4 0deg)`;
@@ -514,7 +723,32 @@ function progress() {
   $('#standaloneProgress').textContent = `${done} / ${planned}`;
   $('#standalonePercent').textContent = `${percent}%`;
   $('#standaloneBar').style.width = `${percent}%`;
-  $('#reviewedTodayTop').textContent = done;
+}
+
+function reviewRatingMeta(event) {
+  const rating = event.rating || '';
+  if (rating === 'Easy') return { label: '太简单', className: 'too-easy' };
+  if (rating === 'Good') return { label: '熟悉', className: 'familiar' };
+  if (rating === 'Hard') return { label: '模糊', className: 'fuzzy' };
+  return { label: '忘记了', className: 'forgot' };
+}
+function renderReviewHistory() {
+  if (!els.reviewHistory) return;
+  const events = todayReviewEvents().filter(reviewEventIsActive);
+  els.reviewHistoryMeta.textContent = `${events.length} 张卡片`;
+  els.reviewHistoryCount.textContent = events.length;
+  if (!events.length) {
+    els.reviewHistory.innerHTML = '<div class="review-history-empty"><svg><use href="#i-review"></use></svg><strong>今天还没有复习记录</strong><span>完成评价后，卡片会出现在这里。</span></div>';
+    return;
+  }
+  els.reviewHistory.innerHTML = events.map((event) => {
+    const card = state.cards.find((item) => item.id === event.cardId);
+    const title = event.question || card?.question || '已删除卡片';
+    const folder = event.folder || card?.folder || '未分组';
+    const meta = reviewRatingMeta(event);
+    const time = new Date(event.reviewedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    return `<article class="review-history-item"><div class="review-history-item-main"><strong>${esc(title)}</strong><span>${esc(folder)} · ${time}</span></div><span class="review-history-stamp ${meta.className}">${meta.label}</span></article>`;
+  }).join('');
 }
 
 function shiftHeatmapMonth(offset) { heatmapMonth = new Date(heatmapMonth.getFullYear(), heatmapMonth.getMonth() + offset, 1); renderHeatmaps(); }
@@ -538,7 +772,7 @@ function pdfExport(cards) { const list = Array.isArray(cards) ? cards : [cards];
 async function exportCards() { const scope = $('#exportScope').value; const format = $('#exportFormat').value; const list = scope === 'selected' ? state.cards.filter((card) => selectedCardIds.size ? selectedCardIds.has(card.id) : card.id === state.selectedCardId) : scope === 'folder' ? state.cards.filter((card) => card.folder === els.folderFilter.value) : state.cards; if (!list.length) return toast('没有可导出的卡片。'); const content = format === 'markdown' ? list.map(markdownExport).join('\n\n---\n\n') : format === 'pdf' ? pdfExport(list) : JSON.stringify(list, null, 2); const result = await window.reviewBridge.saveExportFile({ format, filename: 'knowledge-cards', content }); els.exportModal.close(); if (!result?.canceled) toast('导出完成。'); }
 function parseMarkdownCards(content) { return content.split(/\n---\n/).map((chunk) => { const lines = chunk.split('\n'); const question = lines.find((line) => /^#\s+/.test(line))?.replace(/^#\s+/, '').trim(); const type = lines.find((line) => /^Type:\s*/i.test(line))?.replace(/^Type:\s*/i, '').trim(); if (!question) return null; if (type === 'note') return normCard({ type: 'note', question, noteContent: lines.slice(3).join('\n').split(/\nTags:/i)[0].trim(), tags: ['导入'] }); const options = {}; OPTS.forEach((key) => { options[key] = lines.find((line) => new RegExp(`^${key}\\.\\s*`).test(line))?.replace(new RegExp(`^${key}\\.\\s*`), '').trim() || ''; }); const answer = lines.find((line) => /^Answer:/i.test(line))?.replace(/^Answer:\s*/i, '').split(/[,，]/).map((value) => value.trim()).filter(Boolean) || []; const explanation = lines.find((line) => /^Explanation:/i.test(line))?.replace(/^Explanation:\s*/i, '').trim() || ''; return normCard({ question, type: type === 'multiple' ? 'multiple' : 'single', options, answer, explanation, tags: ['导入'] }); }).filter(Boolean); }
 async function importCards() { const file = await window.reviewBridge.openCardsFile(); if (!file || !file.content.trim()) return toast('请选择有效文件。'); try { const cards = file.extension === '.json' ? (Array.isArray(JSON.parse(file.content)) ? JSON.parse(file.content) : [JSON.parse(file.content)]).map(normCard) : parseMarkdownCards(file.content); const valid = cards.filter((card) => card.question && (card.type === 'note' ? card.noteContent : card.answer.length)); if (!valid.length) return toast('文件格式或字段不完整。'); state.cards = [...valid, ...state.cards]; state.groups = [...new Set([...(state.groups || []), ...valid.map((card) => card.folder)])]; save(); refresh(); toast(`已导入 ${valid.length} 张卡片。`); } catch { toast('无法解析导入文件。'); } }
-function badges() { const badge = $('#reviewBadge'); if (badge) badge.textContent = state.cards.filter(isDue).length; $('#reviewedTodayTop').textContent = state.reviewLog[today()] || 0; }
+function badges() { const badge = $('#reviewBadge'); if (badge) badge.textContent = state.cards.filter(isDue).length; }
 function isDue(card) { return !card.suspended && new Date(card.dueAt).getTime() <= Date.now(); }
 function totalReviews() { return Object.values(state.reviewLog).reduce((sum, count) => sum + Number(count || 0), 0); }
 
@@ -609,6 +843,11 @@ function answerNoteCard(card, rating) {
 
 document.addEventListener('keydown', (event) => {
   if (event.target.matches('input, textarea, select, [contenteditable="true"]')) return;
+  if (!reviewStudyActive && $('#reviewView')?.classList.contains('active') && event.key === 'Enter') {
+    event.preventDefault();
+    startReviewStudy(state.reviewPlan?.group || 'all');
+    return;
+  }
   const key = event.key.toLowerCase();
   if (answered && reviewDisplayCard && (key === 'q' || key === 'e')) {
     event.preventDefault();
@@ -636,10 +875,12 @@ function recordReview(card, rating) {
   card.updatedAt = new Date().toISOString();
   if (card.type === 'note') card.noteRating = NOTE_RATINGS[rating] ? rating : card.noteRating;
   if (card.type === 'note' && rating === 'tooEasy') card.suspended = true;
-  state.reviewLog[today()] = (state.reviewLog[today()] || 0) + 1;
   state.reviewEvents.push({
     id: id('review'),
     cardId: card.id,
+    folder: card.folder || '未分组',
+    question: card.question || '',
+    type: card.type || 'single',
     rating: result.log.rating,
     ratingValue: result.log.ratingValue,
     previousState: previous.state,
@@ -659,6 +900,8 @@ function recordReview(card, rating) {
   buildQueue();
   renderDock();
   renderStandalone();
+  renderReviewPlan();
+  renderReviewHistory();
   renderHeatmaps();
   renderProfile();
   badges();
