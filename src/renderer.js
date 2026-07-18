@@ -89,6 +89,12 @@ let libraryMode = 'home';
 let documentQuery = '';
 let reviewStudyActive = false;
 let tooltipTimer = null;
+let cardPage = 1;
+let cardPageSize = 50;
+let cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc';
+let cardBatchTotal = 1;
+let cardWheelDrag = null;
+let cardLoadedThrough = 1;
 
 function normCard(card) {
   const type = ['single', 'multiple', 'note'].includes(card.type) ? card.type : 'single';
@@ -131,7 +137,7 @@ function ensureCardOrder(cards = []) {
 }
 function groupCards(folder) { return state.cards.filter((card) => (card.folder || '未分组') === folder).sort((a, b) => Number(a.order || 0) - Number(b.order || 0)); }
 function cardPosition(card) { const list = groupCards(card.folder || '未分组'); return Math.max(1, list.findIndex((item) => item.id === card.id) + 1); }
-function sortCardsForDisplay(cards) { const groupOrder = new Map((state.groups || []).map((group, index) => [group, index])); return cards.sort((a, b) => (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b)); }
+function sortCardsForDisplay(cards) { const groupOrder = new Map((state.groups || []).map((group, index) => [group, index])); const direction = cardSortDirection === 'desc' ? -1 : 1; return cards.sort((a, b) => (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || direction * (cardPosition(a) - cardPosition(b))); }
 function normDoc(doc) {
   return { ...doc, id: doc.id || id('doc'), folderId: doc.folderId || null, title: doc.title || '未命名文档', html: doc.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>', createdAt: doc.createdAt || new Date().toISOString(), updatedAt: doc.updatedAt || doc.createdAt || new Date().toISOString() };
 }
@@ -180,7 +186,7 @@ function syncReviewLog() {
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel'].forEach((key) => { els[key] = document.getElementById(key); });
 }
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
@@ -257,17 +263,19 @@ function bind() {
   $('#closeExportButton').addEventListener('click', () => els.exportModal.close());
   $('#confirmExportButton').addEventListener('click', exportCards);
   $('#importButton').addEventListener('click', importCards);
-  els.cardSearchInput.addEventListener('input', renderCards);
-  els.tagFilter.addEventListener('change', renderCards);
-  els.cardTypeFilter.addEventListener('change', renderCards);
-  els.cardStatusFilter.addEventListener('change', renderCards);
+  els.cardSearchInput.addEventListener('input', () => renderCards(true));
+  els.tagFilter.addEventListener('change', () => renderCards(true));
+  els.cardTypeFilter.addEventListener('change', () => renderCards(true));
+  els.cardStatusFilter.addEventListener('change', () => renderCards(true));
+  els.cardSortSelect.addEventListener('change', () => { cardSortDirection = els.cardSortSelect.value === 'desc' ? 'desc' : 'asc'; state.settings.cardSortDirection = cardSortDirection; save(); renderCards(true); });
+  els.cardList.addEventListener('scroll', handleCardListScroll, { passive: true });
+  bindCardWheel();
   $('#clearCardFilters').addEventListener('click', clearCardFilters);
   $('#selectAllCardsButton').addEventListener('click', toggleSelectAllCards);
   $('#clearCardSelectionButton').addEventListener('click', clearCardSelection);
   $('#bulkDeleteCardsButton').addEventListener('click', bulkDeleteCards);
   $('#toggleCardGroupsButton').addEventListener('click', toggleCardGroups);
   els.cardGroupRail.addEventListener('click', handleCardGroupRailClick);
-  $('#cardList').addEventListener('click', (event) => { const button = event.target.closest('[data-card-reset]'); if (!button) return; event.stopPropagation(); resetCardMastery(button.dataset.cardReset); });
   $('#newGroupButton').addEventListener('click', openCreateGroup);
   $('#cancelDeleteGroupButton').addEventListener('click', () => { pendingCardOrder = null; $('#deleteGroupModal').close(); });
   $('#confirmDeleteGroupButton').addEventListener('click', confirmDeleteTarget);
@@ -425,7 +433,7 @@ function renderCardGroups() {
 }
 function handleCardGroupRailClick(event) {
   const groupButton = event.target.closest('[data-group]');
-  if (groupButton) { els.folderFilter.value = groupButton.dataset.group; syncCustomSelect(els.folderFilter); renderCards(); return; }
+  if (groupButton) { els.folderFilter.value = groupButton.dataset.group; syncCustomSelect(els.folderFilter); cardPage = 1; renderCards(); return; }
   const menuButton = event.target.closest('[data-group-menu]');
   if (menuButton) { event.stopPropagation(); const menu = menuButton.parentElement?.querySelector(`[data-group-menu-panel="${CSS.escape(menuButton.dataset.groupMenu)}"]`); const open = menu && !menu.classList.contains('open'); closeCardGroupMenus(); if (menu && open) { menu.classList.add('open'); menuButton.setAttribute('aria-expanded', 'true'); } return; }
   const action = event.target.closest('[data-group-rename], [data-group-relearn], [data-group-delete]');
@@ -631,6 +639,7 @@ function closeReviewBookMenus() {
 function startReviewStudy(group = state.reviewPlan?.group || 'all') {
   const selected = ['all', ...reviewGroups()].includes(group) ? group : 'all';
   if (state.reviewPlan?.group !== selected) changeReviewGroup(selected);
+  resetReviewSession();
   reviewStudyActive = true;
   renderReviewHome();
   renderStandalone();
@@ -640,9 +649,135 @@ function exitReviewStudy() {
   closeReviewHistory();
   renderReviewHome();
 }
+function resetReviewSession() {
+  answered = false;
+  answer = [];
+  pendingReviewCardId = '';
+  pendingCorrect = false;
+  reviewDisplayCard = null;
+  reviewSnapshot = null;
+  index = 0;
+  queue = [];
+  queueKey = '';
+}
 function enhanceSelectsLegacy() { $$('select').forEach((select) => { if (select.parentElement?.classList.contains('select-shell')) return; const shell = document.createElement('div'); shell.className = `select-shell${select.closest('.formatbar') ? ' format-select-shell' : ''}`; select.parentNode.insertBefore(shell, select); shell.appendChild(select); const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'select-trigger'; trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', select.title || select.getAttribute('aria-label') || '选择'); const menu = document.createElement('div'); menu.className = 'select-menu'; menu.setAttribute('role', 'listbox'); shell.append(trigger, menu); trigger.addEventListener('click', (event) => { event.stopPropagation(); const open = shell.classList.toggle('open'); trigger.setAttribute('aria-expanded', String(open)); $$('.select-shell.open').filter((item) => item !== shell).forEach((item) => { item.classList.remove('open'); item.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); if (open && (shell.classList.contains('format-select-shell') || shell.closest('.modal'))) { const rect = trigger.getBoundingClientRect(); menu.style.position = 'fixed'; menu.style.top = `${rect.bottom + 7}px`; menu.style.left = `${rect.left}px`; menu.style.right = 'auto'; menu.style.minWidth = `${Math.max(rect.width, select.id === 'blockFormat' ? 96 : 120)}px`; } }); menu.addEventListener('click', (event) => { const option = event.target.closest('[data-option]'); if (!option) return; select.value = option.dataset.option; select.dispatchEvent(new Event('change', { bubbles: true })); shell.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); }); select.addEventListener('change', () => syncCustomSelectLegacy(select)); syncCustomSelectLegacy(select); }); document.addEventListener('click', (event) => { if (!event.target.closest('.select-shell')) $$('.select-shell.open').forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); }); }); }
 function syncCustomSelectLegacy(select) { const shell = select?.parentElement?.classList.contains('select-shell') ? select.parentElement : null; if (!shell) return; const trigger = shell.querySelector('.select-trigger'); const menu = shell.querySelector('.select-menu'); const options = [...select.options]; trigger.textContent = options.find((option) => option.value === select.value)?.textContent || select.value || ''; menu.innerHTML = options.map((option) => `<button type="button" role="option" data-option="${esc(option.value)}" class="${option.value === select.value ? 'selected' : ''}">${esc(option.textContent)}</button>`).join(''); }
-function renderCards() { renderFilters(); renderCardSummary(); renderCardGroups(); const list = sortCardsForDisplay(state.cards.filter(cardMatches)); const folderName = els.folderFilter.value || '全部文件夹'; $('#cardListTitle').textContent = folderName === '全部文件夹' ? '全部卡片' : folderName; $('#cardListMeta').textContent = `${list.length} 张卡片`; els.cardList.innerHTML = list.length ? list.map((card) => { const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'; const score = masteryScore(card); const scoreMarkup = score === null ? '<span class="card-score pending">--</span>' : `<span class="card-score">${score}<small>分</small></span>`; const query = els.cardSearchInput.value; const preview = card.type === 'note' ? highlightHtml(noteMarkdownHtml(card.noteContent), query) : highlightHtml(cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`), query); const stamp = state.settings.showStamps !== false && score !== null ? `<div class="card-mastery-stamp ${masteryMeta(card)?.className || ''}"><span>${masteryMeta(card)?.label || '已评价'}</span></div>` : ''; return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><button type="button" class="card-index-editor" title="点击修改卡组内顺序" data-card-order="${card.id}">-${cardPosition(card)}-</button><span class="question-type">${typeLabel}</span>${scoreMarkup}</div><div class="card-item-content"><h3>${highlightText(card.question, query)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div>${stamp}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${highlightText(tag, query)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button><button class="card-reset-mastery" title="重置熟练度" data-card-reset="${card.id}"><svg><use href="#i-reset"></use></svg></button></div></div></article>`; }).join('') : '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>'; $$('#cardList .card-item').forEach((row) => row.addEventListener('click', (event) => { if (event.target.closest('[data-card-edit], [data-card-reset], [data-card-order]')) return; const cardId = row.dataset.card; if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId); state.selectedCardId = cardId; save(); renderCards(); })); $$('#cardList [data-card-edit]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); openCard(button.dataset.cardEdit); })); $$('#cardList [data-card-order]').forEach((button) => button.addEventListener('click', (event) => { event.stopPropagation(); beginCardOrderEdit(button); })); bindCardSorting(); updateBulkSelection(list); }
+function cardMarkup(card) {
+  const typeLabel = card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题';
+  const score = masteryScore(card);
+  const scoreMarkup = score === null ? '<span class="card-score pending">--</span>' : `<span class="card-score">${score}<small>分</small></span>`;
+  const query = els.cardSearchInput.value;
+  const preview = card.type === 'note' ? highlightHtml(noteMarkdownHtml(card.noteContent), query) : highlightHtml(cardHtml(`答案 ${card.answer.join('、')} · 下次复习 ${formatDate(card.dueAt)}`), query);
+  const stamp = state.settings.showStamps !== false && score !== null ? `<div class="card-mastery-stamp ${masteryMeta(card)?.className || ''}"><span>${masteryMeta(card)?.label || '已评价'}</span></div>` : '';
+  return `<article class="card-item ${card.type === 'note' ? 'note-card-item' : ''} ${selectedCardIds.has(card.id) ? 'bulk-selected' : ''}" data-card="${card.id}" draggable="true"><div class="card-item-head"><button type="button" class="card-index-editor" title="点击修改卡组内顺序" data-card-order="${card.id}">-${cardPosition(card)}-</button><span class="question-type">${typeLabel}</span>${scoreMarkup}</div><div class="card-item-content"><h3>${highlightText(card.question, query)}</h3><div class="card-note-preview ${card.type === 'note' ? 'markdown-preview' : ''}">${preview}</div>${stamp}</div><div class="card-item-foot"><div class="tag-row">${card.tags.map((tag) => `<span class="tag">${highlightText(tag, query)}</span>`).join('')}</div><div class="card-item-actions"><button class="card-edit" title="编辑卡片" data-card-edit="${card.id}"><svg><use href="#i-edit"></use></svg></button><button class="card-reset-mastery" title="重置熟练度" data-card-reset="${card.id}"><svg><use href="#i-reset"></use></svg></button></div></div></article>`;
+}
+function addMasonryCards(items, reset = false, startIndex = 0) {
+  if (reset) els.cardList.innerHTML = '';
+  let masonry = els.cardList.querySelector('.card-masonry');
+  if (!masonry) {
+    masonry = document.createElement('div');
+    masonry.className = 'card-masonry';
+    els.cardList.appendChild(masonry);
+  }
+  const columnCount = Math.max(1, Math.min(4, Math.floor(els.cardList.clientWidth / 320) || 1));
+  let columns = [...masonry.children];
+  while (columns.length < columnCount) {
+    const column = document.createElement('div');
+    column.className = 'card-masonry-column';
+    masonry.appendChild(column);
+    columns.push(column);
+  }
+  const temp = document.createElement('div');
+  temp.innerHTML = items.map((card, index) => cardMarkup(card, Math.floor((startIndex + index) / cardPageSize) + 1)).join('');
+  [...temp.children].forEach((card, index) => {
+    card.dataset.cardBatch = String(Math.floor((startIndex + index) / cardPageSize) + 1);
+    const target = columns.reduce((shortest, column) => column.offsetHeight < shortest.offsetHeight ? column : shortest, columns[0]);
+    target.appendChild(card);
+  });
+}
+function renderCards(resetPage = false, append = false, jump = false) {
+  if (resetPage) { cardPage = 1; cardLoadedThrough = 1; }
+  if (append) { cardLoadedThrough = Math.min(cardBatchTotal, cardLoadedThrough + 1); cardPage = cardLoadedThrough; }
+  renderFilters(); renderCardSummary(); renderCardGroups();
+  const list = sortCardsForDisplay(state.cards.filter(cardMatches));
+  cardBatchTotal = Math.max(1, Math.ceil(list.length / cardPageSize));
+  cardPage = Math.min(Math.max(1, cardPage), cardBatchTotal);
+  cardLoadedThrough = Math.min(Math.max(1, cardLoadedThrough), cardBatchTotal);
+  const visibleThrough = jump ? cardPage : cardLoadedThrough;
+  const pageItems = list.slice(0, visibleThrough * cardPageSize);
+  if (append) {
+    const nextItems = list.slice((cardLoadedThrough - 1) * cardPageSize, cardLoadedThrough * cardPageSize);
+    $('#cardLoadMore')?.remove();
+    addMasonryCards(nextItems, false, (cardLoadedThrough - 1) * cardPageSize);
+    if (cardLoadedThrough < cardBatchTotal) els.cardList.insertAdjacentHTML('beforeend', '<div class="card-load-more" id="cardLoadMore"><button type="button" class="card-load-more-glass" data-load-more><strong>显示更多</strong><span>继续浏览下一批卡片</span></button></div>');
+    renderCardWheel(cardBatchTotal);
+    bindCardSorting();
+    updateCardLoadMore();
+    return;
+  }
+  const folderName = els.folderFilter.value || '全部文件夹';
+  $('#cardListTitle').textContent = folderName === '全部文件夹' ? '全部卡片' : folderName;
+  $('#cardListMeta').textContent = `${list.length} 张卡片`;
+  renderCardWheel(cardBatchTotal);
+  if (pageItems.length) addMasonryCards(pageItems, true);
+  else els.cardList.innerHTML = '<div class="empty-state"><strong>没有符合条件的卡片</strong><span>调整筛选条件或新建一张复习卡片。</span></div>';
+  if (list.length && cardLoadedThrough < cardBatchTotal) {
+    els.cardList.insertAdjacentHTML('beforeend', '<div class="card-load-more" id="cardLoadMore"><button type="button" class="card-load-more-glass" data-load-more><strong>显示更多</strong><span>继续浏览下一批卡片</span></button></div>');
+  }
+  els.cardList.onclick = (event) => {
+    if (event.target.closest('[data-load-more]')) { if (cardLoadedThrough < cardBatchTotal) renderCards(false, true); return; }
+    const edit = event.target.closest('[data-card-edit]');
+    if (edit) return openCard(edit.dataset.cardEdit);
+    const reset = event.target.closest('[data-card-reset]');
+    if (reset) return resetCardMastery(reset.dataset.cardReset);
+    const order = event.target.closest('[data-card-order]');
+    if (order) return beginCardOrderEdit(order);
+    const row = event.target.closest('[data-card]');
+    if (!row) return;
+    const cardId = row.dataset.card;
+    if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId); else selectedCardIds.add(cardId);
+    state.selectedCardId = cardId;
+    save();
+    renderCards();
+  };
+  bindCardSorting(); updateBulkSelection(list);
+  updateCardLoadMore();
+}
+function handleCardListScroll() { updateCardLoadMore(); }
+function updateCardLoadMore() { const overlay = $('#cardLoadMore'); if (!overlay) return; const nearBottom = els.cardList.scrollHeight - els.cardList.scrollTop - els.cardList.clientHeight < 180; overlay.classList.toggle('is-visible', nearBottom); }
+function selectCardBatch(page) {
+  const target = Math.max(1, Math.min(cardBatchTotal, Number(page) || 1));
+  cardPage = target;
+  cardLoadedThrough = target;
+  renderCards(false, false, true);
+  requestAnimationFrame(() => {
+    const anchor = els.cardList.querySelector(`[data-card-batch="${target}"]`);
+    if (anchor) {
+      const listRect = els.cardList.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+      els.cardList.scrollTo({ top: Math.max(0, els.cardList.scrollTop + anchorRect.top - listRect.top - 18), behavior: 'smooth' });
+    }
+  });
+}
+function renderCardWheel(totalPages) {
+  if (!els.cardPageWheel || !els.cardWheelRail) return;
+  els.cardPageWheel.hidden = totalPages <= 1;
+  if (totalPages <= 1) return;
+  const start = Math.max(1, Math.min(totalPages - 4, cardPage - 2));
+  const pages = Array.from({ length: Math.min(5, totalPages) }, (_, index) => start + index);
+  els.cardWheelRail.innerHTML = pages.map((page, index) => `<button type="button" class="card-wheel-tick ${page === cardPage ? 'active' : ''}" style="--wheel-index:${index}" data-wheel-page="${page}" aria-label="第 ${page} 批">${page}</button>`).join('');
+  els.cardWheelLabel.textContent = `${cardPage} / ${totalPages}`;
+}
+function bindCardWheel() {
+  if (!els.cardPageWheel || els.cardPageWheel.dataset.bound === 'true') return;
+  els.cardPageWheel.dataset.bound = 'true';
+  els.cardPageWheel.addEventListener('click', (event) => { const button = event.target.closest('[data-wheel-page]'); if (button) selectCardBatch(button.dataset.wheelPage); });
+  els.cardPageWheel.addEventListener('wheel', (event) => { if (Math.abs(event.deltaY) < 2) return; event.preventDefault(); selectCardBatch(cardPage + (event.deltaY > 0 ? 1 : -1)); }, { passive: false });
+  els.cardPageWheel.addEventListener('pointerdown', (event) => { if (event.button !== 1) return; event.preventDefault(); cardWheelDrag = { startY: event.clientY, startPage: cardPage }; els.cardPageWheel.setPointerCapture?.(event.pointerId); });
+  els.cardPageWheel.addEventListener('pointermove', (event) => { if (!cardWheelDrag) return; const delta = Math.round((cardWheelDrag.startY - event.clientY) / 28); if (delta) selectCardBatch(cardWheelDrag.startPage + delta); });
+  els.cardPageWheel.addEventListener('pointerup', () => { cardWheelDrag = null; });
+  els.cardPageWheel.addEventListener('pointercancel', () => { cardWheelDrag = null; });
+}
 function bindCardSorting() { $$('#cardList [data-card]').forEach((row) => { row.addEventListener('dragstart', (event) => { if (event.target.closest('button')) { event.preventDefault(); return; } event.dataTransfer.setData('card-id', row.dataset.card); row.classList.add('dragging'); }); row.addEventListener('dragend', () => row.classList.remove('dragging')); row.addEventListener('dragover', (event) => { event.preventDefault(); row.classList.add('drag-over'); }); row.addEventListener('dragleave', () => row.classList.remove('drag-over')); row.addEventListener('drop', (event) => { event.preventDefault(); row.classList.remove('drag-over'); reorderCards(event.dataTransfer.getData('card-id'), row.dataset.card); }); }); }
 function reorderCards(source, target) {
   if (!source || !target || source === target) return;
@@ -660,7 +795,7 @@ function toggleSelectAllCards() { const list = state.cards.filter(cardMatches); 
 function clearCardSelection() { selectedCardIds.clear(); renderCards(); }
 function bulkDeleteCards() { const ids = new Set(selectedCardIds); if (!ids.size) return; openDeleteConfirm('cards', [...ids].join(','), `删除 ${ids.size} 张卡片？`, '选中的卡片将移入回收站，之后仍可恢复。'); }
 function clearCardFilters() { els.cardSearchInput.value = ''; els.folderFilter.value = '全部文件夹'; els.tagFilter.value = '全部标签'; els.cardTypeFilter.value = '全部类型'; els.cardStatusFilter.value = '全部熟练度'; [els.folderFilter, els.tagFilter, els.cardTypeFilter, els.cardStatusFilter].forEach(syncCustomSelect); renderCards(); }
-function resetCardMastery(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; const resetAt = new Date().toISOString(); card.mastery = ''; card.noteRating = ''; card.suspended = false; card.resetAt = resetAt; card.fsrs = window.knowledgeFSRS.reset(); card.dueAt = card.fsrs.due; card.interval = card.fsrs.scheduledDays; card.reviews = card.fsrs.reps; card.updatedAt = resetAt; state.reviewEvents = state.reviewEvents.filter((event) => event.cardId !== card.id); save(); refresh(); toast('熟练度已重置，卡片重新加入学习计划。'); }
+function resetCardMastery(cardId) { const card = state.cards.find((item) => item.id === cardId); if (!card) return; const resetAt = new Date().toISOString(); card.mastery = ''; card.noteRating = ''; card.suspended = false; card.resetAt = resetAt; card.fsrs = window.knowledgeFSRS.reset(); card.dueAt = card.fsrs.due; card.interval = card.fsrs.scheduledDays; card.reviews = card.fsrs.reps; card.updatedAt = resetAt; state.reviewEvents = state.reviewEvents.filter((event) => event.cardId !== card.id); resetReviewSession(); save(); refresh(); toast('熟练度已重置，卡片重新加入学习计划。'); }
 function confirmRelearnCardGroup(group) {
   const cards = state.cards.filter((card) => card.folder === group);
   const resetAt = new Date().toISOString();
@@ -677,6 +812,7 @@ function confirmRelearnCardGroup(group) {
     card.updatedAt = new Date().toISOString();
   });
   state.reviewEvents = state.reviewEvents.filter((event) => !cardIds.has(event.cardId));
+  resetReviewSession();
   save();
   refresh();
   toast(`“${group}”已重新纳入学习计划。`);
@@ -788,7 +924,7 @@ function finalizeMultiple(card) { if (!answer.length) return toast('请至少选
 function answerCard(card, selected, submit = false) { if (answered) return; if (card.type === 'multiple' && !submit) { answer = answer.includes(selected) ? answer.filter((key) => key !== selected) : [...answer, selected]; renderDock(); renderStandalone(); return; } if (card.type === 'single') answer = [selected]; const correct = answer.length === card.answer.length && answer.every((key) => card.answer.includes(key)); answered = true; pendingReviewCardId = card.id; pendingCorrect = correct; renderDock(); renderStandalone(); }
 function answerNoteCardLegacy(card, rating) { if (answered) return; recordReviewLegacy(card, rating); }
 function recordReviewLegacy(card, rating) { recordReview(card, rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : 'Again'); }
-function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisplayCard = null; index += 1; buildQueue(); renderDock(); renderStandalone(); renderReviewPlan(); }
+function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisplayCard = null; index = 0; buildQueue(); renderDock(); renderStandalone(); renderReviewPlan(); }
 function retryCurrentReview() { if (!reviewDisplayCard) return; answered = false; answer = []; pendingCorrect = false; pendingReviewCardId = ''; reviewSnapshot = null; renderDock(); renderStandalone(); }
 function reviewActionButtons(card) { return `<div class="review-space-actions"><button type="button" class="review-action-button" data-review-action="retry">再选一次</button><button type="button" class="review-action-button primary-review-action" data-review-action="next">${card.type === 'note' ? '下一条' : '下一题'}</button></div>`; }
 function reviewEventMatchesPlan(event) {

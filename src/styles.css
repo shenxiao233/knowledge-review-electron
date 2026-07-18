@@ -757,7 +757,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .card-group-rail { transition: width .2s ease, opacity .2s ease, padding .2s ease; }
 .card-library-layout.groups-collapsed .card-manager { min-width: 0; }
 .card-manager .icon-button.active { color: var(--green); border-color: #acd4c0; background: var(--green-soft); }
-.card-group-rail { min-height: 0; padding: 18px 10px 20px; border-right: 1px solid var(--line); background: #f8f7f4; }
+.card-group-rail { position: sticky; top: 0; height: 100%; min-height: 0; padding: 18px 10px 20px; border-right: 1px solid var(--line); background: #f8f7f4; overflow: auto; }
 .rail-section-title { padding: 0 10px 10px; color: #7a817b; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
 .card-group-link { width: 100%; height: 38px; display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 0 10px; border-radius: 8px; color: #6b726d; text-align: left; }
 .card-group-link { grid-template-columns: minmax(0, 1fr) 28px; gap: 0; padding: 0; }
@@ -788,13 +788,76 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .group-dot { width: 8px; height: 8px; border-radius: 50%; background: #8e9d95; }
 .group-dot.all { background: var(--green); }
 .rail-section-foot { margin: 18px 10px 0; padding-top: 12px; border-top: 1px solid var(--line); color: #aaa59d; font-size: 11px; }
-.card-manager { min-width: 0; padding: 18px 22px 34px; border-top: 0; background: transparent; overflow: auto; }
+.card-manager { min-width: 0; padding: 18px 22px 34px; border-top: 0; background: transparent; overflow: hidden; }
 .card-manager-head { position: sticky; top: -18px; z-index: 8; display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: -18px -22px 14px; padding: 18px 22px 14px; border-bottom: 1px solid rgba(223, 217, 208, .85); background: rgba(251, 250, 248, .96); backdrop-filter: blur(12px); }
 .card-manager-head strong { display: inline-block; margin-right: 8px; color: #34413b; font-size: 16px; }
 .card-manager-head > div > span { color: var(--muted); font-size: 12px; }
 .manager-actions { display: flex; gap: 8px; }
 .manager-actions button svg, .ghost-button svg, .image-insert-button svg, .card-item-actions svg { width: 15px; height: 15px; }
-.card-list { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); grid-auto-rows: max-content; align-content: start; align-items: stretch; gap: 12px; padding: 0 0 20px; background: #fbfaf8; }
+.card-list { display: block; flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 0 82px 20px 0; background: #fbfaf8; }
+.card-manager { display: flex; flex-direction: column; }
+.card-masonry { display: flex; align-items: flex-start; gap: 12px; padding: 0; }
+.card-masonry-column { min-width: 0; flex: 1 1 0; display: flex; flex-direction: column; gap: 12px; }
+.card-masonry-column .card-item { width: 100%; margin: 0; }
+.card-load-more { position: sticky; bottom: 10px; z-index: 18; height: 0; margin: 0; column-span: all; pointer-events: none; }
+.card-load-more-glass { position: absolute; left: 50%; bottom: 0; width: min(360px, calc(100% - 32px)); min-height: 68px; display: grid; place-items: center; align-content: center; gap: 3px; padding: 11px 18px; border: 1px solid rgba(255,255,255,.82); border-radius: 16px; background: rgba(255,255,255,.68); box-shadow: 0 12px 30px rgba(45,54,49,.12); backdrop-filter: blur(14px) saturate(1.15); color: #526159; opacity: 0; pointer-events: none; transform: translate(-50%, 12px); transition: opacity .22s ease, transform .22s ease, background .22s ease; }
+.card-load-more.is-visible .card-load-more-glass { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.card-load-more-glass:hover { background: rgba(237,248,242,.86); color: var(--green); }
+.card-load-more-glass strong { font-size: 14px; }
+.card-load-more-glass span { color: #9aa49d; font-size: 11px; }
+.card-page-wheel { position: absolute; top: 50%; right: 14px; z-index: 28; width: 64px; display: grid; justify-items: center; gap: 7px; padding: 10px 6px 9px; border: 1px solid rgba(226,231,227,.92); border-radius: 24px; background: rgba(255,255,255,.72); box-shadow: 0 14px 34px rgba(40,54,46,.12); backdrop-filter: blur(16px); transform: translateY(-50%); user-select: none; }
+.card-page-wheel[hidden] { display: none; }
+.card-page-wheel::before { content: 'BATCH'; color: #a1aaa4; font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.card-wheel-caption { color: #a1aaa4; font-size: 9px; font-weight: 800; letter-spacing: .12em; }
+.card-wheel-dial { position: relative; width: 48px; padding: 7px 0; border: 1px solid rgba(216,225,219,.9); border-radius: 20px; background: rgba(249,252,250,.72); box-shadow: inset 0 1px 0 rgba(255,255,255,.85); }
+.card-wheel-rail { position: relative; width: 42px; display: grid; justify-items: center; gap: 6px; padding: 11px 4px; border: 1px solid rgba(216,225,219,.9); border-radius: 20px; background: rgba(249,252,250,.72); box-shadow: inset 0 1px 0 rgba(255,255,255,.85); }
+.card-wheel-rail::before { content: ''; position: absolute; top: 4px; bottom: 4px; left: 50%; width: 2px; border-radius: 999px; background: #dfe8e2; transform: translateX(-50%); }
+.card-wheel-rail::after { content: ''; position: absolute; top: 50%; left: 50%; width: 38px; height: 28px; border: 1px solid rgba(155,165,158,.52); border-radius: 11px; background: rgba(255,255,255,.38); pointer-events: none; transform: translate(-50%, -50%); }
+.card-wheel-focus { position: absolute; top: 50%; left: 50%; width: 38px; height: 28px; border: 1px solid rgba(155,165,158,.52); border-radius: 11px; background: rgba(255,255,255,.38); pointer-events: none; transform: translate(-50%, -50%); }
+.card-wheel-tick { position: relative; z-index: 1; width: 28px; height: 24px; border: 1px solid transparent; border-radius: 8px; color: #8b9790; font-size: 11px; opacity: .82; animation: card-wheel-tick-in .28s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--wheel-index, 0) * 24ms); transition: transform .2s cubic-bezier(.2,.8,.2,1), color .2s ease, border-color .2s ease, background .2s ease, opacity .2s ease; }
+.card-wheel-tick:hover { color: #4f675b; border-color: #d8e2dc; background: rgba(255,255,255,.72); opacity: 1; transform: scale(1.06); }
+.card-wheel-tick.active { color: #fff; border-color: #2f7d64; background: var(--green); box-shadow: none; opacity: 1; transform: scale(1.08); }
+.card-wheel-label { min-width: 40px; padding-top: 6px; border-top: 1px solid #e8ece9; color: #69766e; font: 700 10px/1.2 Consolas, monospace; text-align: center; }
+.card-page-wheel:active { cursor: ns-resize; }
+
+@keyframes card-wheel-tick-in {
+  from { opacity: 0; transform: translateY(5px) scale(.92); }
+  to { opacity: .82; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 900px) {
+  .card-list { padding-right: 68px; }
+  .card-page-wheel { right: 8px; width: 56px; }
+  .card-wheel-dial { width: 42px; }
+  .card-wheel-rail { width: 38px; }
+  .card-wheel-tick { width: 25px; }
+  .card-load-more-glass { width: min(300px, calc(100% - 24px)); }
+}
+@media (max-width: 680px) {
+  .card-library-layout { grid-template-columns: 1fr; }
+  .card-group-rail { display: none; }
+  .card-manager { padding-left: 14px; padding-right: 14px; }
+  .card-masonry { gap: 8px; }
+  .card-masonry-column { gap: 8px; }
+  .card-list { padding-right: 62px; }
+  .card-page-wheel { right: 6px; opacity: .9; }
+}
+.card-pagination { display: none !important; }
+.card-pagination[hidden] { display: none; }
+.card-total-pages { margin-right: 4px; color: #78847c; white-space: nowrap; }
+.card-page-nav { display: inline-flex; align-items: center; gap: 8px; }
+.card-page-size { display: inline-flex; align-items: center; margin-left: 4px; white-space: nowrap; }
+.card-page-size .select-shell { width: 138px; }
+.card-page-size select { width: 138px; height: 34px; padding-left: 10px; font-size: 12px; }
+.pagination-button { min-width: 38px; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: #69756e; font-size: 13px; transition: border-color .16s ease, background .16s ease, color .16s ease, transform .16s ease; }
+.pagination-button.pagination-page { min-width: 38px; }
+.pagination-button.pagination-arrow { display: grid; place-items: center; padding: 0; }
+.pagination-button.pagination-arrow svg { width: 18px; height: 18px; }
+.pagination-button.pagination-page.active { border-color: #c7bbb1; background: #cfc4bb; color: #fff; font-weight: 800; }
+.pagination-button:hover:not(:disabled) { border-color: #abd1c0; background: var(--green-soft); color: var(--green); }
+.pagination-button.pagination-page.active:hover { border-color: #b8a99e; background: #c3b5aa; color: #fff; }
+.pagination-button:disabled { opacity: .42; cursor: not-allowed; }
+.pagination-ellipsis { min-width: 20px; color: #938b83; text-align: center; }
 .card-item { min-height: 220px; height: auto; display: flex; flex-direction: column; gap: 10px; padding: 15px 16px; border: 1px solid var(--line); border-radius: 11px; background: #fff; box-shadow: 0 8px 22px rgba(37,34,30,.03); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
 .card-item-content { position: relative; min-height: 0; flex: 1 1 auto; padding-right: 0; }
 .card-item { position: relative; }
@@ -1193,10 +1256,12 @@ select option { color: #34413b; background: #fff; }
 .card-editor-card menu, .group-creator-modal menu { padding-top: 5px; border-top: 1px solid var(--line); }
 @keyframes modal-enter { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
+.cards-view { position: relative; }
 .cards-view.active { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .cards-page-header, .card-summary, .card-library-toolbar, .card-library-layout { min-width: 0; }
 .card-library-layout { flex: 1 1 auto; min-height: 0; overflow: hidden; }
-.card-group-rail, .card-manager { min-height: 0; overflow: auto; }
+.card-group-rail { min-height: 0; overflow: auto; }
+.card-manager { min-height: 0; overflow: hidden; }
 .card-library-toolbar .search-box input { min-width: 0; width: 100%; text-overflow: ellipsis; }
 .card-manager-head .manager-actions { flex-wrap: wrap; justify-content: flex-end; }
 
