@@ -1600,6 +1600,33 @@ select option { color: #34413b; background: #fff; }
 .stamp-visibility-control b { font-size: 12px; font-weight: 700; }
 @keyframes stamp-in { from { opacity: 0; } to { opacity: .9; } }
 
+.about-intro { margin: 0 0 22px; color: #6b756e; font-size: 14px; }
+.update-panel { margin-top: 0; padding: 26px 28px 24px; border: 1px solid #dce6df; border-radius: 18px; background: linear-gradient(145deg, #fbfffc, #f4faf6); box-shadow: 0 12px 28px rgba(47, 93, 70, .06); }
+.update-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.update-panel-heading h3 { margin: 5px 0 7px; color: #34413b; font-size: 20px; }
+.update-shield { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #a8cfbd; border-radius: 50%; background: #edf8f2; color: #2f7d64; font-weight: 800; }
+.update-version-row { display: flex; align-items: center; gap: 9px; margin-top: 22px; }
+.update-version { margin-top: 0; color: #53645a; font-size: 14px; font-weight: 800; }
+.update-channel { padding: 4px 8px; border: 1px solid #cce2d6; border-radius: 999px; background: #f1faf4; color: #468367; font-size: 11px; font-weight: 700; }
+.update-progress { margin-top: 13px; }
+.update-progress-track { height: 9px; overflow: hidden; border-radius: 99px; background: #dfeae3; }
+.update-progress-track i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4a9d79, #8cc8a8); transition: width .2s ease; }
+.update-progress-meta { margin-top: 7px; color: #7c8c83; font-size: 11px; }
+.update-status { min-height: 21px; margin-top: 13px; color: #66766d; font-size: 13px; }
+.update-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 15px; }
+.update-check-button { min-height: 38px; display: inline-flex; align-items: center; gap: 8px; padding: 0 15px; border: 1px solid #b9d7c8; border-radius: 9px; background: #fff; color: #2f7d64; font-weight: 750; transition: transform .16s ease, background .16s ease, box-shadow .16s ease, opacity .16s ease; }
+.update-check-button:hover:not(:disabled) { background: #f0faf4; box-shadow: 0 6px 14px rgba(47,125,100,.1); transform: translateY(-1px); }
+.update-check-button:disabled { cursor: wait; opacity: .6; }
+.update-button-icon { display: inline-grid; place-items: center; width: 19px; height: 19px; border: 1px solid currentColor; border-radius: 50%; font-size: 15px; line-height: 1; }
+.update-check-button:disabled .update-button-icon { animation: update-spin .9s linear infinite; }
+.update-install-button { min-height: 38px; padding: 0 15px; border-radius: 9px; }
+.data-location { display: grid; gap: 6px; margin-top: 22px; padding-top: 17px; border-top: 1px solid #dce6df; color: #68786e; font-size: 12px; }
+.data-location-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.data-location-heading span { color: #4b906c; font-size: 11px; font-weight: 700; }
+.data-location code { overflow-wrap: anywhere; padding: 8px 10px; border-radius: 8px; background: rgba(255,255,255,.72); color: #53645a; font: 11px Consolas, monospace; }
+.data-location small { color: #89968e; }
+@keyframes update-spin { to { transform: rotate(360deg); } }
+
 /* Final stamp overrides: all review stamps are centered, translucent circles. */
 .note-stamp, .note-stamp.familiar, .note-stamp.fuzzy, .note-stamp.forgot, .note-stamp.too-easy,
 .card-mastery-stamp, .card-mastery-stamp.fuzzy, .card-mastery-stamp.forgot, .card-mastery-stamp.too-easy {

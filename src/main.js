@@ -1,16 +1,100 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell, safeStorage } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs/promises');
 const fsSync = require('fs');
 const http = require('http');
 const https = require('https');
 
-const runtimeDataPath = path.join(__dirname, '..', 'runtime-data');
-fsSync.mkdirSync(path.join(runtimeDataPath, 'session'), { recursive: true });
-fsSync.mkdirSync(path.join(runtimeDataPath, 'logs'), { recursive: true });
+app.setName('KnowledgeReview');
+const legacyRuntimeDataPaths = [
+  path.join(__dirname, '..', 'runtime-data'),
+  path.join(process.cwd(), 'runtime-data'),
+  path.join(path.dirname(process.execPath), 'runtime-data')
+];
+const runtimeDataPath = path.join(app.getPath('appData'), 'KnowledgeReview');
+const updateBackupRoot = path.join(app.getPath('appData'), 'KnowledgeReview-backups');
+let updateCheckPromise = null;
+let updateDownloaded = false;
+let updateInstallStarted = false;
 app.setPath('userData', runtimeDataPath);
 app.setPath('sessionData', path.join(runtimeDataPath, 'session'));
 app.setPath('logs', path.join(runtimeDataPath, 'logs'));
+
+async function migrateLegacyRuntimeData() {
+  const markerPath = path.join(runtimeDataPath, '.legacy-migration-complete');
+  if (fsSync.existsSync(markerPath)) return { migrated: false, source: '' };
+
+  await fs.mkdir(runtimeDataPath, { recursive: true });
+  const currentEntries = await fs.readdir(runtimeDataPath).catch(() => []);
+  const hasCurrentData = currentEntries.some((entry) => entry !== '.legacy-migration-complete');
+  if (hasCurrentData) {
+    await fs.writeFile(markerPath, new Date().toISOString(), 'utf8');
+    return { migrated: false, source: '' };
+  }
+
+  const source = [...new Set(legacyRuntimeDataPaths)].find((candidate) => {
+    return path.resolve(candidate) !== path.resolve(runtimeDataPath) && fsSync.existsSync(candidate);
+  });
+  if (!source) {
+    await fs.writeFile(markerPath, new Date().toISOString(), 'utf8');
+    return { migrated: false, source: '' };
+  }
+
+  await fs.cp(source, runtimeDataPath, { recursive: true, force: false, errorOnExist: false });
+  await fs.writeFile(markerPath, new Date().toISOString(), 'utf8');
+  return { migrated: true, source };
+}
+
+function sendUpdateEvent(event, payload = {}) {
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) win.webContents.send('update:event', { event, ...payload });
+  });
+}
+
+function configureAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('checking-for-update', () => sendUpdateEvent('checking'));
+  autoUpdater.on('update-available', (info) => {
+    updateDownloaded = false;
+    sendUpdateEvent('available', { version: info.version, releaseDate: info.releaseDate || '' });
+    autoUpdater.downloadUpdate().catch((error) => sendUpdateEvent('error', { message: error.message || '更新下载失败。' }));
+  });
+  autoUpdater.on('update-not-available', (info) => sendUpdateEvent('not-available', { version: info?.version || app.getVersion() }));
+  autoUpdater.on('download-progress', (progress) => sendUpdateEvent('progress', {
+    percent: Number(progress.percent || 0),
+    transferred: Number(progress.transferred || 0),
+    total: Number(progress.total || 0),
+    bytesPerSecond: Number(progress.bytesPerSecond || 0)
+  }));
+  autoUpdater.on('update-downloaded', (info) => {
+    updateDownloaded = true;
+    sendUpdateEvent('downloaded', { version: info.version });
+  });
+  autoUpdater.on('error', (error) => sendUpdateEvent('error', { message: error?.message || '检查更新失败。' }));
+}
+
+function checkForUpdates() {
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = autoUpdater.checkForUpdates().finally(() => {
+    updateCheckPromise = null;
+  });
+  return updateCheckPromise;
+}
+
+async function backupUserData(reason = 'manual') {
+  const stamp = new Date().toISOString().replace(/[.:]/g, '-');
+  const target = path.join(updateBackupRoot, `${stamp}-${reason}`);
+  await fs.mkdir(updateBackupRoot, { recursive: true });
+  await fs.cp(runtimeDataPath, target, {
+    recursive: true,
+    force: false,
+    errorOnExist: false,
+    filter: (source) => !['session', 'logs'].includes(path.basename(source))
+  });
+  return target;
+}
 
 if (process.env.KR_DISABLE_GPU !== '0') {
   app.disableHardwareAcceleration();
@@ -41,8 +125,20 @@ const createWindow = () => {
 };
 
 app.whenReady().then(() => {
+  return migrateLegacyRuntimeData();
+}).then((migration) => {
+  fsSync.mkdirSync(path.join(runtimeDataPath, 'session'), { recursive: true });
+  fsSync.mkdirSync(path.join(runtimeDataPath, 'logs'), { recursive: true });
   Menu.setApplicationMenu(null);
+  configureAutoUpdater();
   createWindow();
+
+  if (migration.migrated) {
+    setTimeout(() => sendUpdateEvent('data-migrated', { source: migration.source }), 300);
+  }
+  if (app.isPackaged) {
+    setTimeout(() => checkForUpdates().catch(() => {}), 2500);
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -375,6 +471,38 @@ ipcMain.handle('webdav:push', async (_event, payload) => {
     const message = error.message || '无法上传 WebDAV 数据。';
     const webdav = await recordWebDavBackup({ status: 'failed', trigger, at: attemptedAt, message });
     return { ok: false, error: message, lastBackupAt: webdav.lastBackupAt, backupHistory: webdav.backupHistory };
+  }
+});
+
+ipcMain.handle('app:getInfo', () => ({
+  version: app.getVersion(),
+  isPackaged: app.isPackaged,
+  dataPath: runtimeDataPath
+}));
+
+ipcMain.handle('update:check', async () => {
+  if (!app.isPackaged) return { ok: false, skipped: true, error: '开发模式不会连接 GitHub 检查更新。' };
+  try {
+    const result = await checkForUpdates();
+    return { ok: true, updateInfo: result?.updateInfo || null };
+  } catch (error) {
+    return { ok: false, error: error.message || '检查更新失败。' };
+  }
+});
+
+ipcMain.handle('update:install', async () => {
+  if (!app.isPackaged) return { ok: false, error: '开发模式不能安装更新。' };
+  if (!updateDownloaded) return { ok: false, error: '更新尚未下载完成，请稍候再试。' };
+  if (updateInstallStarted) return { ok: false, error: '更新正在安装。' };
+  try {
+    updateInstallStarted = true;
+    const backupPath = await backupUserData('before-update');
+    sendUpdateEvent('backup-created', { path: backupPath });
+    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    return { ok: true };
+  } catch (error) {
+    updateInstallStarted = false;
+    return { ok: false, error: error.message || '更新前备份失败，已取消安装。' };
   }
 });
 

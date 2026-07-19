@@ -1,6 +1,18 @@
 ﻿const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('reviewBridge', {
+  app: {
+    getInfo: () => ipcRenderer.invoke('app:getInfo')
+  },
+  updates: {
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onEvent: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('update:event', listener);
+      return () => ipcRenderer.removeListener('update:event', listener);
+    }
+  },
   openCardsFile: () => ipcRenderer.invoke('dialog:openCards'),
   saveExportFile: (payload) => ipcRenderer.invoke('dialog:saveExport', payload),
   webdav: {

@@ -1,11 +1,14 @@
 {
     "name": "knowledge-review-electron",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "Knowledge management and spaced-review desktop app built with Electron.",
+    "author": "shenxiao233",
     "main": "src/main.js",
     "scripts": {
         "start": "electron .",
         "dev": "electron .",
+        "build": "electron-builder --win nsis",
+        "release": "electron-builder --win nsis --publish always",
         "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js",
         "doctor": "node scripts/doctor.js",
         "test:fsrs": "node scripts/test-fsrs.js"
@@ -18,9 +21,46 @@
     ],
     "license": "MIT",
     "devDependencies": {
-        "electron": "^28.3.3"
+        "electron": "^28.3.3",
+        "electron-builder": "^26.15.3"
     },
     "dependencies": {
+        "electron-updater": "^6.8.9",
         "ts-fsrs": "^5.4.1"
+    },
+    "build": {
+        "appId": "com.shenxiao233.knowledgereview",
+        "productName": "知识管理与复习工具",
+        "asar": true,
+        "directories": {
+            "output": "dist"
+        },
+        "files": [
+            "src/**/*",
+            "package.json"
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "artifactName": "KnowledgeReview-${version}-${arch}.${ext}"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true,
+            "deleteAppDataOnUninstall": false,
+            "artifactName": "KnowledgeReview-${version}-Setup.${ext}"
+        },
+        "publish": {
+            "provider": "github",
+            "owner": "shenxiao233",
+            "repo": "knowledge-review-electron",
+            "releaseType": "release"
+        }
     }
 }

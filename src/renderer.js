@@ -180,6 +180,7 @@ function load() {
 }
 let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
 let webdavPushPromise = Promise.resolve();
+let updateState = { status: 'idle', version: '', percent: 0, message: '' };
 function storageSnapshot() {
   const snapshot = structuredClone(state);
   if (snapshot.settings) delete snapshot.settings.dataDirectory;
@@ -205,14 +206,14 @@ function syncReviewLog() {
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
 }
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
   if (!panel) return;
   panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div>';
 }
-async function init() { cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); await loadWebDavConfig(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh(); }
+async function init() { cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh(); }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
   if (!toggle) return;
@@ -426,6 +427,77 @@ function bind() {
 function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'profile') renderProfile(); if (name === 'trash') renderTrash(); }
 function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderProfile(); renderTrash(); badges(); }
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  return `${(bytes / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
+function renderUpdateState() {
+  const status = els.updateStatus;
+  const bar = els.updateProgressBar;
+  const progress = els.updateProgress;
+  const install = els.updateInstallButton;
+  const check = els.updateCheckButton;
+  if (!status) return;
+  const labels = {
+    idle: '应用会从 GitHub Releases 获取稳定版本。',
+    checking: '正在检查 GitHub Releases…',
+    available: `发现新版本 v${updateState.version}，正在后台流式下载…`,
+    progress: `正在下载 v${updateState.version}：${updateState.percent.toFixed(0)}%`,
+    downloaded: `v${updateState.version} 已下载完成，可以重启安装。`,
+    'not-available': '当前已经是最新版本。',
+    error: updateState.message || '更新暂时不可用。',
+    'data-migrated': '旧版用户数据已安全迁移，原目录未删除。'
+  };
+  status.textContent = labels[updateState.status] || labels.idle;
+  if (bar) bar.style.width = `${Math.max(0, Math.min(100, updateState.percent))}%`;
+  if (progress) progress.hidden = !['available', 'progress', 'downloaded'].includes(updateState.status);
+  if (install) install.hidden = updateState.status !== 'downloaded';
+  if (els.updateProgressMeta) {
+    els.updateProgressMeta.textContent = updateState.total
+      ? `${formatBytes(updateState.transferred)} / ${formatBytes(updateState.total)}${updateState.bytesPerSecond ? ` · ${formatBytes(updateState.bytesPerSecond)}/秒` : ''}`
+      : (updateState.status === 'downloaded' ? '安装包已准备好' : '准备下载…');
+  }
+  if (check) {
+    check.disabled = ['checking', 'available', 'progress'].includes(updateState.status);
+    check.querySelector('span:last-child').textContent = updateState.status === 'checking' ? '检查中…' : '检查更新';
+  }
+  if (install) install.disabled = updateState.installing === true;
+}
+function handleUpdateEvent(payload = {}) {
+  if (payload.event === 'available' || payload.event === 'progress' || payload.event === 'downloaded') {
+    updateState = { ...updateState, status: payload.event, version: payload.version || updateState.version, percent: payload.percent ?? updateState.percent, transferred: payload.transferred ?? updateState.transferred, total: payload.total ?? updateState.total, bytesPerSecond: payload.bytesPerSecond ?? updateState.bytesPerSecond };
+  } else if (payload.event === 'not-available') updateState = { ...updateState, status: 'not-available' };
+  else if (payload.event === 'checking') updateState = { ...updateState, status: 'checking' };
+  else if (payload.event === 'error') updateState = { ...updateState, status: 'error', message: payload.message || '' };
+  else if (payload.event === 'data-migrated') updateState = { ...updateState, status: 'data-migrated' };
+  renderUpdateState();
+  if (payload.event === 'downloaded') toast(`新版本 v${payload.version} 已下载完成。`);
+}
+function bindUpdateEvents() {
+  window.reviewBridge.updates?.onEvent(handleUpdateEvent);
+  els.updateCheckButton?.addEventListener('click', async () => {
+    updateState = { ...updateState, status: 'checking', message: '' };
+    renderUpdateState();
+    const result = await window.reviewBridge.updates.check();
+    if (!result?.ok && !result?.skipped) handleUpdateEvent({ event: 'error', message: result.error });
+    if (result?.skipped) handleUpdateEvent({ event: 'error', message: result.error });
+  });
+  els.updateInstallButton?.addEventListener('click', async () => {
+    updateState = { ...updateState, installing: true };
+    renderUpdateState();
+    const result = await window.reviewBridge.updates.install();
+    if (!result?.ok) { updateState = { ...updateState, installing: false }; handleUpdateEvent({ event: 'error', message: result.error }); }
+  });
+  window.reviewBridge.app?.getInfo().then((info) => {
+    if (els.appVersion) els.appVersion.textContent = `当前版本 v${info.version}`;
+    if (els.dataPath) els.dataPath.textContent = info.dataPath;
+    if (!info.isPackaged) renderUpdateState();
+  }).catch(() => {});
+  renderUpdateState();
+}
 function saveDoc() { const doc = activeDoc(); if (!doc) return; doc.html = els.noteEditor.innerHTML; doc.updatedAt = new Date().toISOString(); save(); }
 function loadDoc() { const doc = activeDoc(); els.noteEditor.innerHTML = /(^|\n)#{1,6}\s|(^|\n)[-*+]\s/.test(doc?.html || '') ? markdownToHtml(doc.html) : doc?.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>'; els.noteEditor.scrollTop = 0; outline(); updateEditorWordCount(); }
 function updateEditorWordCount() { const text = String(els.noteEditor?.innerText || '').replace(/\s/g, ''); $('#editorWordCount').textContent = `${text.length}字`; }
@@ -1445,4 +1517,11 @@ function ensureStoragePanel() {
   panel.dataset.ready = 'backup-only';
   panel.innerHTML = `<div class="sync-panel-heading"><div><span class="modal-eyebrow">CLOUD BACKUP</span><h2>坚果云 WebDAV 备份</h2><p class="setting-description">本地数据是唯一来源。坚果云只接收备份，应用不会在启动时下载，也不会用云端内容覆盖本地数据。</p></div><span class="sync-status-dot" id="webdavStatusDot" aria-hidden="true"></span></div><div class="webdav-form"><label>WebDAV 地址<input id="webdavUrl" value="https://dav.jianguoyun.com/dav/" /></label><label>坚果云账号 / 邮箱<input id="webdavUsername" autocomplete="username" placeholder="输入坚果云登录账号或邮箱" /></label><label>应用密码<input id="webdavPassword" autocomplete="new-password" /></label><label>远程备份文件夹<input id="webdavRemoteFolder" value="knowledge-review-electron" /></label></div><div class="sync-options"><label class="switch-row"><span class="switch-copy"><strong>启用坚果云备份</strong><small>允许应用将本地数据上传到 WebDAV</small></span><span class="switch-control"><input id="webdavEnabled" type="checkbox" /><span aria-hidden="true"></span></span></label><label class="switch-row"><span class="switch-copy"><strong>每小时自动备份</strong><small>每 60 分钟上传一次完整数据</small></span><span class="switch-control"><input id="webdavAutoBackup" type="checkbox" checked /><span aria-hidden="true"></span></span></label></div><div class="sync-policy"><span class="sync-policy-icon">i</span><span><strong>备份规则</strong><small>卡片、文章和复习记录都先保存在本地。保存不会触发网络请求；只有手动备份或每小时自动备份会上传当前本地快照。</small></span></div><div class="storage-actions webdav-actions"><button class="secondary-button" id="webdavEditButton" type="button">编辑配置</button><button class="secondary-button hidden" id="webdavCancelEditButton" type="button">取消编辑</button><button class="secondary-button" id="webdavTestButton" type="button">测试连接</button><button class="secondary-button" id="webdavSaveButton" type="button">保存配置</button><button class="primary" id="webdavSyncButton" type="button">立即备份到坚果云</button></div><div class="storage-sync-status"><div class="storage-status" id="storageStatus">等待配置 WebDAV 备份</div></div><section class="backup-history" aria-labelledby="backupHistoryTitle"><div class="backup-history-heading"><h3 id="backupHistoryTitle">备份记录</h3><span>保留最近 20 条</span></div><div id="webdavBackupHistory" class="backup-history-list"></div></section>`;
   syncWebDavForm();
+}
+
+function ensureUpdatePanel() {
+  const panel = $('#aboutPanel');
+  if (!panel || panel.dataset.updateReady === 'true') return;
+  panel.dataset.updateReady = 'true';
+  panel.innerHTML = `<h2>关于</h2><p class="about-intro">知识管理与复习工具 Electron 桌面应用。</p><section class="update-panel"><div class="update-panel-heading"><div><span class="modal-eyebrow">GITHUB RELEASES</span><h3>应用更新</h3><p class="setting-description">通过 GitHub Releases 获取新版本。下载在后台进行，更新和卸载都不会删除你的本地数据。</p></div><span class="update-shield" aria-hidden="true">✓</span></div><div class="update-version-row"><span class="update-version" id="appVersion">正在读取版本…</span><span class="update-channel">稳定版</span></div><div class="update-progress" id="updateProgress" hidden><div class="update-progress-track"><i id="updateProgressBar"></i></div><div class="update-progress-meta" id="updateProgressMeta">准备下载…</div></div><div class="update-status" id="updateStatus">正在准备更新检查…</div><div class="update-actions"><button class="update-check-button" id="updateCheckButton" type="button"><span class="update-button-icon" aria-hidden="true">↻</span><span>检查更新</span></button><button class="primary update-install-button" id="updateInstallButton" type="button" hidden>重启并安装</button></div><div class="data-location"><div class="data-location-heading"><strong>用户数据位置</strong><span>更新安全</span></div><code id="dataPath">正在读取…</code><small>此目录独立于安装目录。更新、升级和卸载不会删除它。</small></div></section>`;
 }
