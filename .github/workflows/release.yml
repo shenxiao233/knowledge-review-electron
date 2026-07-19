@@ -28,7 +28,33 @@ jobs:
       - name: Validate source
         run: npm run check
 
-      - name: Build and publish GitHub Release
+      - name: Build Windows installer
+        run: npm run build
+
+      - name: Verify release files
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $installer = "dist/KnowledgeReview-$version-Setup.exe"
+          Get-ChildItem dist -File | Format-Table Name,Length
+          if (-not (Test-Path $installer)) {
+            throw 'Windows installer was not generated.'
+          }
+          $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $installer))
+          $hash = [System.Security.Cryptography.SHA512]::Create().ComputeHash($bytes)
+          $sha512 = [Convert]::ToBase64String($hash)
+          $size = (Get-Item $installer).Length
+          $releaseDate = (Get-Date).ToUniversalTime().ToString('o')
+          @("version: $version", 'files:', "  - url: KnowledgeReview-$version-Setup.exe", "    sha512: $sha512", "    size: $size", "path: KnowledgeReview-$version-Setup.exe", "sha512: $sha512", "releaseDate: $releaseDate") | Set-Content -Path 'dist/latest.yml' -Encoding utf8
+          if (-not (Test-Path 'dist/latest.yml')) { throw 'latest.yml was not generated.' }
+
+      - name: Publish GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/KnowledgeReview-*-Setup.exe
+            dist/KnowledgeReview-*-Setup.exe.blockmap
+            dist/latest.yml
+          generate_release_notes: true
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run release
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
