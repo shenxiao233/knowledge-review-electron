@@ -3,9 +3,12 @@
 contextBridge.exposeInMainWorld('reviewBridge', {
   openCardsFile: () => ipcRenderer.invoke('dialog:openCards'),
   saveExportFile: (payload) => ipcRenderer.invoke('dialog:saveExport', payload),
-  chooseDataDirectory: () => ipcRenderer.invoke('dialog:chooseDataDirectory'),
-  writeStorageSnapshot: (payload) => ipcRenderer.invoke('storage:writeSnapshot', payload),
-  readStorageSnapshot: (directory) => ipcRenderer.invoke('storage:readSnapshot', directory),
+  webdav: {
+    getConfig: () => ipcRenderer.invoke('webdav:getConfig'),
+    saveConfig: (payload) => ipcRenderer.invoke('webdav:saveConfig', payload),
+    test: (payload) => ipcRenderer.invoke('webdav:test', payload),
+    push: (payload) => ipcRenderer.invoke('webdav:push', payload)
+  },
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   windowControls: {
     minimize: () => ipcRenderer.invoke('window:minimize'),

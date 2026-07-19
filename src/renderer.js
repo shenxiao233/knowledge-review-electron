@@ -142,9 +142,8 @@ function sortCardsForDisplay(cards) { const groupOrder = new Map((state.groups |
 function normDoc(doc) {
   return { ...doc, id: doc.id || id('doc'), folderId: doc.folderId || null, title: doc.title || '未命名文档', html: doc.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>', createdAt: doc.createdAt || new Date().toISOString(), updatedAt: doc.updatedAt || doc.createdAt || new Date().toISOString() };
 }
-function load() {
+function hydrate(raw) {
   try {
-    const raw = localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1');
     if (!raw) return { ...structuredClone(base), documents: sampleDocs.map(normDoc) };
     const saved = JSON.parse(raw);
     const documents = Array.isArray(saved.documents) && saved.documents.length ? saved.documents.map(normDoc) : structuredClone(sampleDocs);
@@ -173,8 +172,27 @@ function load() {
     return structuredClone(base);
   }
 }
-function save() {
+function saveLegacyLocalStorage() {
   try { ensureCardOrder(state.cards); syncReviewLog(); localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('本地空间不足，请先导出备份。'); }
+}
+function load() {
+  return hydrate(localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1'));
+}
+let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
+let webdavPushPromise = Promise.resolve();
+function storageSnapshot() {
+  const snapshot = structuredClone(state);
+  if (snapshot.settings) delete snapshot.settings.dataDirectory;
+  return JSON.stringify(snapshot, null, 2);
+}
+function save() {
+  try {
+    ensureCardOrder(state.cards);
+    syncReviewLog();
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch {
+    toast('本地空间不足，请先导出备份。');
+  }
 }
 function syncReviewLog() {
   if (!state?.reviewEvents) return;
@@ -194,7 +212,7 @@ function ensureFSRSSettingsPanel() {
   if (!panel) return;
   panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div>';
 }
-function init() { cache(); ensureFSRSSettingsPanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); loadDoc(); syncSettings(); refresh(); }
+async function init() { cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); await loadWebDavConfig(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh(); }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
   if (!toggle) return;
@@ -361,9 +379,12 @@ function bind() {
   $('#exportTopButton').addEventListener('click', () => openExport('all'));
   $('#exportSelectedButton').addEventListener('click', () => openExport('selected'));
   $('#exportFolderButton').addEventListener('click', () => openExport('folder'));
-  $('#storageExportButton').addEventListener('click', exportAllState);
-  $('#chooseDataDirectoryButton').addEventListener('click', chooseDataDirectory);
-  $('#migrateDataButton').addEventListener('click', migrateData);
+  $('#webdavTestButton')?.addEventListener('click', testWebDav);
+  $('#webdavSaveButton')?.addEventListener('click', saveWebDavConfig);
+  $('#webdavSyncButton')?.addEventListener('click', syncWebDavNow);
+  $('#webdavEditButton')?.addEventListener('click', () => setWebDavEditing(true));
+  $('#webdavCancelEditButton')?.addEventListener('click', () => { webdavConfigEditing = false; syncWebDavForm(); });
+  $('#webdavEnabled')?.addEventListener('change', () => { if (!$('#webdavEnabled').checked) updateStorageStatus('坚果云备份已停用'); });
   $('#closeExportButton').addEventListener('click', () => els.exportModal.close());
   $('#confirmExportButton').addEventListener('click', exportCards);
   $('#importButton').addEventListener('click', importCards);
@@ -1131,10 +1152,8 @@ function renderTrash() { $$('.trash-tabs [data-trash-tab]').forEach((button) => 
 function restoreTrash(at) { const item = state.trash[trashTab][at]; if (!item) return; if (trashTab === 'documents') state.documents.push(normDoc(item)); if (trashTab === 'cards') state.cards.push(normCard(item)); if (trashTab === 'folders') { state.folders.push(item.folder); state.documents.push(...item.documents.map(normDoc)); } state.trash[trashTab].splice(at, 1); save(); refresh(); toast('内容已恢复。'); }
 function emptyTrash() { if (!state.trash[trashTab]?.length) return toast('当前分类没有内容。'); openDeleteConfirm('trash-all', trashTab, '清空当前回收站分类？', '此操作会永久删除当前分类中的全部内容，无法恢复。', '永久删除'); }
 function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(days * 24 * 60))} 分钟`; if (days < 2) return `${Math.max(1, Math.round(days * 24))} 小时`; return `${Math.round(days)} 天`; }
-function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); if ($('#storagePath')) $('#storagePath').textContent = state.settings.dataDirectory || '尚未选择外部数据目录'; }
+function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); updateStorageStatus(); }
 function settings() { if (Number(els.dailyLimit.value) <= 0 || Number(els.dailyNewLimit.value) < 0) { els.dailyLimit.value = Math.max(1, Number(els.dailyLimit.value) || 1); els.dailyNewLimit.value = Math.max(0, Number(els.dailyNewLimit.value) || 0); return toast('复习上限必须有效。'); } state.settings.desiredRetention = Math.min(0.99, Math.max(0.8, Number(els.desiredRetention.value) || 0.9)); state.settings.dailyLimit = Number(els.dailyLimit.value); state.settings.dailyNewLimit = Number(els.dailyNewLimit.value); save(); syncSettings(); buildQueue(); progress(); }
-async function chooseDataDirectory() { const result = await window.reviewBridge.chooseDataDirectory(); if (!result || result.canceled) return; state.settings.dataDirectory = result.directory; save(); $('#storagePath').textContent = result.directory; toast('数据目录已选择。'); }
-async function migrateData() { const directory = state.settings.dataDirectory || (await window.reviewBridge.chooseDataDirectory())?.directory; if (!directory) return toast('请先选择数据目录。'); state.settings.dataDirectory = directory; const result = await window.reviewBridge.writeStorageSnapshot({ directory, content: JSON.stringify(state, null, 2) }); if (!result?.ok) return toast('数据迁移失败。'); save(); $('#storagePath').textContent = directory; toast('当前数据已迁移到所选目录。'); }
 async function exportAllState() { const result = await window.reviewBridge.saveExportFile({ format: 'json', filename: 'knowledge-review-backup', content: JSON.stringify(state, null, 2) }); if (!result?.canceled) toast('全部数据导出完成。'); }
 function openExport(scope) { $('#exportScope').value = scope; syncCustomSelect($('#exportScope')); syncCustomSelect($('#exportFormat')); els.exportModal.showModal(); }
 function markdownExport(card) { if (card.type === 'note') return `# ${card.question}\n\nType: note\n\n${card.noteContent}\n\nTags: ${card.tags.join(', ')}`; return `# ${card.question}\n\nType: ${card.type}\n\nA. ${card.options.A}\nB. ${card.options.B}\nC. ${card.options.C}\nD. ${card.options.D}\n\nAnswer: ${card.answer.join(', ')}\n\nExplanation: ${card.explanation}`; }
@@ -1284,3 +1303,146 @@ document.addEventListener('DOMContentLoaded', init);
 // Replace the native confirmation with the themed dialog when the card-library code calls it.
 function deleteCardGroup(group) { const cards = state.cards.filter((card) => card.folder === group); openDeleteConfirm('card-group', group, `删除卡组“${group}”？`, cards.length ? `该卡组包含 ${cards.length} 张卡片，删除后卡片会移入回收站。` : '该卡组没有卡片，删除后仍可在回收站中恢复。'); }
 function confirmDeleteCardGroup() { const modal = $('#deleteGroupModal'); const group = modal?.dataset.group; if (!group) return; const cards = state.cards.filter((card) => card.folder === group); state.trash.cards.push(...cards); state.cards = state.cards.filter((card) => card.folder !== group); state.groups = state.groups.filter((item) => item !== group); if (els.folderFilter.value === group) { els.folderFilter.value = '全部文件夹'; syncCustomSelect(els.folderFilter); } cards.forEach((card) => selectedCardIds.delete(card.id)); save(); modal.close(); refresh(); toast(`卡组“${group}”已移入回收站。`); }
+
+// Backup-only WebDAV mode: localStorage is the only data source and uploads are hourly.
+let webdavBackupTimer = null;
+let webdavLastBackupAt = '';
+const webdavBackupInterval = 60 * 60 * 1000;
+let webdavConfigEditing = false;
+
+function updateStorageStatus(message = '') {
+  const status = $('#storageStatus');
+  const dot = $('#webdavStatusDot');
+  const lastBackup = webdavConfig.lastBackupAt ? `最近备份：${formatBackupTime(webdavConfig.lastBackupAt)}` : '尚未产生备份记录';
+  if (status) status.textContent = message || (webdavConfig.enabled ? `坚果云备份已启用，每小时自动上传。${lastBackup}` : '尚未启用坚果云备份');
+  if (dot) dot.style.background = webdavConfig.enabled ? '#4da77f' : '#c9cfca';
+}
+
+function formatBackupTime(value) {
+  const time = new Date(value);
+  if (Number.isNaN(time.getTime())) return '时间未知';
+  return time.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderWebDavBackupHistory(history = webdavConfig.backupHistory || []) {
+  const list = $('#webdavBackupHistory');
+  if (!list) return;
+  const entries = Array.isArray(history) ? history.slice(0, 8) : [];
+  if (!entries.length) {
+    list.innerHTML = '<p class="backup-history-empty">暂无备份记录。首次备份完成后会在这里显示。</p>';
+    return;
+  }
+  list.innerHTML = entries.map((entry) => {
+    const succeeded = entry.status === 'success';
+    const trigger = entry.trigger === 'manual' ? '手动备份' : '自动备份';
+    const message = succeeded ? '本地数据快照已上传' : (entry.message || '备份失败');
+    return `<div class="backup-history-item"><div><strong>${esc(trigger)}</strong><span>${esc(formatBackupTime(entry.at))}</span></div><span class="backup-history-result ${succeeded ? 'success' : 'failed'}">${succeeded ? '成功' : '失败'}</span><small title="${esc(message)}">${esc(message)}</small></div>`;
+  }).join('');
+}
+
+function setWebDavEditing(editing) {
+  webdavConfigEditing = editing === true;
+  const form = $('.webdav-form');
+  form?.classList.toggle('is-editing', webdavConfigEditing);
+  ['webdavUrl', 'webdavUsername', 'webdavRemoteFolder'].forEach((id) => {
+    const field = $(`#${id}`);
+    if (field) field.readOnly = !webdavConfigEditing;
+  });
+  const password = $('#webdavPassword');
+  if (password) {
+    password.readOnly = !webdavConfigEditing;
+    password.type = webdavConfigEditing ? 'password' : 'text';
+    if (webdavConfigEditing) {
+      password.value = '';
+      password.dataset.savedMask = '';
+      password.placeholder = '留空表示保持已保存的应用密码';
+      $('#webdavUrl')?.focus();
+    } else {
+      password.value = webdavConfig.hasPassword ? '••••••••••••' : '';
+      password.dataset.savedMask = webdavConfig.hasPassword ? 'true' : '';
+      password.placeholder = webdavConfig.hasPassword ? '' : '请输入坚果云应用密码';
+    }
+  }
+  $('#webdavEditButton')?.classList.toggle('hidden', webdavConfigEditing);
+  $('#webdavCancelEditButton')?.classList.toggle('hidden', !webdavConfigEditing);
+}
+
+function syncWebDavForm() {
+  const values = { webdavUrl: webdavConfig.url || 'https://dav.jianguoyun.com/dav/', webdavRemoteFolder: webdavConfig.remoteFolder || 'knowledge-review-electron', webdavUsername: webdavConfig.username || '' };
+  Object.entries(values).forEach(([key, value]) => { const field = document.getElementById(key); if (field && (!webdavConfigEditing || !field.matches(':focus'))) field.value = value; });
+  const enabled = $('#webdavEnabled');
+  const autoBackup = $('#webdavAutoBackup');
+  if (enabled) enabled.checked = webdavConfig.enabled === true;
+  if (autoBackup) autoBackup.checked = webdavConfig.autoBackup === true;
+  setWebDavEditing(webdavConfigEditing);
+  renderWebDavBackupHistory(webdavConfig.backupHistory);
+}
+
+function webdavFormPayload() {
+  const password = $('#webdavPassword');
+  return { url: $('#webdavUrl')?.value.trim(), remoteFolder: $('#webdavRemoteFolder')?.value.trim(), username: $('#webdavUsername')?.value.trim(), password: password?.dataset.savedMask ? '' : (password?.value || ''), enabled: $('#webdavEnabled')?.checked === true, autoBackup: $('#webdavAutoBackup')?.checked === true };
+}
+
+function backupSnapshot() {
+  const snapshot = JSON.parse(storageSnapshot());
+  snapshot.backup = { mode: 'webdav-upload-only', createdAt: new Date().toISOString() };
+  return JSON.stringify(snapshot, null, 2);
+}
+
+function pushWebDavState(trigger = 'automatic') {
+  if (!webdavConfig.enabled || !window.reviewBridge?.webdav?.push) return Promise.resolve({ ok: false, skipped: true });
+  webdavPushPromise = webdavPushPromise.catch(() => {}).then(async () => {
+    updateStorageStatus('正在备份到坚果云...');
+    const result = await window.reviewBridge.webdav.push({ content: backupSnapshot(), updatedAt: new Date().toISOString(), trigger });
+    if (result?.backupHistory) webdavConfig = { ...webdavConfig, ...result, backupHistory: result.backupHistory, lastBackupAt: result.lastBackupAt || result.updatedAt || webdavConfig.lastBackupAt };
+    if (result?.ok) { webdavLastBackupAt = result.updatedAt || new Date().toISOString(); updateStorageStatus(`最近备份：${new Date(webdavLastBackupAt).toLocaleString('zh-CN')}`); }
+    else updateStorageStatus(result?.error ? `备份失败：${result.error}` : '等待下一次自动备份');
+    renderWebDavBackupHistory(webdavConfig.backupHistory);
+    return result;
+  });
+  return webdavPushPromise;
+}
+
+function startWebDavPolling() {
+  clearInterval(webdavBackupTimer);
+  webdavBackupTimer = null;
+  if (!webdavConfig.enabled || !webdavConfig.autoBackup) return;
+  webdavBackupTimer = setInterval(() => pushWebDavState('automatic'), webdavBackupInterval);
+}
+
+async function loadWebDavConfig() {
+  if (!window.reviewBridge?.webdav?.getConfig) return;
+  const result = await window.reviewBridge.webdav.getConfig();
+  if (result?.ok) { webdavConfig = result; updateStorageStatus(); syncWebDavForm(); startWebDavPolling(); }
+}
+
+async function saveWebDavConfig() {
+  const result = await window.reviewBridge.webdav.saveConfig(webdavFormPayload());
+  if (!result?.ok) return toast(result?.error || '无法保存 WebDAV 备份配置。');
+  webdavConfig = result;
+  webdavConfigEditing = false;
+  syncWebDavForm();
+  startWebDavPolling();
+  updateStorageStatus(webdavConfig.enabled ? '坚果云备份已启用，每小时自动上传' : '坚果云备份配置已保存但未启用');
+  toast('WebDAV 备份配置已保存。');
+}
+
+async function testWebDav() {
+  const result = await window.reviewBridge.webdav.test(webdavFormPayload());
+  if (result?.ok) { webdavConfig = { ...webdavConfig, ...result }; syncWebDavForm(); updateStorageStatus('连接成功，可执行坚果云备份。'); }
+  else updateStorageStatus(result?.error || 'WebDAV 连接失败。');
+  toast(result?.ok ? 'WebDAV 连接成功。' : (result?.error || 'WebDAV 连接失败。'));
+}
+
+async function syncWebDavNow() {
+  const result = await pushWebDavState('manual');
+  if (result?.skipped) toast('请先启用坚果云备份。');
+}
+
+function ensureStoragePanel() {
+  const panel = $('#storagePanel');
+  if (!panel) return;
+  panel.dataset.ready = 'backup-only';
+  panel.innerHTML = `<div class="sync-panel-heading"><div><span class="modal-eyebrow">CLOUD BACKUP</span><h2>坚果云 WebDAV 备份</h2><p class="setting-description">本地数据是唯一来源。坚果云只接收备份，应用不会在启动时下载，也不会用云端内容覆盖本地数据。</p></div><span class="sync-status-dot" id="webdavStatusDot" aria-hidden="true"></span></div><div class="webdav-form"><label>WebDAV 地址<input id="webdavUrl" value="https://dav.jianguoyun.com/dav/" /></label><label>坚果云账号 / 邮箱<input id="webdavUsername" autocomplete="username" placeholder="输入坚果云登录账号或邮箱" /></label><label>应用密码<input id="webdavPassword" autocomplete="new-password" /></label><label>远程备份文件夹<input id="webdavRemoteFolder" value="knowledge-review-electron" /></label></div><div class="sync-options"><label class="switch-row"><span class="switch-copy"><strong>启用坚果云备份</strong><small>允许应用将本地数据上传到 WebDAV</small></span><span class="switch-control"><input id="webdavEnabled" type="checkbox" /><span aria-hidden="true"></span></span></label><label class="switch-row"><span class="switch-copy"><strong>每小时自动备份</strong><small>每 60 分钟上传一次完整数据</small></span><span class="switch-control"><input id="webdavAutoBackup" type="checkbox" checked /><span aria-hidden="true"></span></span></label></div><div class="sync-policy"><span class="sync-policy-icon">i</span><span><strong>备份规则</strong><small>卡片、文章和复习记录都先保存在本地。保存不会触发网络请求；只有手动备份或每小时自动备份会上传当前本地快照。</small></span></div><div class="storage-actions webdav-actions"><button class="secondary-button" id="webdavEditButton" type="button">编辑配置</button><button class="secondary-button hidden" id="webdavCancelEditButton" type="button">取消编辑</button><button class="secondary-button" id="webdavTestButton" type="button">测试连接</button><button class="secondary-button" id="webdavSaveButton" type="button">保存配置</button><button class="primary" id="webdavSyncButton" type="button">立即备份到坚果云</button></div><div class="storage-sync-status"><div class="storage-status" id="storageStatus">等待配置 WebDAV 备份</div></div><section class="backup-history" aria-labelledby="backupHistoryTitle"><div class="backup-history-heading"><h3 id="backupHistoryTitle">备份记录</h3><span>保留最近 20 条</span></div><div id="webdavBackupHistory" class="backup-history-list"></div></section>`;
+  syncWebDavForm();
+}
