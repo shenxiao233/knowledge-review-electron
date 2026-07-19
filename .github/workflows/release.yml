@@ -4,7 +4,6 @@ on:
   push:
     tags:
       - 'v*.*.*'
-  workflow_dispatch:
 
 permissions:
   contents: write
@@ -28,6 +27,15 @@ jobs:
       - name: Validate source
         run: npm run check
 
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          $packageVersion = (Get-Content package.json | ConvertFrom-Json).version
+          $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+          if ($packageVersion -ne $tagVersion) {
+            throw "package.json version $packageVersion does not match tag $tagVersion."
+          }
+
       - name: Build Windows installer
         run: npm run build
 
@@ -48,13 +56,47 @@ jobs:
           @("version: $version", 'files:', "  - url: KnowledgeReview-$version-Setup.exe", "    sha512: $sha512", "    size: $size", "path: KnowledgeReview-$version-Setup.exe", "sha512: $sha512", "releaseDate: $releaseDate") | Set-Content -Path 'dist/latest.yml' -Encoding utf8
           if (-not (Test-Path 'dist/latest.yml')) { throw 'latest.yml was not generated.' }
 
-      - name: Publish GitHub Release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/KnowledgeReview-*-Setup.exe
-            dist/KnowledgeReview-*-Setup.exe.blockmap
-            dist/latest.yml
-          generate_release_notes: true
+      - name: Create draft GitHub Release
+        shell: pwsh
+        run: |
+          gh release view "${{ github.ref_name }}" --json isDraft *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "${{ github.ref_name }}" --draft --verify-tag --title "${{ github.ref_name }}" --generate-notes
+          } else {
+            gh release edit "${{ github.ref_name }}" --draft=true
+          }
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload release assets
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          gh release upload "${{ github.ref_name }}" `
+            "dist/KnowledgeReview-$version-Setup.exe" `
+            "dist/KnowledgeReview-$version-Setup.exe.blockmap" `
+            'dist/latest.yml' `
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify release assets
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $release = gh release view "${{ github.ref_name }}" --json isDraft,assets | ConvertFrom-Json
+          $expected = @(
+            "KnowledgeReview-$version-Setup.exe",
+            "KnowledgeReview-$version-Setup.exe.blockmap",
+            'latest.yml'
+          )
+          $actual = @($release.assets | ForEach-Object name)
+          foreach ($name in $expected) {
+            if ($actual -notcontains $name) { throw "Missing release asset: $name" }
+          }
+
+      - name: Publish verified release
+        shell: pwsh
+        run: gh release edit "${{ github.ref_name }}" --draft=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
