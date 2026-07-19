@@ -30,7 +30,7 @@ git push origin v0.1.1
 
 GitHub Actions 会自动构建 Windows 安装包并发布 Release。已安装客户端会从 GitHub Releases 检查更新，后台流式下载，下载完成后提示重启安装。
 
-用户数据保存在 Electron 用户数据目录（Windows 通常为 `%APPDATA%\KnowledgeReview`），不在安装目录内。旧版本项目中的 `runtime-data` 会在首次启动时迁移；迁移采用复制方式，旧目录不会被删除。NSIS 卸载配置也不会删除用户数据。
+安装器使用 Windows 管理员模式，支持选择 C、D 等任意有权限的磁盘目录；如果目标目录受保护，Windows 会显示权限确认。用户数据保存在 Electron 用户数据目录（Windows 通常为 `%APPDATA%\KnowledgeReview`），不在安装目录内。旧版本项目中的 `runtime-data` 会在首次启动时迁移；迁移采用复制方式，旧目录不会被删除。NSIS 卸载配置也不会删除用户数据。
 
 本地构建安装包：
 

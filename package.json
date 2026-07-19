@@ -1,6 +1,6 @@
 {
     "name": "knowledge-review-electron",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Knowledge management and spaced-review desktop app built with Electron.",
     "author": "shenxiao233",
     "main": "src/main.js",
@@ -53,6 +53,10 @@
         "nsis": {
             "oneClick": false,
             "allowToChangeInstallationDirectory": true,
+            "perMachine": true,
+            "allowElevation": true,
+            "selectPerMachineByDefault": true,
+            "packElevateHelper": true,
             "deleteAppDataOnUninstall": false,
             "artifactName": "KnowledgeReview-${version}-Setup.${ext}"
         },
