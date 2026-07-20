@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -111,8 +113,8 @@ jobs:
         run: |
           $remote = "https://oauth2:$env:GITEE_TOKEN@gitee.com/shenxiao233/knowledge-review-electron.git"
           git remote add gitee $remote
-          git push gitee "HEAD:refs/heads/main"
-          git push gitee "${{ github.ref_name }}"
+          git push --force gitee "HEAD:refs/heads/main"
+          git push --force gitee "${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
 
       - name: Publish Gitee release
         if: ${{ env.GITEE_TOKEN != '' }}
