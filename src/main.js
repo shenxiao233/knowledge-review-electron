@@ -15,6 +15,12 @@ const legacyRuntimeDataPaths = [
 const runtimeDataPath = path.join(app.getPath('appData'), 'KnowledgeReview');
 const stateDataPath = path.join(runtimeDataPath, 'data', 'state.json');
 const updateBackupRoot = path.join(app.getPath('appData'), 'KnowledgeReview-backups');
+const updateSourceConfig = {
+  github: { label: 'GitHub', provider: 'github', owner: 'shenxiao233', repo: 'knowledge-review-electron' },
+  gitee: { label: 'Gitee', provider: 'generic', owner: 'shenxiao233', repo: 'knowledge-review-electron' }
+};
+let selectedUpdateSource = 'github';
+let activeUpdateSource = 'github';
 let updateCheckPromise = null;
 let updateDownloaded = false;
 let updateInstallStarted = false;
@@ -96,17 +102,66 @@ function sendUpdateEvent(event, payload = {}) {
   });
 }
 
+function normalizeUpdateSource(value) {
+  return ['auto', 'github', 'gitee'].includes(value) ? value : 'github';
+}
+
+async function loadUpdateSource() {
+  const config = await readAppConfig();
+  selectedUpdateSource = normalizeUpdateSource(config.updates?.source);
+  activeUpdateSource = selectedUpdateSource === 'gitee' ? 'gitee' : 'github';
+}
+
+async function saveUpdateSource(source) {
+  selectedUpdateSource = normalizeUpdateSource(source);
+  const current = await readAppConfig();
+  await writeAppConfig({ ...current, updates: { ...(current.updates || {}), source: selectedUpdateSource } });
+  return selectedUpdateSource;
+}
+
+function configureUpdaterFeed(source) {
+  const config = updateSourceConfig[source] || updateSourceConfig.github;
+  autoUpdater.setFeedURL({ provider: 'github', owner: config.owner, repo: config.repo, releaseType: 'release' });
+  activeUpdateSource = source;
+}
+
+function requestJson(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, { headers: { Accept: 'application/json', 'User-Agent': 'KnowledgeReview' } }, (response) => {
+      const chunks = [];
+      response.on('data', (chunk) => chunks.push(chunk));
+      response.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) return reject(new Error(`Update source returned ${response.statusCode}`));
+        try { resolve(JSON.parse(body)); } catch { reject(new Error('Invalid update source response')); }
+      });
+    });
+    request.setTimeout(15000, () => request.destroy(new Error('Update source request timed out')));
+    request.on('error', reject);
+  });
+}
+
+async function configureGiteeFeed() {
+  const config = updateSourceConfig.gitee;
+  const release = await requestJson(`https://gitee.com/api/v5/repos/${config.owner}/${config.repo}/releases/latest`);
+  const tag = String(release.tag_name || '').trim();
+  if (!tag) throw new Error('Gitee latest release has no tag');
+  autoUpdater.setFeedURL({ provider: 'generic', url: `https://gitee.com/${config.owner}/${config.repo}/releases/download/${encodeURIComponent(tag)}/` });
+  activeUpdateSource = 'gitee';
+}
+
 function configureAutoUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
-  autoUpdater.on('checking-for-update', () => sendUpdateEvent('checking'));
+  autoUpdater.on('checking-for-update', () => sendUpdateEvent('checking', { source: activeUpdateSource }));
   autoUpdater.on('update-available', (info) => {
     updateDownloaded = false;
-    sendUpdateEvent('available', { version: info.version, releaseDate: info.releaseDate || '' });
+    sendUpdateEvent('available', { version: info.version, releaseDate: info.releaseDate || '', source: activeUpdateSource });
     autoUpdater.downloadUpdate().catch((error) => sendUpdateEvent('error', { message: error.message || '更新下载失败。' }));
   });
-  autoUpdater.on('update-not-available', (info) => sendUpdateEvent('not-available', { version: info?.version || app.getVersion() }));
+  autoUpdater.on('update-not-available', (info) => sendUpdateEvent('not-available', { version: info?.version || app.getVersion(), source: activeUpdateSource }));
   autoUpdater.on('download-progress', (progress) => sendUpdateEvent('progress', {
+    source: activeUpdateSource,
     percent: Number(progress.percent || 0),
     transferred: Number(progress.transferred || 0),
     total: Number(progress.total || 0),
@@ -114,14 +169,28 @@ function configureAutoUpdater() {
   }));
   autoUpdater.on('update-downloaded', (info) => {
     updateDownloaded = true;
-    sendUpdateEvent('downloaded', { version: info.version });
+    sendUpdateEvent('downloaded', { version: info.version, source: activeUpdateSource });
   });
   autoUpdater.on('error', (error) => sendUpdateEvent('error', { message: error?.message || '检查更新失败。' }));
 }
 
 function checkForUpdates() {
   if (updateCheckPromise) return updateCheckPromise;
-  updateCheckPromise = autoUpdater.checkForUpdates().finally(() => {
+  const sources = selectedUpdateSource === 'auto' ? ['github', 'gitee'] : [selectedUpdateSource];
+  updateCheckPromise = (async () => {
+    let lastError = null;
+    for (const source of sources) {
+      try {
+        if (source === 'gitee') await configureGiteeFeed();
+        else configureUpdaterFeed(source);
+        return await autoUpdater.checkForUpdates();
+      } catch (error) {
+        lastError = error;
+        if (source !== sources[sources.length - 1]) sendUpdateEvent('source-fallback', { source, nextSource: sources[sources.indexOf(source) + 1] });
+      }
+    }
+    throw lastError || new Error('No update source available');
+  })().finally(() => {
     updateCheckPromise = null;
   });
   return updateCheckPromise;
@@ -170,7 +239,8 @@ const createWindow = () => {
 
 app.whenReady().then(() => {
   return migrateLegacyRuntimeData();
-}).then((migration) => {
+}).then(async (migration) => {
+  await loadUpdateSource();
   fsSync.mkdirSync(path.join(runtimeDataPath, 'session'), { recursive: true });
   fsSync.mkdirSync(path.join(runtimeDataPath, 'logs'), { recursive: true });
   Menu.setApplicationMenu(null);
@@ -544,6 +614,21 @@ ipcMain.handle('update:check', async () => {
     return { ok: true, updateInfo: result?.updateInfo || null };
   } catch (error) {
     return { ok: false, error: error.message || '检查更新失败。' };
+  }
+});
+
+ipcMain.handle('update:getConfig', () => ({
+  source: selectedUpdateSource,
+  activeSource: activeUpdateSource,
+  sources: Object.fromEntries(Object.entries(updateSourceConfig).map(([key, value]) => [key, value.label]))
+}));
+
+ipcMain.handle('update:setSource', async (_event, source) => {
+  try {
+    const selected = await saveUpdateSource(source);
+    return { ok: true, source: selected };
+  } catch (error) {
+    return { ok: false, error: error.message || '无法保存更新渠道。' };
   }
 });
 

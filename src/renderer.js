@@ -181,7 +181,7 @@ function load() {
 }
 let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
 let webdavPushPromise = Promise.resolve();
-let updateState = { status: 'idle', version: '', percent: 0, message: '' };
+let updateState = { status: 'idle', source: 'github', version: '', percent: 0, message: '' };
 let persistentSaveTimer = null;
 let persistentSaveQueue = Promise.resolve();
 function schedulePersistentSave(immediate = false) {
@@ -222,7 +222,7 @@ function syncReviewLog() {
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'updateSourceSelect', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
   els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
   els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
@@ -486,8 +486,8 @@ function renderUpdateState() {
   const check = els.updateCheckButton;
   if (!status) return;
   const labels = {
-    idle: '应用会从 GitHub Releases 获取稳定版本。',
-    checking: '正在检查 GitHub Releases…',
+    idle: `应用会从${updateState.source === 'gitee' ? 'Gitee' : 'GitHub'} Releases 获取稳定版本。`,
+    checking: `正在检查${updateState.source === 'gitee' ? 'Gitee' : 'GitHub'} Releases…`,
     available: `发现新版本 v${updateState.version}，正在后台流式下载…`,
     progress: `正在下载 v${updateState.version}：${updateState.percent.toFixed(0)}%`,
     downloaded: `v${updateState.version} 已下载完成，可以重启安装。`,
@@ -512,10 +512,11 @@ function renderUpdateState() {
 }
 function handleUpdateEvent(payload = {}) {
   if (payload.event === 'available' || payload.event === 'progress' || payload.event === 'downloaded') {
-    updateState = { ...updateState, status: payload.event, version: payload.version || updateState.version, percent: payload.percent ?? updateState.percent, transferred: payload.transferred ?? updateState.transferred, total: payload.total ?? updateState.total, bytesPerSecond: payload.bytesPerSecond ?? updateState.bytesPerSecond };
+    updateState = { ...updateState, status: payload.event, source: payload.source || updateState.source, version: payload.version || updateState.version, percent: payload.percent ?? updateState.percent, transferred: payload.transferred ?? updateState.transferred, total: payload.total ?? updateState.total, bytesPerSecond: payload.bytesPerSecond ?? updateState.bytesPerSecond };
   } else if (payload.event === 'not-available') updateState = { ...updateState, status: 'not-available' };
-  else if (payload.event === 'checking') updateState = { ...updateState, status: 'checking' };
-  else if (payload.event === 'error') updateState = { ...updateState, status: 'error', message: payload.message || '' };
+  else if (payload.event === 'checking') updateState = { ...updateState, status: 'checking', source: payload.source || updateState.source };
+  else if (payload.event === 'error') updateState = { ...updateState, status: 'error', source: payload.source || updateState.source, message: payload.message || '' };
+  else if (payload.event === 'source-fallback') updateState = { ...updateState, status: 'checking', source: payload.nextSource || updateState.source };
   else if (payload.event === 'data-migrated') updateState = { ...updateState, status: 'data-migrated' };
   renderUpdateState();
   if (payload.event === 'downloaded') toast(`新版本 v${payload.version} 已下载完成。`);
@@ -535,10 +536,22 @@ function bindUpdateEvents() {
     const result = await window.reviewBridge.updates.install();
     if (!result?.ok) { updateState = { ...updateState, installing: false }; handleUpdateEvent({ event: 'error', message: result.error }); }
   });
+  els.updateSourceSelect?.addEventListener('change', async () => {
+    const result = await window.reviewBridge.updates.setSource(els.updateSourceSelect.value);
+    if (!result?.ok) return toast(result?.error || '更新渠道保存失败。');
+    updateState = { ...updateState, status: 'idle', source: result.source === 'gitee' ? 'gitee' : 'github', message: '' };
+    renderUpdateState();
+    toast(`已切换到${els.updateSourceSelect.options[els.updateSourceSelect.selectedIndex].text}更新渠道。`);
+  });
   window.reviewBridge.app?.getInfo().then((info) => {
     if (els.appVersion) els.appVersion.textContent = `当前版本 v${info.version}`;
     if (els.dataPath) els.dataPath.textContent = info.dataPath;
     if (!info.isPackaged) renderUpdateState();
+  }).catch(() => {});
+  window.reviewBridge.updates?.getConfig().then((config) => {
+    if (els.updateSourceSelect) els.updateSourceSelect.value = config.source || 'github';
+    updateState = { ...updateState, source: config.activeSource || (config.source === 'gitee' ? 'gitee' : 'github') };
+    renderUpdateState();
   }).catch(() => {});
   renderUpdateState();
 }
@@ -1634,5 +1647,5 @@ function ensureUpdatePanel() {
   const panel = $('#aboutPanel');
   if (!panel || panel.dataset.updateReady === 'true') return;
   panel.dataset.updateReady = 'true';
-  panel.innerHTML = `<h2>关于</h2><p class="about-intro">知识管理与复习工具 Electron 桌面应用。</p><section class="update-panel"><div class="update-panel-heading"><div><span class="modal-eyebrow">GITHUB RELEASES</span><h3>应用更新</h3><p class="setting-description">通过 GitHub Releases 获取新版本。下载在后台进行，更新和卸载都不会删除你的本地数据。</p></div><span class="update-shield" aria-hidden="true">✓</span></div><div class="update-version-row"><span class="update-version" id="appVersion">正在读取版本…</span><span class="update-channel">稳定版</span></div><div class="update-progress" id="updateProgress" hidden><div class="update-progress-track"><i id="updateProgressBar"></i></div><div class="update-progress-meta" id="updateProgressMeta">准备下载…</div></div><div class="update-status" id="updateStatus">正在准备更新检查…</div><div class="update-actions"><button class="update-check-button" id="updateCheckButton" type="button"><span class="update-button-icon" aria-hidden="true">↻</span><span>检查更新</span></button><button class="primary update-install-button" id="updateInstallButton" type="button" hidden>重启并安装</button></div><div class="data-location"><div class="data-location-heading"><strong>用户数据位置</strong><span>更新安全</span></div><code id="dataPath">正在读取…</code><small>此目录独立于安装目录。更新、升级和卸载不会删除它。</small></div></section>`;
+  panel.innerHTML = `<h2>关于</h2><p class="about-intro">知识管理与复习工具 Electron 桌面应用。</p><section class="update-panel"><div class="update-panel-heading"><div><span class="modal-eyebrow">MULTI-SOURCE RELEASES</span><h3>应用更新</h3><p class="setting-description">支持 GitHub 和 Gitee 更新源。下载在后台进行，更新和卸载都不会删除你的本地数据。</p></div><span class="update-shield" aria-hidden="true">✓</span></div><div class="update-version-row"><span class="update-version" id="appVersion">正在读取版本…</span><span class="update-channel">稳定版</span></div><label class="update-source-setting">更新渠道<select id="updateSourceSelect"><option value="auto">自动选择</option><option value="github">GitHub</option><option value="gitee">Gitee</option></select></label><div class="update-progress" id="updateProgress" hidden><div class="update-progress-track"><i id="updateProgressBar"></i></div><div class="update-progress-meta" id="updateProgressMeta">准备下载…</div></div><div class="update-status" id="updateStatus">正在准备更新检查…</div><div class="update-actions"><button class="update-check-button" id="updateCheckButton" type="button"><span class="update-button-icon" aria-hidden="true">↻</span><span>检查更新</span></button><button class="primary update-install-button" id="updateInstallButton" type="button" hidden>重启并安装</button></div><div class="data-location"><div class="data-location-heading"><strong>用户数据位置</strong><span>更新安全</span></div><code id="dataPath">正在读取…</code><small>此目录独立于安装目录。更新、升级和卸载不会删除它。</small></div></section>`;
 }

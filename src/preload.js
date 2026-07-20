@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('reviewBridge', {
   updates: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.invoke('update:install'),
+    getConfig: () => ipcRenderer.invoke('update:getConfig'),
+    setSource: (source) => ipcRenderer.invoke('update:setSource', source),
     onEvent: (callback) => {
       const listener = (_event, payload) => callback(payload);
       ipcRenderer.on('update:event', listener);

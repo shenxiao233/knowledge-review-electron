@@ -11,6 +11,8 @@ permissions:
 jobs:
   release:
     runs-on: windows-latest
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -102,3 +104,44 @@ jobs:
         run: gh release edit "${{ github.ref_name }}" --draft=false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sync source and tag to Gitee
+        if: ${{ env.GITEE_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          $remote = "https://oauth2:$env:GITEE_TOKEN@gitee.com/shenxiao233/knowledge-review-electron.git"
+          git remote add gitee $remote
+          git push gitee "HEAD:refs/heads/main"
+          git push gitee "${{ github.ref_name }}"
+
+      - name: Publish Gitee release
+        if: ${{ env.GITEE_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          $owner = 'shenxiao233'
+          $repo = 'knowledge-review-electron'
+          $tag = '${{ github.ref_name }}'
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $api = "https://gitee.com/api/v5/repos/$owner/$repo"
+          $headers = @{ Accept = 'application/json'; 'User-Agent' = 'KnowledgeReview-Release' }
+          $query = "access_token=$env:GITEE_TOKEN"
+          $release = $null
+          try {
+            $release = Invoke-RestMethod -Headers $headers -Uri "$api/releases/tags/$tag`?$query"
+          } catch {
+            $body = @{ tag_name = $tag; name = $tag; target_commitish = '${{ github.sha }}'; body = "KnowledgeReview $tag"; prerelease = $false } | ConvertTo-Json
+            $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' -Body $body -Uri "$api/releases`?$query"
+          }
+          $assets = @(
+            "dist/KnowledgeReview-$version-Setup.exe",
+            "dist/KnowledgeReview-$version-Setup.exe.blockmap",
+            'dist/latest.yml'
+          )
+          foreach ($asset in $assets) {
+            $file = Resolve-Path $asset
+            $existing = @($release.assets | Where-Object { $_.name -eq (Split-Path $asset -Leaf) })
+            foreach ($item in $existing) {
+              Invoke-RestMethod -Method Delete -Headers $headers -Uri "$api/releases/$($release.id)/attach_files/$($item.id)`?$query"
+            }
+            curl.exe --fail-with-body -X POST "$api/releases/$($release.id)/attach_files`?$query" -F "file=@$file"
+          }

@@ -1937,6 +1937,8 @@ select option { color: #34413b; background: #fff; }
 .update-version-row { display: flex; align-items: center; gap: 9px; margin-top: 22px; }
 .update-version { margin-top: 0; color: #53645a; font-size: 14px; font-weight: 800; }
 .update-channel { padding: 4px 8px; border: 1px solid #cce2d6; border-radius: 999px; background: #f1faf4; color: #468367; font-size: 11px; font-weight: 700; }
+.update-source-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin: 14px 0; color: #526158; font-size: 13px; font-weight: 700; }
+.update-source-setting .select-shell { min-width: 150px; }
 .update-progress { margin-top: 13px; }
 .update-progress-track { height: 9px; overflow: hidden; border-radius: 99px; background: #dfeae3; }
 .update-progress-track i { display: block; width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #4a9d79, #8cc8a8); transition: width .2s ease; }
