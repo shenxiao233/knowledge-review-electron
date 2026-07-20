@@ -107,15 +107,6 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Sync source and tag to Gitee
-        if: ${{ env.GITEE_TOKEN != '' }}
-        shell: pwsh
-        run: |
-          $remote = "https://oauth2:$env:GITEE_TOKEN@gitee.com/shenxiao233/knowledge-review-electron.git"
-          git remote add gitee $remote
-          git push --force gitee "HEAD:refs/heads/main"
-          git push --force gitee "${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
-
       - name: Publish Gitee release
         if: ${{ env.GITEE_TOKEN != '' }}
         shell: pwsh
@@ -131,7 +122,7 @@ jobs:
           try {
             $release = Invoke-RestMethod -Headers $headers -Uri "$api/releases/tags/$tag`?$query"
           } catch {
-            $body = @{ tag_name = $tag; name = $tag; target_commitish = '${{ github.sha }}'; body = "KnowledgeReview $tag"; prerelease = $false } | ConvertTo-Json
+            $body = @{ tag_name = $tag; name = $tag; target_commitish = 'main'; body = "KnowledgeReview $tag"; prerelease = $false } | ConvertTo-Json
             $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' -Body $body -Uri "$api/releases`?$query"
           }
           $assets = @(
