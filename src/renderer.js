@@ -1,4 +1,5 @@
 const KEY = 'knowledge-review-ui-v2';
+const STATE_META_KEY = 'knowledge-review-state-meta-v1';
 const OPTS = ['A', 'B', 'C', 'D'];
 const NOTE_RATINGS = {
   familiar: { label: '熟悉', className: 'familiar' },
@@ -55,7 +56,7 @@ const base = {
   reviewEvents: [],
   schemaVersion: 3,
   algorithm: 'fsrs',
-  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, showStamps: true },
+  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, reviewPriority: 'mixed', showStamps: true },
   reviewPlan: { group: 'all', order: 'ordered' },
   selectedCardId: sampleCards[0].id,
   extractedText: '',
@@ -162,7 +163,7 @@ function hydrate(raw) {
       reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
       schemaVersion: 3,
       algorithm: 'fsrs',
-      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), showStamps: saved.settings?.showStamps !== false },
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false },
       reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
       trash: { ...base.trash, ...(saved.trash || {}) },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
@@ -181,6 +182,17 @@ function load() {
 let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
 let webdavPushPromise = Promise.resolve();
 let updateState = { status: 'idle', version: '', percent: 0, message: '' };
+let persistentSaveTimer = null;
+let persistentSaveQueue = Promise.resolve();
+function schedulePersistentSave(immediate = false) {
+  clearTimeout(persistentSaveTimer);
+  const write = () => {
+    const snapshot = structuredClone(state);
+    persistentSaveQueue = persistentSaveQueue.catch(() => {}).then(() => window.reviewBridge?.data?.save(snapshot));
+  };
+  if (immediate) write();
+  else persistentSaveTimer = setTimeout(write, 350);
+}
 function storageSnapshot() {
   const snapshot = structuredClone(state);
   if (snapshot.settings) delete snapshot.settings.dataDirectory;
@@ -190,7 +202,11 @@ function save() {
   try {
     ensureCardOrder(state.cards);
     syncReviewLog();
-    localStorage.setItem(KEY, JSON.stringify(state));
+    const serialized = JSON.stringify(state);
+    const savedAt = new Date().toISOString();
+    localStorage.setItem(KEY, serialized);
+    localStorage.setItem(STATE_META_KEY, savedAt);
+    schedulePersistentSave();
   } catch {
     toast('本地空间不足，请先导出备份。');
   }
@@ -206,14 +222,43 @@ function syncReviewLog() {
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'profileHeatmap', 'profileHeatmapPrev', 'profileHeatmapNext', 'profileHeatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
+  els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
+  els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
   if (!panel) return;
-  panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div>';
+  panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div><div class="review-priority-settings"><div class="comic-radio-group" role="radiogroup" aria-label="复习优先模式"><input type="radio" id="priority-new" name="reviewPriority" value="new" /><label for="priority-new">新词</label><input type="radio" id="priority-review" name="reviewPriority" value="review" /><label for="priority-review">复习</label><input type="radio" id="priority-mixed" name="reviewPriority" value="mixed" checked /><label for="priority-mixed">混合</label><div class="comic-glider" aria-hidden="true"></div></div><p class="review-priority-description" id="reviewPriorityDescription"></p></div>';
 }
-async function init() { cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh(); }
+async function init() {
+  const persistent = await window.reviewBridge?.data?.load().catch(() => null);
+  const browserState = localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1');
+  const browserCandidate = (() => {
+    if (!browserState) return null;
+    try {
+      return { data: JSON.parse(browserState), savedAt: localStorage.getItem(STATE_META_KEY) || '' };
+    } catch {
+      return null;
+    }
+  })();
+  const persistentCandidate = persistent?.ok && persistent.data ? { data: persistent.data, savedAt: persistent.savedAt || '' } : null;
+  const cardCount = (candidate) => Array.isArray(candidate?.data?.cards) ? candidate.data.cards.length : 0;
+  const hasData = (candidate) => Boolean(candidate && (cardCount(candidate) || candidate.data.documents?.length || candidate.data.groups?.length));
+  const selected = hasData(persistentCandidate) && hasData(browserCandidate)
+    ? (cardCount(browserCandidate) > cardCount(persistentCandidate) || (cardCount(browserCandidate) === cardCount(persistentCandidate) && browserCandidate.savedAt > persistentCandidate.savedAt) ? browserCandidate : persistentCandidate)
+    : persistentCandidate || browserCandidate;
+  if (selected) {
+    state = hydrate(JSON.stringify(selected.data));
+    localStorage.setItem(KEY, JSON.stringify(state));
+    localStorage.setItem(STATE_META_KEY, selected.savedAt || new Date().toISOString());
+    schedulePersistentSave(true);
+  } else {
+    state = hydrate('');
+    save();
+  }
+  cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh();
+}
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
   if (!toggle) return;
@@ -228,9 +273,9 @@ function ensureStampSetting() {
   });
 }function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
 function toggleBatchCardMode() { batchCardMode = !batchCardMode; const button = $('#batchModeButton'); button?.classList.toggle('active', batchCardMode); button.textContent = batchCardMode ? '批量制卡中' : '批量制卡'; els.cardModal?.classList.toggle('batch-mode', batchCardMode); }
-function closeSelectMenus(except = null) { $$('.select-shell.open').filter((shell) => shell !== except).forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); shell._selectMenu?.classList.remove('portal-open'); }); }
+function closeSelectMenus(except = null) { $$('.select-shell.open').filter((shell) => shell !== except && !shell.matches(':hover') && !(shell._selectMenu && shell._selectMenu.matches(':hover'))).forEach((shell) => { shell.classList.remove('open'); shell.querySelector('.select-trigger')?.setAttribute('aria-expanded', 'false'); shell._selectMenu?.classList.remove('portal-open'); }); }
 function positionSelectMenu(trigger, menu, select) { const rect = trigger.getBoundingClientRect(); const width = Math.max(rect.width, select.id === 'blockFormat' ? 96 : 120); const height = Math.min(300, Math.max(40, select.options.length * 36 + 10)); const above = rect.bottom + height + 7 > window.innerHeight && rect.top > height + 7; menu.style.minWidth = `${width}px`; menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))}px`; menu.style.top = `${above ? Math.max(8, rect.top - height - 7) : rect.bottom + 7}px`; }
-function enhanceSelectsPortal() { $$('select').forEach((select) => { if (select.parentElement?.classList.contains('select-shell')) return; const shell = document.createElement('div'); shell.className = `select-shell${select.closest('.formatbar') ? ' format-select-shell' : ''}`; select.parentNode.insertBefore(shell, select); shell.appendChild(select); const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'select-trigger'; trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', select.title || select.getAttribute('aria-label') || '选择'); const menu = document.createElement('div'); menu.className = `select-menu select-menu-portal${select.closest('.formatbar') ? ' format-toolbar-menu' : ''}`; menu.dataset.selectId = select.id; menu.setAttribute('role', 'listbox'); shell.appendChild(trigger); const owner = select.closest('dialog') || document.body; owner.appendChild(menu); shell._selectMenu = menu; select._selectMenu = menu; trigger.addEventListener('click', (event) => { event.stopPropagation(); const open = !shell.classList.contains('open'); closeSelectMenus(shell); shell.classList.toggle('open', open); trigger.setAttribute('aria-expanded', String(open)); menu.classList.toggle('portal-open', open); if (open) positionSelectMenu(trigger, menu, select); }); menu.addEventListener('click', (event) => { const option = event.target.closest('[data-option]'); if (!option) return; select.value = option.dataset.option; select.dispatchEvent(new Event('change', { bubbles: true })); shell.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); menu.classList.remove('portal-open'); }); select.addEventListener('change', () => syncCustomSelect(select)); syncCustomSelect(select); }); document.querySelectorAll('dialog').forEach((dialog) => dialog.addEventListener('close', () => closeSelectMenus())); document.addEventListener('click', (event) => { if (!event.target.closest('.select-shell') && !event.target.closest('.select-menu-portal') && !event.target.closest('.toolbar-palette-wrap')) closeSelectMenus(); closeToolbarPalettes(event.target.closest('.toolbar-palette-wrap')); }); window.addEventListener('resize', () => { const shell = $('.select-shell.open'); if (shell?._selectMenu) positionSelectMenu(shell.querySelector('.select-trigger'), shell._selectMenu, shell.querySelector('select')); }); window.addEventListener('scroll', () => { const shell = $('.select-shell.open'); if (shell?._selectMenu) positionSelectMenu(shell.querySelector('.select-trigger'), shell._selectMenu, shell.querySelector('select')); }, true); }
+function enhanceSelectsPortal() { $$('select').forEach((select) => { if (select.parentElement?.classList.contains('select-shell')) return; const shell = document.createElement('div'); shell.className = `select-shell${select.closest('.formatbar') ? ' format-select-shell' : ''}`; select.parentNode.insertBefore(shell, select); shell.appendChild(select); const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'select-trigger'; trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', select.title || select.getAttribute('aria-label') || '选择'); const menu = document.createElement('div'); menu.className = `select-menu select-menu-portal${select.closest('.formatbar') ? ' format-toolbar-menu' : ''}`; menu.dataset.selectId = select.id; menu.setAttribute('role', 'listbox'); shell.appendChild(trigger); const owner = select.closest('dialog') || document.body; owner.appendChild(menu); shell._selectMenu = menu; select._selectMenu = menu; trigger.addEventListener('click', (event) => { event.stopPropagation(); const open = !shell.classList.contains('open'); closeSelectMenus(shell); shell.classList.toggle('open', open); trigger.setAttribute('aria-expanded', String(open)); menu.classList.toggle('portal-open', open); if (open) positionSelectMenu(trigger, menu, select); }); menu.addEventListener('click', (event) => { const option = event.target.closest('[data-option]'); if (!option) return; select.value = option.dataset.option; select.dispatchEvent(new Event('change', { bubbles: true })); shell.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); menu.classList.remove('portal-open'); }); if (select.closest('.card-library-toolbar')) { shell.addEventListener('mouseenter', () => { closeSelectMenus(shell); shell.classList.add('open'); trigger.setAttribute('aria-expanded', 'true'); menu.classList.add('portal-open'); positionSelectMenu(trigger, menu, select); }); shell.addEventListener('mouseleave', () => { setTimeout(() => { if (!shell.matches(':hover') && !menu.matches(':hover')) closeSelectMenus(); }, 80); }); menu.addEventListener('mouseenter', () => { shell.classList.add('open'); menu.classList.add('portal-open'); }); menu.addEventListener('mouseleave', () => { if (!shell.matches(':hover')) closeSelectMenus(); }); } select.addEventListener('change', () => syncCustomSelect(select)); syncCustomSelect(select); }); document.querySelectorAll('dialog').forEach((dialog) => dialog.addEventListener('close', () => closeSelectMenus())); document.addEventListener('click', (event) => { if (!event.target.closest('.select-shell') && !event.target.closest('.select-menu-portal') && !event.target.closest('.toolbar-palette-wrap')) closeSelectMenus(); closeToolbarPalettes(event.target.closest('.toolbar-palette-wrap')); }); window.addEventListener('resize', () => { const shell = $('.select-shell.open'); if (shell?._selectMenu) positionSelectMenu(shell.querySelector('.select-trigger'), shell._selectMenu, shell.querySelector('select')); }); window.addEventListener('scroll', () => { const shell = $('.select-shell.open'); if (shell?._selectMenu) positionSelectMenu(shell.querySelector('.select-trigger'), shell._selectMenu, shell.querySelector('select')); }, true); }
 function syncCustomSelect(select) { const shell = select?.parentElement?.classList.contains('select-shell') ? select.parentElement : null; if (!shell) return; const trigger = shell.querySelector('.select-trigger'); const menu = select._selectMenu || shell._selectMenu || shell.querySelector('.select-menu'); if (!menu) return; const options = [...select.options]; trigger.textContent = options.find((option) => option.value === select.value)?.textContent || select.value || ''; menu.innerHTML = options.map((option) => `<button type="button" role="option" data-option="${esc(option.value)}" class="${option.value === select.value ? 'selected' : ''}">${esc(option.textContent)}</button>`).join(''); }
 function ensureToolbarPalettes() {
   const colors = [
@@ -361,7 +406,6 @@ function bind() {
   els.noteEditor.addEventListener('keydown', handleEditorKeydown);
   els.noteEditor.addEventListener('click', handleEditorClick);
   $('#quickCreateFromSelection')?.addEventListener('click', quickCard);
-  $('#openCreatorButton').addEventListener('click', () => openCard());
   $('#closeModalButton').addEventListener('click', () => els.cardModal.close());
   $('#cancelCardButton').addEventListener('click', () => els.cardModal.close());
   els.cardForm.addEventListener('submit', saveCard);
@@ -373,6 +417,7 @@ function bind() {
   els.reviewGroupSelect?.addEventListener('change', (event) => changeReviewGroup(event.target.value));
   els.reviewOrderButton?.addEventListener('click', (event) => { event.stopPropagation(); toggleReviewOrderMenu(); });
   els.reviewOrderMenu?.addEventListener('click', (event) => { const option = event.target.closest('[data-review-order]'); if (!option) return; changeReviewOrder(option.dataset.reviewOrder); closeReviewOrderMenu(); });
+  $$('input[name="reviewPriority"]').forEach((input) => input.addEventListener('change', () => { state.settings.reviewPriority = input.value; save(); syncSettings(); buildQueue(true); renderDock(); renderStandalone(); renderReviewPlan(); }));
   els.reviewHistoryButton?.addEventListener('click', toggleReviewHistory);
   els.reviewStudyBack?.addEventListener('click', exitReviewStudy);
   els.reviewHome?.addEventListener('click', handleReviewHomeClick);
@@ -402,7 +447,6 @@ function bind() {
   $('#bulkDeleteCardsButton').addEventListener('click', bulkDeleteCards);
   $('#toggleCardGroupsButton').addEventListener('click', toggleCardGroups);
   els.cardGroupRail.addEventListener('click', handleCardGroupRailClick);
-  $('#newGroupButton').addEventListener('click', openCreateGroup);
   $('#cancelDeleteGroupButton').addEventListener('click', () => { pendingCardOrder = null; $('#deleteGroupModal').close(); });
   $('#confirmDeleteGroupButton').addEventListener('click', confirmDeleteTarget);
   $('#closeGroupButton').addEventListener('click', () => $('#createGroupModal').close());
@@ -424,8 +468,8 @@ function bind() {
   [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
 }
-function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'profile') renderProfile(); if (name === 'trash') renderTrash(); }
-function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderProfile(); renderTrash(); badges(); }
+function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
+function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderTrash(); badges(); }
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
 function formatBytes(value) {
   const bytes = Number(value || 0);
@@ -570,7 +614,7 @@ function openCreate(mode) { createMode = mode; renameTargetId = ''; $('#createMo
 function createItem(event) { event.preventDefault(); const name = $('#createNameInput').value.trim(); if (!name) return toast('请输入名称。'); const isRenaming = Boolean(renameTargetId); if (isRenaming) { if (createMode === 'folder') { const folder = state.folders.find((item) => item.id === renameTargetId); if (state.folders.some((item) => item.id !== renameTargetId && item.name === name)) return toast('分组名称已存在。'); if (folder) folder.name = name; } else { const doc = state.documents.find((item) => item.id === renameTargetId); if (state.documents.some((item) => item.id !== renameTargetId && item.title === name)) return toast('文章名称已存在。'); if (doc) { doc.title = name; doc.updatedAt = new Date().toISOString(); } } } else if (createMode === 'folder') { if (state.folders.some((folder) => folder.name === name)) return toast('分组已存在。'); state.folders.push({ id: id('folder'), name, color: ['#2f7d64', '#28a9c7', '#8b73d6', '#d88746'][state.folders.length % 4] }); } else { const now = new Date().toISOString(); const doc = { id: id('doc'), folderId: $('#createFolderSelect').value || null, title: name, html: `<h1>${esc(name)}</h1><p>开始记录你的知识。</p>`, createdAt: now, updatedAt: now }; state.documents.push(doc); state.activeDocId = doc.id; } save(); els.createModal.close(); renameTargetId = ''; if (!isRenaming && createMode === 'document') { libraryMode = 'editor'; document.querySelector('.document-workbench').classList.remove('home-mode'); } loadDoc(); refresh(); toast(isRenaming ? '名称已更新。' : createMode === 'folder' ? '分组已创建。' : '文章已创建。'); }
 function trashDoc(docId) { const doc = state.documents.find((item) => item.id === docId); if (!doc) return; openDeleteConfirm('document', docId, `删除文档“${doc.title}”？`, '文档将移入回收站，之后仍可恢复。'); }
 function trashFolder(folderId) { const folder = state.folders.find((item) => item.id === folderId); if (!folder) return; const count = state.documents.filter((doc) => doc.folderId === folderId).length; openDeleteConfirm('folder', folderId, `删除文件夹“${folder.name}”？`, count ? `其中 ${count} 篇文档将随文件夹移入回收站。` : '文件夹将移入回收站，之后仍可恢复。'); }
-function openDeleteConfirm(type, targetId, title, description, actionLabel = '确认删除') { const modal = $('#deleteGroupModal'); if (!modal) return; modal.dataset.deleteType = type; modal.dataset.deleteId = targetId; $('#deleteGroupTitle').textContent = title; $('#deleteGroupDescription').textContent = description; $('#confirmDeleteGroupButton').textContent = actionLabel; modal.showModal(); }
+function openDeleteConfirm(type, targetId, title, description, actionLabel = type === 'card-order' ? '确认' : '确认删除') { const modal = $('#deleteGroupModal'); if (!modal) return; modal.dataset.deleteType = type; modal.dataset.deleteId = targetId; $('#deleteGroupTitle').textContent = title; $('#deleteGroupDescription').textContent = description; $('#confirmDeleteGroupButton').textContent = actionLabel; modal.showModal(); }
 function confirmDeleteTarget() {
   const modal = $('#deleteGroupModal');
   const type = modal?.dataset.deleteType;
@@ -621,21 +665,46 @@ function confirmDeleteTarget() {
 }
 
 function cardMatches(card) { const query = els.cardSearchInput.value.trim().toLowerCase(); const folder = els.folderFilter.value; const tag = els.tagFilter.value; const type = els.cardTypeFilter.value; const status = els.cardStatusFilter.value; const mastery = card.mastery || ''; return (!query || [card.question, card.folder, card.tags.join(' '), card.noteContent].join(' ').toLowerCase().includes(query)) && (!folder || folder === '全部文件夹' || card.folder === folder) && (!tag || tag === '全部标签' || card.tags.includes(tag)) && (!type || type === '全部类型' || card.type === type) && (!status || status === '全部熟练度' || (status === 'evaluated' ? Boolean(mastery) : status === 'unrated' ? !mastery : mastery === status)); }
-function renderCardSummary() { const due = state.cards.filter(isDue).length; const notes = state.cards.filter((card) => card.type === 'note').length; els.cardSummary.innerHTML = [['#i-layers', state.cards.length, '全部卡片'], ['#i-review', due, '待复习'], ['#i-book', notes, '速记词条'], ['#i-flame', totalReviews(), '累计复习']].map(([icon, value, label]) => `<div class="card-summary-item"><svg><use href="${icon}"></use></svg><div><b>${value}</b><span>${label}</span></div></div>`).join(''); $('#cardTotalBadge').textContent = `${state.cards.length} 张`; }
+function renderCardSummary() { const due = state.cards.filter(isDue).length; const notes = state.cards.filter((card) => card.type === 'note').length; if (els.cardSummary) els.cardSummary.innerHTML = [['#i-layers', state.cards.length, '全部卡片'], ['#i-review', due, '待复习'], ['#i-book', notes, '速记词条'], ['#i-flame', totalReviews(), '累计复习']].map(([icon, value, label]) => `<div class="card-summary-item"><svg><use href="${icon}"></use></svg><div><b>${value}</b><span>${label}</span></div></div>`).join(''); const totalBadge = $('#cardTotalBadge'); if (totalBadge) totalBadge.textContent = `${state.cards.length} 张`; }
 function renderCardGroups() {
   const groups = [...new Set([...(state.groups || []), ...state.cards.map((card) => card.folder)])];
   state.groups = groups;
   $('#cardGroupCount').textContent = groups.length;
-  const allGroup = `<div class="card-group-row"><div class="card-group-link ${els.folderFilter.value === '全部文件夹' ? 'active' : ''}"><button type="button" class="card-group-select" data-group="全部文件夹"><span class="group-dot all"></span><span>全部卡片</span></button></div></div>`;
+  const allGroup = `<div class="card-group-row all-group-row"><div class="card-group-link ${els.folderFilter.value === '全部文件夹' ? 'active' : ''}"><button type="button" class="card-group-select" data-group="全部文件夹"><span class="group-dot all"></span><span>全部卡片</span></button><button type="button" class="card-group-more" data-group-menu="__all__" aria-label="全部卡片更多操作" aria-expanded="false"><svg><use href="#i-more-vertical"></use></svg></button><div class="card-group-menu" data-group-menu-panel="__all__"><button type="button" data-create-group="true">新建卡组</button></div></div></div>`;
   const groupItems = groups.map((group) => `<div class="card-group-row sortable-group-row" draggable="true" data-sort-group="${esc(group)}"><div class="card-group-link ${els.folderFilter.value === group ? 'active' : ''}"><button type="button" class="card-group-select" data-group="${esc(group)}"><span class="group-dot"></span><span>${esc(group)}</span></button><button type="button" class="card-group-more" data-group-menu="${esc(group)}" aria-label="${esc(group)}更多操作" aria-expanded="false"><svg><use href="#i-more-vertical"></use></svg></button><div class="card-group-menu" data-group-menu-panel="${esc(group)}"><button type="button" data-group-rename="${esc(group)}">重命名</button><button type="button" data-group-relearn="${esc(group)}">重学此卡组</button><button type="button" class="danger" data-group-delete="${esc(group)}">删除卡组</button></div></div></div>`).join('');
-  els.cardGroupRail.innerHTML = allGroup + groupItems;
+  const addCardsFolder = `<label class="folder-card" data-open-card-creator="true">
+    <input type="checkbox" class="folder-toggle" />
+    <div class="hint-wrapper">
+      <span class="hint-text">add more cards</span>
+      <svg class="hint-arrow" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M 35 5 C 35 5, 15 5, 10 25 M 10 25 L 3 18 M 10 25 L 18 22" stroke="#60a5fa" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+    </div>
+    <div class="folder-container">
+      <svg class="folder-back" viewBox="0 0 50 40" fill="none"><path d="M0 4C0 1.79086 1.79086 0 4 0H16.524C17.721 0 18.8415 0.54051 19.574 1.4673L22.426 5.0654C23.1585 5.99219 24.279 6.5327 25.476 6.5327H46C48.2091 6.5327 50 8.32356 50 10.5327V36C50 38.2091 48.2091 40 46 40H4C1.79086 40 0 38.2091 0 36V4Z" fill="#0056b3"></path></svg>
+      <div class="folder-search"><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg><input type="text" placeholder="Search files..." class="search-input" aria-label="搜索卡片"></div>
+      <div class="file file-5"><div class="shine"></div><svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg><div class="file-text">Hero_BG.png</div><div class="file-tag">PNG &bull; 4.2 MB</div></div>
+      <div class="file file-4"><div class="shine"></div><svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg><div class="file-text">Promo_Cut.mp4</div><div class="file-tag">MP4 &bull; 128 MB</div></div>
+      <div class="file file-3"><div class="shine"></div><svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg><div class="file-text">app_config.json</div><div class="file-tag">JSON &bull; 12 KB</div></div>
+      <div class="file file-2"><div class="shine"></div><svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg><div class="file-text">Q3_Report.pdf</div><div class="file-tag">PDF &bull; 1.1 MB</div></div>
+      <div class="file file-1"><div class="shine"></div><svg class="file-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg><div class="file-text">Pitch_Deck.pptx</div><div class="file-tag">PPTX &bull; 8.4 MB</div></div>
+      <div class="folder-front-wrapper"><svg class="folder-front" viewBox="0 0 50 34" fill="none"><path d="M0 4C0 1.79086 1.79086 0 4 0H46C48.2091 0 50 1.79086 50 4V30C50 32.2091 48.2091 34 46 34H4C1.79086 34 0 32.2091 0 30V4Z" fill="rgba(0, 123, 255, 0.65)"></path></svg><div class="folder-label"></div><div class="counter"><div class="status-dot"></div><span class="counter-label">CARDS</span><span class="counter-number" id="addCardsFolderCount">${String(state.cards.length).padStart(2, '0')}</span></div></div>
+    </div>
+  </label>`;
+  els.cardGroupRail.innerHTML = allGroup + groupItems + addCardsFolder;
   bindGroupSorting();
 }
 function handleCardGroupRailClick(event) {
+  const addCardsFolder = event.target.closest('[data-open-card-creator]');
+  if (addCardsFolder) {
+    if (event.target.closest('.folder-search')) return;
+    event.stopPropagation();
+    openCard();
+    return;
+  }
   const groupButton = event.target.closest('[data-group]');
   if (groupButton) { els.folderFilter.value = groupButton.dataset.group; syncCustomSelect(els.folderFilter); cardPage = 1; renderCards(); return; }
   const menuButton = event.target.closest('[data-group-menu]');
   if (menuButton) { event.stopPropagation(); const menu = menuButton.parentElement?.querySelector(`[data-group-menu-panel="${CSS.escape(menuButton.dataset.groupMenu)}"]`); const open = menu && !menu.classList.contains('open'); closeCardGroupMenus(); if (menu && open) { menu.classList.add('open'); menuButton.setAttribute('aria-expanded', 'true'); } return; }
+  if (event.target.closest('[data-create-group]')) { event.stopPropagation(); closeCardGroupMenus(); openCreateGroup(); return; }
   const action = event.target.closest('[data-group-rename], [data-group-relearn], [data-group-delete]');
   if (!action) return;
   event.stopPropagation();
@@ -993,7 +1062,7 @@ function reorderCards(source, target) {
   const items = groupCards(sourceCard.folder || '未分组');
   const targetPosition = Math.max(1, items.findIndex((card) => card.id === target) + 1);
   pendingCardOrder = { cardId: source, target: targetPosition };
-  openDeleteConfirm('card-order', source, `调整卡片顺序为 -${targetPosition}-？`, '同卡组其他卡片会自动顺延。');
+  openDeleteConfirm('card-order', source, `调整卡片顺序为 -${targetPosition}-？`, '同卡组其他卡片会自动顺延。', '确认');
 }
 function updateBulkSelection(list = state.cards.filter(cardMatches)) { const count = selectedCardIds.size; els.selectedCardCount.textContent = `已选择 ${count} 张`; els.bulkSelectionBar.classList.toggle('active', count > 0); els.bulkDeleteCardsButton.disabled = count === 0; $('#selectAllCardsButton').classList.toggle('active', list.length > 0 && list.every((card) => selectedCardIds.has(card.id))); }
 function toggleSelectAllCards() { const list = state.cards.filter(cardMatches); if (list.every((card) => selectedCardIds.has(card.id))) list.forEach((card) => selectedCardIds.delete(card.id)); else list.forEach((card) => selectedCardIds.add(card.id)); renderCards(); }
@@ -1055,7 +1124,7 @@ function beginCardOrderEdit(button) {
     const target = Math.max(1, Math.min(Number(input.max), Math.round(value)));
     if (target === current) return;
     pendingCardOrder = { cardId, target, current };
-    openDeleteConfirm('card-order', cardId, `调整卡片顺序为 -${target}-？`, `当前顺序为 -${current}-，同卡组其他卡片会自动顺延。`);
+    openDeleteConfirm('card-order', cardId, `调整卡片顺序为 -${target}-？`, `当前顺序为 -${current}-，同卡组其他卡片会自动顺延。`, '确认');
   };
   input.addEventListener('blur', finish, { once: true });
   input.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); input.blur(); } if (event.key === 'Escape') { event.preventDefault(); input.value = String(current); input.blur(); } });
@@ -1073,7 +1142,7 @@ function changeCardOrder(cardId) {
   const target = Math.max(1, Math.min(items.length, Math.round(value)));
   if (target === current) return;
   pendingCardOrder = { cardId, target, current };
-  openDeleteConfirm('card-order', cardId, `调整卡片顺序为 -${target}-？`, `当前顺序为 -${current}-，同卡组其他卡片会自动顺延。`);
+  openDeleteConfirm('card-order', cardId, `调整卡片顺序为 -${target}-？`, `当前顺序为 -${current}-，同卡组其他卡片会自动顺延。`, '确认');
 }
 
 function confirmCardOrderChange() {
@@ -1106,13 +1175,18 @@ function buildQueue(force = false) {
   const newCards = due.filter((card) => card.fsrs?.state === 'New');
   const newReviewedToday = todayReviewEvents().filter((event) => reviewEventIsActive(event) && event.previousState === 'New' && inPlan(event)).length;
   const allowedNew = Math.max(0, (Number(state.settings.dailyNewLimit) || 0) - newReviewedToday);
-  const candidates = [...reviewCards, ...newCards.slice(0, allowedNew)];
-  const candidateKey = candidates.map((card) => `${card.id}:${card.dueAt}:${card.reviews}:${card.fsrs?.state || ''}`).join('|');
+  const priority = ['new', 'review', 'mixed'].includes(state.settings.reviewPriority) ? state.settings.reviewPriority : 'mixed';
+  const limitedNewCards = newCards.slice(0, allowedNew);
+  const candidates = priority === 'new' ? [...limitedNewCards, ...reviewCards] : priority === 'review' ? [...reviewCards, ...limitedNewCards] : [...reviewCards, ...limitedNewCards];
+  const candidateKey = `${priority}:${candidates.map((card) => `${card.id}:${card.dueAt}:${card.reviews}:${card.fsrs?.state || ''}`).join('|')}`;
   const nextKey = `${activeGroup}:${order}:${remaining}:${candidateKey}`;
   if (!force && nextKey === queueKey) return;
   const groupOrder = new Map((state.groups || []).map((group, position) => [group, position]));
-  if (order === 'ordered') {
+  if (order === 'ordered' && priority === 'mixed') {
     candidates.sort((a, b) => (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b) || new Date(a.dueAt) - new Date(b.dueAt));
+  } else if (order === 'ordered') {
+    const rank = new Map(candidates.map((card, position) => [card.id, position]));
+    candidates.sort((a, b) => rank.get(a.id) - rank.get(b.id) || (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b));
   } else {
     for (let i = candidates.length - 1; i > 0; i -= 1) {
       const target = Math.floor(Math.random() * (i + 1));
@@ -1216,15 +1290,14 @@ function renderReviewHistory() {
 }
 
 function shiftHeatmapMonth(offset) { heatmapMonth = new Date(heatmapMonth.getFullYear(), heatmapMonth.getMonth() + offset, 1); renderHeatmaps(); }
-function renderHeatmaps() { renderGithubHeatmap(els.heatmap); renderGithubHeatmap(els.profileHeatmap); els.todayCount.textContent = `共 ${state.reviewLog[today()] || 0} 次复习`; }
+function renderHeatmaps() { renderGithubHeatmap(els.heatmap); els.todayCount.textContent = `共 ${state.reviewLog[today()] || 0} 次复习`; }
 function renderGithubHeatmap(box) { if (!box) return; const weeks = box.classList.contains('compact') ? 26 : 52; const totalDays = weeks * 7; const now = new Date(); now.setHours(0, 0, 0, 0); const start = new Date(now.getTime() - (totalDays - 1) * DAY); box.classList.remove('monthly-heatmap'); box.classList.add('github-heatmap'); box.innerHTML = ''; for (let i = 0; i < totalDays; i += 1) { const date = new Date(start.getTime() + i * DAY); const key = dateKey(date); const count = state.reviewLog[key] || 0; const cell = document.createElement('button'); cell.type = 'button'; cell.className = `heat-cell ${count > 30 ? 'heat-3' : count > 10 ? 'heat-2' : count ? 'heat-1' : ''}`; cell.title = `${key} · ${count} 次复习${i === totalDays - 1 ? ' · 今天' : ''}`; cell.setAttribute('aria-label', `${key}，${count} 次复习${i === totalDays - 1 ? '，今天' : ''}`); cell.dataset.date = key; if (i === totalDays - 1) cell.classList.add('today-cell'); cell.addEventListener('click', () => { $$('.heat-cell.selected').forEach((item) => item.classList.remove('selected')); cell.classList.add('selected'); toast(`${key} · ${count} 次复习`); }); box.appendChild(cell); } }
 
-function renderProfile() { const todayCount = state.reviewLog[today()] || 0; const stats = [['#i-folder-plus', state.folders.length, '文件夹'], ['#i-file', state.documents.length, '文档'], ['#i-layers', state.cards.length, '卡片'], ['#i-review', todayCount, '今日复习'], ['#i-flame', `${streak()}天`, '连续打卡'], ['#i-review', totalReviews(), '累计复习']]; $('#profileStats').innerHTML = stats.map(([icon, value, label]) => `<div class="stat-box"><svg><use href="${icon}"></use></svg><b>${value}</b><span>${label}</span></div>`).join(''); renderGithubHeatmap(els.profileHeatmap); $('#profileDays').textContent = `${Object.keys(state.reviewLog).length} 天有记录`; $('#profileReviewCount').textContent = `共 ${totalReviews()} 次复习`; }
 function renderTrash() { $$('.trash-tabs [data-trash-tab]').forEach((button) => button.classList.toggle('active', button.dataset.trashTab === trashTab)); const list = state.trash[trashTab] || []; const box = $('#trashContent'); if (!list.length) { box.innerHTML = '<div class="trash-empty"><div class="trash-empty-icon"><svg><use href="#i-trash"></use></svg></div><strong>回收站为空</strong><p>删除的内容会显示在这里，你可以随时恢复。</p></div>'; return; } const icon = trashTab === 'folders' ? '#i-folder' : trashTab === 'cards' ? '#i-layers' : '#i-file'; box.innerHTML = list.map((item, i) => { const data = trashTab === 'folders' ? item.folder : item; const label = trashTab === 'folders' ? `包含 ${item.documents.length} 篇文档` : trashTab === 'cards' ? `${data.type === 'note' ? '速记词条' : '复习卡片'} · ${data.tags?.join('、') || '未分组'}` : '知识文档'; const preview = trashTab === 'folders' ? item.documents.map((doc) => doc.title).join('、') || '文件夹为空' : trashTab === 'cards' ? (data.type === 'note' ? data.noteContent : data.explanation || Object.values(data.options || {}).filter(Boolean).join(' · ')) : String(data.html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(); return `<article class="trash-item"><div class="trash-item-icon"><svg><use href="${icon}"></use></svg></div><div class="trash-item-main"><strong>${esc(data.name || data.title || data.question)}</strong><span>${esc(label)}</span><p>${esc(preview || '暂无内容预览')}</p></div><div class="trash-item-actions"><button data-restore="${i}">恢复</button><button class="danger" data-permanent="${i}">彻底删除</button></div></article>`; }).join(''); box.querySelectorAll('[data-restore]').forEach((button) => button.addEventListener('click', () => restoreTrash(Number(button.dataset.restore)))); box.querySelectorAll('[data-permanent]').forEach((button) => button.addEventListener('click', () => { const index = Number(button.dataset.permanent); const item = state.trash[trashTab][index]; const name = trashTab === 'folders' ? item.folder.name : item.title || item.question || '此内容'; openDeleteConfirm('trash-item', String(index), `永久删除“${name}”？`, '永久删除后无法恢复。', '永久删除'); })); }
 function restoreTrash(at) { const item = state.trash[trashTab][at]; if (!item) return; if (trashTab === 'documents') state.documents.push(normDoc(item)); if (trashTab === 'cards') state.cards.push(normCard(item)); if (trashTab === 'folders') { state.folders.push(item.folder); state.documents.push(...item.documents.map(normDoc)); } state.trash[trashTab].splice(at, 1); save(); refresh(); toast('内容已恢复。'); }
 function emptyTrash() { if (!state.trash[trashTab]?.length) return toast('当前分类没有内容。'); openDeleteConfirm('trash-all', trashTab, '清空当前回收站分类？', '此操作会永久删除当前分类中的全部内容，无法恢复。', '永久删除'); }
 function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(days * 24 * 60))} 分钟`; if (days < 2) return `${Math.max(1, Math.round(days * 24))} 小时`; return `${Math.round(days)} 天`; }
-function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); updateStorageStatus(); }
+function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const priority = ['new', 'review', 'mixed'].includes(state.settings.reviewPriority) ? state.settings.reviewPriority : 'mixed'; const descriptions = { new: '优先安排尚未学习的新词，适合建立新的知识基础。', review: '优先安排已经到期的复习卡片，适合巩固已有记忆。', mixed: '在新词和到期复习之间平衡安排，适合日常学习。' }; $$('input[name="reviewPriority"]').forEach((input) => { input.checked = input.value === priority; }); els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked'); if (els.reviewPriorityDescription) els.reviewPriorityDescription.textContent = descriptions[priority]; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); updateStorageStatus(); }
 function settings() { if (Number(els.dailyLimit.value) <= 0 || Number(els.dailyNewLimit.value) < 0) { els.dailyLimit.value = Math.max(1, Number(els.dailyLimit.value) || 1); els.dailyNewLimit.value = Math.max(0, Number(els.dailyNewLimit.value) || 0); return toast('复习上限必须有效。'); } state.settings.desiredRetention = Math.min(0.99, Math.max(0.8, Number(els.desiredRetention.value) || 0.9)); state.settings.dailyLimit = Number(els.dailyLimit.value); state.settings.dailyNewLimit = Number(els.dailyNewLimit.value); save(); syncSettings(); buildQueue(); progress(); }
 async function exportAllState() { const result = await window.reviewBridge.saveExportFile({ format: 'json', filename: 'knowledge-review-backup', content: JSON.stringify(state, null, 2) }); if (!result?.canceled) toast('全部数据导出完成。'); }
 function openExport(scope) { $('#exportScope').value = scope; syncCustomSelect($('#exportScope')); syncCustomSelect($('#exportFormat')); els.exportModal.showModal(); }
@@ -1243,12 +1316,51 @@ function renderQuestion(box, card, standalone) {
   const shell = box.closest('.review-shell');
   if (!card) {
     shell?.classList.add('is-complete');
+    if (standalone) {
+      shell?.classList.add('manifesto-complete-shell');
+      box.innerHTML = `<div class="manifesto-showcase">
+        <input type="checkbox" id="rebel-toggle" class="rebel-toggle" />
+        <div class="presentation-stage">
+          <label for="rebel-toggle" class="aesthetic-switch">
+            <span class="switch-track"></span>
+            <span class="switch-text mode-clean">BRUTALIZE AESTHETIC-CLICK ME</span>
+            <span class="switch-text mode-chaos">RESTORE MINIMALISM</span>
+          </label>
+          <div class="poster-card">
+            <div class="css-mesh-grain"></div>
+            <div class="drafting-grid"></div>
+            <div class="geo-orb"></div>
+            <div class="type-container">
+              <div class="huge-text word-1">STUDY</div>
+              <div class="huge-text word-2">END.</div>
+            </div>
+            <div class="tape-ribbon">
+              <div class="tape-scroll">
+                <span>NO JS // PURE CSS // BOLD AESTHETICS // REJECT MEDIOCRITY //</span>
+                <span>NO JS // PURE CSS // BOLD AESTHETICS // REJECT MEDIOCRITY //</span>
+              </div>
+            </div>
+            <div class="poster-footer">
+              <div class="barcode"></div>
+              <div class="manifesto-text">
+                <p class="vol">VOL. 01 / STUDY COMPLETE</p>
+                <p class="desc">TODAY'S REVIEW SESSION IS COMPLETE. KEEP THE MOMENTUM TOMORROW.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+      els.nextButton.disabled = true;
+      els.nextButton.hidden = true;
+      return;
+    }
     box.innerHTML = '<div class="review-complete"><div class="complete-mark"><svg><use href="#i-review"></use></svg></div><div class="completion-kicker">REVIEW SESSION</div><h2>今日复习已完成</h2><p>本次复习计划已经完成，明天继续保持。</p><button class="secondary-action" data-view="cards">查看卡片库</button></div>';
     box.querySelector('[data-view]')?.addEventListener('click', () => view('cards'));
     els.nextButton.disabled = true;
     els.nextButton.hidden = true;
     return;
   }
+  shell?.classList.remove('manifesto-complete-shell');
   shell?.classList.remove('is-complete');
   const selected = Array.isArray(answer) ? answer : [];
   const head = `<div class="tag-row"><span class="tag">${esc(card.tags[0] || '未分组')}</span><span class="question-type">${card.type === 'note' ? '速记词条' : card.type === 'multiple' ? '多选题' : '单选题'}</span></div><div class="question-title">${cardHtml(card.question)}</div>`;
@@ -1365,7 +1477,6 @@ function recordReview(card, rating) {
   renderReviewPlan();
   renderReviewHistory();
   renderHeatmaps();
-  renderProfile();
   badges();
 }
 function streak() { let count = 0; for (let i = 0; i < 366; i += 1) { const key = dateKey(Date.now() - i * DAY); if (state.reviewLog[key]) count += 1; else if (i) break; } return count; }

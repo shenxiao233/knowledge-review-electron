@@ -1,6 +1,6 @@
 {
     "name": "knowledge-review-electron",
-    "version": "0.1.5",
+    "version": "0.1.6",
     "description": "Knowledge management and spaced-review desktop app built with Electron.",
     "author": "shenxiao233",
     "main": "src/main.js",

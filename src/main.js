@@ -13,6 +13,7 @@ const legacyRuntimeDataPaths = [
   path.join(path.dirname(process.execPath), 'runtime-data')
 ];
 const runtimeDataPath = path.join(app.getPath('appData'), 'KnowledgeReview');
+const stateDataPath = path.join(runtimeDataPath, 'data', 'state.json');
 const updateBackupRoot = path.join(app.getPath('appData'), 'KnowledgeReview-backups');
 let updateCheckPromise = null;
 let updateDownloaded = false;
@@ -44,6 +45,49 @@ async function migrateLegacyRuntimeData() {
   await fs.cp(source, runtimeDataPath, { recursive: true, force: false, errorOnExist: false });
   await fs.writeFile(markerPath, new Date().toISOString(), 'utf8');
   return { migrated: true, source };
+}
+
+function readStoredState(value) {
+  if (!value || typeof value !== 'object') return null;
+  const data = value.format === 'knowledge-review-local-state' && value.data ? value.data : value;
+  return Array.isArray(data.cards) && Array.isArray(data.groups)
+    ? { data, savedAt: value.savedAt || '' }
+    : null;
+}
+
+function unwrapStoredState(value) {
+  return readStoredState(value)?.data || null;
+}
+
+async function readLocalState() {
+  for (const candidate of [stateDataPath, `${stateDataPath}.previous`]) {
+    try {
+      const stored = readStoredState(JSON.parse(await fs.readFile(candidate, 'utf8')));
+      if (stored) return stored;
+    } catch {
+      // Try the previous snapshot before reporting that no local state exists.
+    }
+  }
+  return null;
+}
+
+async function writeLocalState(data) {
+  const valid = unwrapStoredState(data);
+  if (!valid) throw new Error('Invalid local state');
+  const dataDir = path.dirname(stateDataPath);
+  const tempPath = `${stateDataPath}.tmp-${process.pid}`;
+  const previousPath = `${stateDataPath}.previous`;
+  const payload = JSON.stringify({ format: 'knowledge-review-local-state', version: 1, savedAt: new Date().toISOString(), data: valid }, null, 2);
+  await fs.mkdir(dataDir, { recursive: true });
+  await fs.writeFile(tempPath, payload, 'utf8');
+  try {
+    if (fsSync.existsSync(stateDataPath)) await fs.copyFile(stateDataPath, previousPath);
+    await fs.rename(tempPath, stateDataPath);
+  } catch {
+    await fs.copyFile(tempPath, stateDataPath);
+    await fs.rm(tempPath, { force: true });
+  }
+  return { ok: true, path: stateDataPath };
 }
 
 function sendUpdateEvent(event, payload = {}) {
@@ -168,6 +212,19 @@ ipcMain.handle('dialog:openCards', async () => {
     extension: path.extname(filePath).toLowerCase(),
     content
   };
+});
+
+ipcMain.handle('data:load', async () => {
+  const stored = await readLocalState();
+  return stored ? { ok: true, ...stored } : { ok: false };
+});
+
+ipcMain.handle('data:save', async (_event, data) => {
+  try {
+    return await writeLocalState(data);
+  } catch (error) {
+    return { ok: false, error: error.message || 'Unable to save local state' };
+  }
 });
 
 ipcMain.handle('dialog:saveExport', async (_event, payload) => {

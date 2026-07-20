@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('reviewBridge', {
     }
   },
   openCardsFile: () => ipcRenderer.invoke('dialog:openCards'),
+  data: {
+    load: () => ipcRenderer.invoke('data:load'),
+    save: (data) => ipcRenderer.invoke('data:save', data)
+  },
   saveExportFile: (payload) => ipcRenderer.invoke('dialog:saveExport', payload),
   webdav: {
     getConfig: () => ipcRenderer.invoke('webdav:getConfig'),
