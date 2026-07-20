@@ -61,7 +61,8 @@ const base = {
   selectedCardId: sampleCards[0].id,
   extractedText: '',
   groups: ['学习科学', '前端技术'],
-  trash: { documents: [], folders: [], cards: [] }
+  trash: { documents: [], folders: [], cards: [] },
+  profile: { name: 'Knowledge Learner', bio: '正在整理和分享值得反复学习的知识。', avatar: '', myDecks: [], publishedGroups: {} }
 };
 
 let state = load();
@@ -97,6 +98,20 @@ let cardBatchTotal = 1;
 let cardWheelDrag = null;
 let cardLoadedThrough = 1;
 let cardRenderTimer = null;
+let marketQuery = '';
+let marketCategory = 'all';
+let marketSort = 'latest';
+let marketSelectedDeck = null;
+let marketUnlocked = false;
+let profileEditingDeckId = '';
+const marketDecks = [
+  { id: 'deck-js-core', title: 'JavaScript 核心概念', author: 'Knowledge Lab', category: '编程开发', cards: 128, downloads: 842, updated: '2026-07-18', color: '#e7f3ed', accent: '#2f7d64', tags: ['JavaScript', '前端', '基础'], description: '覆盖作用域、异步、原型、模块化和常见面试概念，适合系统复习前端基础。' },
+  { id: 'deck-english-c1', title: '英语 C1 高频词汇', author: 'Mira', category: '语言学习', cards: 560, downloads: 1260, updated: '2026-07-16', color: '#eef0ff', accent: '#625bd7', tags: ['英语', '词汇', 'C1'], description: '按主题整理的高频词汇牌组，包含例句和易混淆词辨析。' },
+  { id: 'deck-product-design', title: '产品设计方法论', author: 'Design Notes', category: '通识知识', cards: 96, downloads: 417, updated: '2026-07-12', color: '#fff2df', accent: '#c97824', tags: ['产品', '设计', '方法论'], description: '从用户研究到迭代验证，帮助建立完整的产品设计思维框架。' },
+  { id: 'deck-computer-networks', title: '计算机网络重点', author: 'Study Room', category: '考试备考', cards: 214, downloads: 693, updated: '2026-07-09', color: '#eaf3fb', accent: '#3479aa', tags: ['网络', '408', '考试'], description: '整理 TCP/IP、HTTP、路由与传输层重点，适合考前集中巩固。' },
+  { id: 'deck-react-patterns', title: 'React 实战模式', author: 'Frontend Club', category: '编程开发', cards: 76, downloads: 318, updated: '2026-07-05', color: '#e9f7f7', accent: '#258b8d', tags: ['React', 'Hooks', '工程化'], description: '围绕组件设计、Hooks、状态管理和性能优化的实战型牌组。' },
+  { id: 'deck-general-science', title: '日常科学小知识', author: 'Open Decks', category: '通识知识', cards: 180, downloads: 521, updated: '2026-06-28', color: '#f5edfb', accent: '#8a5cab', tags: ['科学', '常识', '百科'], description: '用简短卡片解释身边的物理、化学、生物和天文现象。' }
+];
 
 function normCard(card) {
   const type = ['single', 'multiple', 'note'].includes(card.type) ? card.type : 'single';
@@ -166,6 +181,7 @@ function hydrate(raw) {
       settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false },
       reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
       trash: { ...base.trash, ...(saved.trash || {}) },
+      profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {} },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
       activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
     };
@@ -181,7 +197,7 @@ function load() {
 }
 let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
 let webdavPushPromise = Promise.resolve();
-let updateState = { status: 'idle', source: 'github', version: '', percent: 0, message: '' };
+let updateState = { status: 'idle', version: '', percent: 0, message: '' };
 let persistentSaveTimer = null;
 let persistentSaveQueue = Promise.resolve();
 function schedulePersistentSave(immediate = false) {
@@ -221,8 +237,120 @@ function syncReviewLog() {
   state.reviewLog = next;
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
+function marketDeckMatches(deck) {
+  const query = marketQuery.toLowerCase();
+  return (marketCategory === 'all' || deck.category === marketCategory)
+    && (!query || [deck.title, deck.author, deck.category, ...deck.tags].join(' ').toLowerCase().includes(query));
+}
+function marketDecksForDisplay() {
+  const decks = marketDecks.filter(marketDeckMatches);
+  return decks.sort((a, b) => marketSort === 'popular' ? b.downloads - a.downloads : marketSort === 'cards' ? b.cards - a.cards : b.updated.localeCompare(a.updated));
+}
+function returnToMarketLogin() {
+  marketUnlocked = false;
+  $('#marketAuthForm')?.reset();
+  $('#marketAuthForm')?.classList.remove('is-authenticated');
+  const status = $('#marketAuthStatus');
+  if (status) status.textContent = '服务器频道等待认证';
+  $('#marketLoginError')?.classList.remove('is-visible');
+  renderMarket();
+}
+function renderMarket() {
+  const heading = $('#marketUnlockedContent .market-decks-heading');
+  if (heading && !$('#marketReturnLoginButton')) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = 'marketReturnLoginButton';
+    button.className = 'market-return-login';
+    button.textContent = '返回登录';
+    button.addEventListener('click', returnToMarketLogin);
+    heading.appendChild(button);
+  }
+  const grid = $('#marketGrid');
+  $('#marketView')?.classList.toggle('is-locked', !marketUnlocked);
+  $('#marketLoginScreen')?.toggleAttribute('hidden', marketUnlocked);
+  $('#marketUnlockedContent')?.toggleAttribute('hidden', !marketUnlocked);
+  if (!grid) return;
+  const decks = marketDecksForDisplay();
+  grid.innerHTML = decks.length ? decks.map((deck) => `<article class="market-deck-card" data-market-deck="${esc(deck.id)}"><div class="market-deck-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}"><span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${esc(deck.tags.join(' · '))}</small><i aria-hidden="true"></i></div><div class="market-deck-body"><div class="market-deck-heading"><div><h3>${esc(deck.title)}</h3><span>作者 ${esc(deck.author)}</span></div><button type="button" class="market-more-button" data-market-detail="${esc(deck.id)}" aria-label="查看牌组详情"><svg><use href="#i-chevron-right"></use></svg></button></div><p>${esc(deck.description)}</p><div class="market-deck-meta"><span><strong>${deck.cards}</strong> 张卡片</span><span><strong>${deck.downloads}</strong> 次下载</span><span>${esc(deck.updated)}</span></div><button type="button" class="market-view-deck" data-market-detail="${esc(deck.id)}">查看牌组</button></div></article>`).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
+}
+function openMarketDetail(deckId) {
+  const deck = marketDecks.find((item) => item.id === deckId);
+  if (!deck) return;
+  marketSelectedDeck = deck;
+  $('#marketDetailTitle').textContent = deck.title;
+  $('#marketDetailSubtitle').textContent = `${deck.category} · 作者 ${deck.author}`;
+  $('#marketDetailBody').innerHTML = `<div class="market-detail-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}"><span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${deck.cards} 张卡片</small></div><div class="market-detail-copy"><p>${esc(deck.description)}</p><div class="market-detail-tags">${deck.tags.map((tag) => `<span>${esc(tag)}</span>`).join('')}</div><dl><div><dt>卡片数量</dt><dd>${deck.cards}</dd></div><div><dt>下载次数</dt><dd>${deck.downloads}</dd></div><div><dt>最近更新</dt><dd>${esc(deck.updated)}</dd></div></dl><div class="market-sync-note"><span>↻</span><span>下载后可在卡片库中查看；服务器有新版本时可选择同步更新。</span></div></div>`;
+  $('#marketDownloadButton').textContent = marketUnlocked ? '下载牌组' : '需要认证';
+  $('#marketDetailModal').showModal();
+}
+function handleMarketClick(event) {
+  const button = event.target.closest('[data-market-detail]');
+  if (button) openMarketDetail(button.dataset.marketDetail);
+}
+function submitMarketAuth(event) {
+  event.preventDefault();
+  const serverKey = $('#marketServerKey')?.value.trim();
+  const username = $('#marketUsername')?.value.trim();
+  const password = $('#marketPassword')?.value || '';
+  if (!serverKey || !username || !password) {
+    window.marketLoginCharacters?.triggerError?.();
+    return;
+  }
+  marketUnlocked = true;
+  const status = $('#marketAuthStatus');
+  if (status) status.textContent = '原型认证已通过 · 已解锁牌组市场预览';
+  $('#marketAuthForm')?.classList.add('is-authenticated');
+  renderMarket();
+  toast('牌组市场预览已解锁。正式版本将连接服务器验证权限。');
+}
+function profileData() { return state.profile || (state.profile = structuredClone(base.profile)); }
+function profileGroups() { return [...new Set((state.groups || []).filter(Boolean))]; }
+function profileGroupCards(group) { return state.cards.filter((card) => (card.folder || '未分组') === group); }
+function renderProfile() {
+  const profile = profileData();
+  const name = profile.name || 'Knowledge Learner';
+  const groups = profileGroups();
+  const cardCount = groups.reduce((sum, group) => sum + profileGroupCards(group).length, 0);
+  const avatar = $('#profileAvatarImage');
+  const fallback = $('#profileAvatarFallback');
+  $('#profileDisplayName') && ($('#profileDisplayName').textContent = name);
+  $('#profileProfileHint') && ($('#profileProfileHint').textContent = profile.bio || '你的公开名称会显示在牌组市场的作者信息中。');
+  $('#profileDeckCount') && ($('#profileDeckCount').textContent = groups.length);
+  $('#profileCardCount') && ($('#profileCardCount').textContent = cardCount);
+  $('#profilePublishedCount') && ($('#profilePublishedCount').textContent = groups.filter((group) => profile.publishedGroups?.[group]).length);
+  if (avatar && fallback) { avatar.hidden = !profile.avatar; fallback.hidden = Boolean(profile.avatar); if (profile.avatar) avatar.src = profile.avatar; else fallback.textContent = name.slice(0, 1).toUpperCase(); }
+  const list = $('#profileDeckList');
+  if (!list) return;
+  list.innerHTML = groups.length ? groups.map((group, index) => { const cards = profileGroupCards(group); const published = Boolean(profile.publishedGroups?.[group]); return `<article class="profile-deck-item"><div class="profile-deck-icon" style="--deck-color:${['#e7f3ed', '#eef0ff', '#fff2df'][index % 3]};--deck-accent:${['#2f7d64', '#625bd7', '#c97824'][index % 3]}"><svg><use href="#i-layers"></use></svg></div><div class="profile-deck-info"><div class="profile-deck-title"><h3>${esc(group)}</h3><span class="profile-deck-status ${published ? 'published' : ''}">${published ? '已上传' : '本地卡组'}</span></div><p>与卡片管理页面共享数据源，卡片和复习状态保持同步。</p><div class="profile-deck-meta"><span>${cards.length} 张卡片</span><span>当前本地卡组</span></div></div><div class="profile-deck-actions"><button type="button" data-profile-deck-action="view" data-profile-deck-id="${esc(group)}">查看</button><button type="button" data-profile-deck-action="upload" data-profile-deck-id="${esc(group)}">上传</button><button type="button" data-profile-deck-action="update" data-profile-deck-id="${esc(group)}">更新</button></div></article>`; }).join('') : '<div class="profile-empty"><div class="profile-empty-icon"><svg><use href="#i-layers"></use></svg></div><strong>还没有我的牌组</strong><span>请先在卡片管理页面创建卡组并添加卡片。</span></div>';
+}
+async function uploadProfileDeck() {
+  const file = await window.reviewBridge.openCardsFile();
+  if (!file || !file.content.trim()) return;
+  try {
+    const parsed = file.extension === '.json' ? (Array.isArray(JSON.parse(file.content)) ? JSON.parse(file.content) : [JSON.parse(file.content)]).map(normCard) : parseMarkdownCards(file.content);
+    const valid = parsed.filter((card) => card.question && (card.type === 'note' ? card.noteContent : card.answer.length));
+    if (!valid.length) return toast('文件格式或字段不完整，无法建立牌组。');
+    const name = file.name.replace(/\.(json|md|markdown)$/i, '') || '未命名牌组';
+    const deck = { id: id('my-deck'), name, description: '从本地文件导入的待上传牌组。', cardCount: valid.length, cardIds: [], status: 'draft', updatedAt: new Date().toLocaleDateString('zh-CN'), color: '#e7f3ed', accent: '#2f7d64' };
+    profileData().myDecks.push(deck);
+    save();
+    renderProfile();
+    toast(`已添加“${name}”，当前仅保存为我的牌组草稿，未写入本地复习卡片。`);
+  } catch { toast('无法解析牌组文件。'); }
+}
+function openProfileEditor() {
+  const profile = profileData();
+  $('#profileNameInput').value = profile.name || '';
+  $('#profileBioInput').value = profile.bio || '';
+  $('#profileEditModal').showModal();
+  $('#profileNameInput').focus();
+}
+function saveProfile(event) { event.preventDefault(); const profile = profileData(); const name = $('#profileNameInput').value.trim(); if (!name) return toast('请输入名称。'); profile.name = name; profile.bio = $('#profileBioInput').value.trim(); save(); $('#profileEditModal').close(); renderProfile(); toast('个人资料已保存。'); }
+function handleProfileAvatar(event) { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2 * 1024 * 1024) return toast('头像不能超过 2 MB。'); const reader = new FileReader(); reader.onload = () => { profileData().avatar = String(reader.result || ''); save(); renderProfile(); toast('头像已更新。'); }; reader.readAsDataURL(file); }
+function handleProfileDeckAction(event) { const button = event.target.closest('[data-profile-deck-action]'); if (!button) return; const group = button.dataset.profileDeckId; if (!profileGroups().includes(group)) return; const action = button.dataset.profileDeckAction; if (action === 'view') { view('cards'); els.folderFilter.value = group; syncCustomSelect(els.folderFilter); renderCards(true); return; } const profile = profileData(); profile.publishedGroups = profile.publishedGroups || {}; profile.publishedGroups[group] = true; save(); renderProfile(); toast(action === 'upload' ? '已标记为待上传；服务器接口接入后将执行真实上传。' : '已标记为待同步更新；服务器接口接入后将执行真实更新。'); }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'updateSourceSelect', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketCategoryFilter', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'profileDeckList', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
   els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
   els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
@@ -447,6 +575,22 @@ function bind() {
   $('#bulkDeleteCardsButton').addEventListener('click', bulkDeleteCards);
   $('#toggleCardGroupsButton').addEventListener('click', toggleCardGroups);
   els.cardGroupRail.addEventListener('click', handleCardGroupRailClick);
+  $('#marketSearchInput')?.addEventListener('input', (event) => { marketQuery = event.target.value.trim(); renderMarket(); });
+  $('#marketCategoryFilter')?.addEventListener('change', (event) => { marketCategory = event.target.value; renderMarket(); });
+  $('#marketSortSelect')?.addEventListener('change', (event) => { marketSort = event.target.value; renderMarket(); });
+  $('#marketGrid')?.addEventListener('click', handleMarketClick);
+  $('#marketAuthForm')?.addEventListener('submit', submitMarketAuth);
+  $('#marketReturnLoginButton')?.addEventListener('click', returnToMarketLogin);
+  $('#closeMarketDetailButton')?.addEventListener('click', () => $('#marketDetailModal').close());
+  $('#cancelMarketDetailButton')?.addEventListener('click', () => $('#marketDetailModal').close());
+  $('#marketDownloadButton')?.addEventListener('click', () => toast(marketUnlocked ? '下载接口尚未连接，牌组不会写入本地数据。' : '请先输入服务器密钥、账号和密码。'));
+  $('#profileAvatarButton')?.addEventListener('click', () => $('#profileAvatarInput')?.click());
+  $('#profileAvatarInput')?.addEventListener('change', handleProfileAvatar);
+  $('#editProfileButton')?.addEventListener('click', openProfileEditor);
+  $('#closeProfileEditButton')?.addEventListener('click', () => $('#profileEditModal').close());
+  $('#cancelProfileEditButton')?.addEventListener('click', () => $('#profileEditModal').close());
+  $('#profileEditForm')?.addEventListener('submit', saveProfile);
+  $('#profileDeckList')?.addEventListener('click', handleProfileDeckAction);
   $('#cancelDeleteGroupButton').addEventListener('click', () => { pendingCardOrder = null; $('#deleteGroupModal').close(); });
   $('#confirmDeleteGroupButton').addEventListener('click', confirmDeleteTarget);
   $('#closeGroupButton').addEventListener('click', () => $('#createGroupModal').close());
@@ -468,8 +612,8 @@ function bind() {
   [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
 }
-function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
-function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderTrash(); badges(); }
+ function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'market') renderMarket(); if (name === 'profile') renderProfile(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
+ function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderMarket(); renderProfile(); renderTrash(); badges(); }
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
 function formatBytes(value) {
   const bytes = Number(value || 0);
@@ -486,8 +630,8 @@ function renderUpdateState() {
   const check = els.updateCheckButton;
   if (!status) return;
   const labels = {
-    idle: `应用会从${updateState.source === 'gitee' ? 'Gitee' : 'GitHub'} Releases 获取稳定版本。`,
-    checking: `正在检查${updateState.source === 'gitee' ? 'Gitee' : 'GitHub'} Releases…`,
+    idle: '应用会从 GitHub Releases 获取稳定版本。',
+    checking: '正在检查 GitHub Releases…',
     available: `发现新版本 v${updateState.version}，正在后台流式下载…`,
     progress: `正在下载 v${updateState.version}：${updateState.percent.toFixed(0)}%`,
     downloaded: `v${updateState.version} 已下载完成，可以重启安装。`,
@@ -512,11 +656,10 @@ function renderUpdateState() {
 }
 function handleUpdateEvent(payload = {}) {
   if (payload.event === 'available' || payload.event === 'progress' || payload.event === 'downloaded') {
-    updateState = { ...updateState, status: payload.event, source: payload.source || updateState.source, version: payload.version || updateState.version, percent: payload.percent ?? updateState.percent, transferred: payload.transferred ?? updateState.transferred, total: payload.total ?? updateState.total, bytesPerSecond: payload.bytesPerSecond ?? updateState.bytesPerSecond };
+    updateState = { ...updateState, status: payload.event, version: payload.version || updateState.version, percent: payload.percent ?? updateState.percent, transferred: payload.transferred ?? updateState.transferred, total: payload.total ?? updateState.total, bytesPerSecond: payload.bytesPerSecond ?? updateState.bytesPerSecond };
   } else if (payload.event === 'not-available') updateState = { ...updateState, status: 'not-available' };
-  else if (payload.event === 'checking') updateState = { ...updateState, status: 'checking', source: payload.source || updateState.source };
-  else if (payload.event === 'error') updateState = { ...updateState, status: 'error', source: payload.source || updateState.source, message: payload.message || '' };
-  else if (payload.event === 'source-fallback') updateState = { ...updateState, status: 'checking', source: payload.nextSource || updateState.source };
+  else if (payload.event === 'checking') updateState = { ...updateState, status: 'checking' };
+  else if (payload.event === 'error') updateState = { ...updateState, status: 'error', message: payload.message || '' };
   else if (payload.event === 'data-migrated') updateState = { ...updateState, status: 'data-migrated' };
   renderUpdateState();
   if (payload.event === 'downloaded') toast(`新版本 v${payload.version} 已下载完成。`);
@@ -536,22 +679,10 @@ function bindUpdateEvents() {
     const result = await window.reviewBridge.updates.install();
     if (!result?.ok) { updateState = { ...updateState, installing: false }; handleUpdateEvent({ event: 'error', message: result.error }); }
   });
-  els.updateSourceSelect?.addEventListener('change', async () => {
-    const result = await window.reviewBridge.updates.setSource(els.updateSourceSelect.value);
-    if (!result?.ok) return toast(result?.error || '更新渠道保存失败。');
-    updateState = { ...updateState, status: 'idle', source: result.source === 'gitee' ? 'gitee' : 'github', message: '' };
-    renderUpdateState();
-    toast(`已切换到${els.updateSourceSelect.options[els.updateSourceSelect.selectedIndex].text}更新渠道。`);
-  });
   window.reviewBridge.app?.getInfo().then((info) => {
     if (els.appVersion) els.appVersion.textContent = `当前版本 v${info.version}`;
     if (els.dataPath) els.dataPath.textContent = info.dataPath;
     if (!info.isPackaged) renderUpdateState();
-  }).catch(() => {});
-  window.reviewBridge.updates?.getConfig().then((config) => {
-    if (els.updateSourceSelect) els.updateSourceSelect.value = config.source || 'github';
-    updateState = { ...updateState, source: config.activeSource || (config.source === 'gitee' ? 'gitee' : 'github') };
-    renderUpdateState();
   }).catch(() => {});
   renderUpdateState();
 }
@@ -1647,5 +1778,5 @@ function ensureUpdatePanel() {
   const panel = $('#aboutPanel');
   if (!panel || panel.dataset.updateReady === 'true') return;
   panel.dataset.updateReady = 'true';
-  panel.innerHTML = `<h2>关于</h2><p class="about-intro">知识管理与复习工具 Electron 桌面应用。</p><section class="update-panel"><div class="update-panel-heading"><div><span class="modal-eyebrow">MULTI-SOURCE RELEASES</span><h3>应用更新</h3><p class="setting-description">支持 GitHub 和 Gitee 更新源。下载在后台进行，更新和卸载都不会删除你的本地数据。</p></div><span class="update-shield" aria-hidden="true">✓</span></div><div class="update-version-row"><span class="update-version" id="appVersion">正在读取版本…</span><span class="update-channel">稳定版</span></div><label class="update-source-setting">更新渠道<select id="updateSourceSelect"><option value="auto">自动选择</option><option value="github">GitHub</option><option value="gitee">Gitee</option></select></label><div class="update-progress" id="updateProgress" hidden><div class="update-progress-track"><i id="updateProgressBar"></i></div><div class="update-progress-meta" id="updateProgressMeta">准备下载…</div></div><div class="update-status" id="updateStatus">正在准备更新检查…</div><div class="update-actions"><button class="update-check-button" id="updateCheckButton" type="button"><span class="update-button-icon" aria-hidden="true">↻</span><span>检查更新</span></button><button class="primary update-install-button" id="updateInstallButton" type="button" hidden>重启并安装</button></div><div class="data-location"><div class="data-location-heading"><strong>用户数据位置</strong><span>更新安全</span></div><code id="dataPath">正在读取…</code><small>此目录独立于安装目录。更新、升级和卸载不会删除它。</small></div></section>`;
+  panel.innerHTML = `<h2>关于</h2><p class="about-intro">知识管理与复习工具 Electron 桌面应用。</p><section class="update-panel"><div class="update-panel-heading"><div><span class="modal-eyebrow">GITHUB RELEASES</span><h3>应用更新</h3><p class="setting-description">通过 GitHub Releases 获取新版本。下载在后台进行，更新和卸载都不会删除你的本地数据。</p></div><span class="update-shield" aria-hidden="true">✓</span></div><div class="update-version-row"><span class="update-version" id="appVersion">正在读取版本…</span><span class="update-channel">稳定版</span></div><div class="update-progress" id="updateProgress" hidden><div class="update-progress-track"><i id="updateProgressBar"></i></div><div class="update-progress-meta" id="updateProgressMeta">准备下载…</div></div><div class="update-status" id="updateStatus">正在准备更新检查…</div><div class="update-actions"><button class="update-check-button" id="updateCheckButton" type="button"><span class="update-button-icon" aria-hidden="true">↻</span><span>检查更新</span></button><button class="primary update-install-button" id="updateInstallButton" type="button" hidden>重启并安装</button></div><div class="data-location"><div class="data-location-heading"><strong>用户数据位置</strong><span>更新安全</span></div><code id="dataPath">正在读取…</code><small>此目录独立于安装目录。更新、升级和卸载不会删除它。</small></div></section>`;
 }
