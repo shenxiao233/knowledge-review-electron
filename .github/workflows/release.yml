@@ -135,9 +135,9 @@ jobs:
             $release = Invoke-RestMethod -Method Post -Headers $headers -ContentType 'application/json' -Body $body -Uri "$api/releases`?$query"
           }
           $assets = @(
-            "dist/KnowledgeReview-$version-Setup.exe",
             "dist/KnowledgeReview-$version-Setup.exe.blockmap",
-            'dist/latest.yml'
+            'dist/latest.yml',
+            "dist/KnowledgeReview-$version-Setup.exe"
           )
           foreach ($asset in $assets) {
             $file = Resolve-Path $asset
@@ -145,5 +145,11 @@ jobs:
             foreach ($item in $existing) {
               Invoke-RestMethod -Method Delete -Headers $headers -Uri "$api/releases/$($release.id)/attach_files/$($item.id)`?$query"
             }
-            curl.exe --fail-with-body -X POST "$api/releases/$($release.id)/attach_files`?$query" -F "file=@$file"
+            $uploaded = $false
+            for ($attempt = 1; $attempt -le 5 -and -not $uploaded; $attempt++) {
+              Write-Host "Uploading $(Split-Path $asset -Leaf), attempt $attempt/5"
+              curl.exe --fail-with-body --location --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 60 --max-time 3600 --speed-limit 1024 --speed-time 300 -X POST "$api/releases/$($release.id)/attach_files`?$query" -F "file=@$file"
+              if ($LASTEXITCODE -eq 0) { $uploaded = $true } else { Start-Sleep -Seconds ([Math]::Min(60, $attempt * 10)) }
+            }
+            if (-not $uploaded) { throw "Failed to upload $(Split-Path $asset -Leaf) to Gitee." }
           }
