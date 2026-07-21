@@ -103,8 +103,18 @@ let marketCategory = 'all';
 let marketSort = 'latest';
 let marketSelectedDeck = null;
 let marketUnlocked = false;
+let marketSurface = 'decks';
+let marketToken = '';
+const marketApiBase = 'http://127.0.0.1:4000/api/v1';
+let marketUser = null;
+let marketBusy = false;
+let marketRememberCredentials = false;
+let marketAutoLoginTried = false;
+let adminActiveTab = 'overview';
+let adminPage = { users: 1, decks: 1 };
+const adminPageSize = 8;
 let profileEditingDeckId = '';
-const marketDecks = [
+let marketDecks = [
   { id: 'deck-js-core', title: 'JavaScript 核心概念', author: 'Knowledge Lab', category: '编程开发', cards: 128, downloads: 842, updated: '2026-07-18', color: '#e7f3ed', accent: '#2f7d64', tags: ['JavaScript', '前端', '基础'], description: '覆盖作用域、异步、原型、模块化和常见面试概念，适合系统复习前端基础。' },
   { id: 'deck-english-c1', title: '英语 C1 高频词汇', author: 'Mira', category: '语言学习', cards: 560, downloads: 1260, updated: '2026-07-16', color: '#eef0ff', accent: '#625bd7', tags: ['英语', '词汇', 'C1'], description: '按主题整理的高频词汇牌组，包含例句和易混淆词辨析。' },
   { id: 'deck-product-design', title: '产品设计方法论', author: 'Design Notes', category: '通识知识', cards: 96, downloads: 417, updated: '2026-07-12', color: '#fff2df', accent: '#c97824', tags: ['产品', '设计', '方法论'], description: '从用户研究到迭代验证，帮助建立完整的产品设计思维框架。' },
@@ -182,6 +192,7 @@ function hydrate(raw) {
       reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
       trash: { ...base.trash, ...(saved.trash || {}) },
       profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {} },
+      market: { ...(base.market || { conflicts: [], decks: {} }), ...(saved.market || {}), conflicts: Array.isArray(saved.market?.conflicts) ? saved.market.conflicts : [], decks: saved.market?.decks && typeof saved.market.decks === 'object' ? saved.market.decks : {} },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
       activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
     };
@@ -246,25 +257,124 @@ function marketDecksForDisplay() {
   const decks = marketDecks.filter(marketDeckMatches);
   return decks.sort((a, b) => marketSort === 'popular' ? b.downloads - a.downloads : marketSort === 'cards' ? b.cards - a.cards : b.updated.localeCompare(a.updated));
 }
-function returnToMarketLogin() {
+async function marketApi(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (marketToken) headers.set('Authorization', `Bearer ${marketToken}`);
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const response = await fetch(`${marketApiBase}${path}`, { cache: 'no-store', ...options, headers });
+  const contentType = response.headers.get('content-type') || '';
+  const body = contentType.includes('application/json') ? await response.json() : await response.blob();
+  if (!response.ok) throw new Error(body?.error || `市场接口请求失败（${response.status}）`);
+  return body;
+}
+function normalizeMarketDeck(deck) {
+  const manifest = deck.manifest || {};
+  return {
+    id: deck.id,
+    title: deck.title || manifest.title || '未命名牌组',
+    author: deck.author || '未知作者',
+    category: deck.category || manifest.category || '未分类',
+    cards: Number(manifest.cardCount || 0),
+    downloads: Number(deck.downloads || 0),
+    updated: deck.updatedAt ? String(deck.updatedAt).slice(0, 10) : '刚刚更新',
+    color: '#e7f3ed',
+    accent: '#2f7d64',
+    tags: Array.isArray(manifest.tags) ? manifest.tags : [],
+    description: deck.description || manifest.description || '',
+    version: Number(deck.version || manifest.version || 1)
+  };
+}
+async function loadMarketDecks() {
+  const decks = await marketApi('/decks');
+  marketDecks = Array.isArray(decks) ? decks.map(normalizeMarketDeck) : [];
+}
+async function returnToMarketLogin() {
+  marketSurface = 'decks';
   marketUnlocked = false;
-  $('#marketAuthForm')?.reset();
+  marketToken = '';
+  marketUser = null;
+  marketDecks = [];
   $('#marketAuthForm')?.classList.remove('is-authenticated');
   const status = $('#marketAuthStatus');
   if (status) status.textContent = '服务器频道等待认证';
   $('#marketLoginError')?.classList.remove('is-visible');
+  view('market');
+  renderMarket();
+  // Restore saved credentials without submitting the form again.
+  await loadSavedMarketCredentials({ autoLogin: false });
+}
+
+async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
+  let saved = null;
+  try { saved = await window.reviewBridge?.market?.getCredentials?.(); } catch { saved = null; }
+  if (!saved?.remember) return;
+  marketRememberCredentials = true;
+  const key = $('#marketServerKey');
+  const username = $('#marketUsername');
+  const password = $('#marketPassword');
+  const remember = $('#marketRememberCredentials');
+  if (key) key.value = saved.accessKey || '';
+  if (username) username.value = saved.username || '';
+  if (password) password.value = saved.password || '';
+  if (remember) remember.checked = true;
+  if (autoLogin && !marketAutoLoginTried && saved.accessKey && saved.username && saved.password) {
+    marketAutoLoginTried = true;
+    setTimeout(() => $('#marketAuthForm')?.requestSubmit(), 120);
+  }
+}
+
+async function saveMarketLoginCredentials(accessKey, username, password) {
+  const remember = $('#marketRememberCredentials')?.checked === true;
+  marketRememberCredentials = remember;
+  if (remember) await window.reviewBridge?.market?.saveCredentials?.({ accessKey, username, password });
+  else await window.reviewBridge?.market?.clearCredentials?.();
+}
+
+function showMarketWorkspace() {
+  marketSurface = 'decks';
+  view('market');
   renderMarket();
 }
+function openAdminWorkspace() {
+  if (!marketUnlocked || marketUser?.role !== 'ADMIN') return;
+  marketSurface = 'admin';
+  view('admin');
+}
+async function showMarketDecks() {
+  marketSurface = 'decks';
+  if (marketUnlocked) {
+    try {
+      await loadMarketDecks();
+    } catch (error) {
+      toast(error instanceof Error ? error.message : '公开牌组刷新失败。');
+    }
+  }
+  view('market');
+}
+function marketProfileSummary() {
+  const profile = profileData();
+  return { name: profile.name || marketUser?.username || 'Knowledge Learner', avatar: profile.avatar || '' };
+}
+function logoutMarket() {
+  returnToMarketLogin();
+}
+function renderMarketAccountMenu() {
+  const host = marketSurface === 'admin' ? $('#marketAdminAccountSlot') : $('#marketAccountSlot');
+  if (!host || !marketUnlocked || !marketUser) return;
+  const profile = marketProfileSummary();
+  host.innerHTML = `<div class="market-account"><button type="button" class="market-account-trigger" id="marketAccountButton" aria-expanded="false"><span class="market-account-avatar">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><span class="market-account-name">${esc(profile.name)}</span><svg><use href="#i-chevron-down"></use></svg></button><div class="market-account-menu" id="marketAccountMenu" hidden><div class="market-account-menu-head"><span class="market-account-avatar large">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><div><strong>${esc(profile.name)}</strong><small>${esc(marketUser.role === 'ADMIN' ? '管理员账户' : '许可账户')}</small></div></div><button type="button" data-market-account-action="profile">编辑资料</button>${marketUser.role === 'ADMIN' ? '<button type="button" data-market-account-action="admin">管理后台</button>' : ''}<button type="button" class="danger" data-market-account-action="logout">退出登录</button></div></div>`;
+  $('#marketAccountButton')?.addEventListener('click', (event) => { event.stopPropagation(); const menu = $('#marketAccountMenu'); if (menu) menu.hidden = !menu.hidden; $('#marketAccountButton').setAttribute('aria-expanded', String(!menu.hidden)); });
+  $$('#marketAccountMenu [data-market-account-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.marketAccountAction; if (action === 'profile') openProfileEditor(); if (action === 'admin') openAdminWorkspace(); if (action === 'logout') logoutMarket(); }));
+}
 function renderMarket() {
-  const heading = $('#marketUnlockedContent .market-decks-heading');
-  if (heading && !$('#marketReturnLoginButton')) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.id = 'marketReturnLoginButton';
-    button.className = 'market-return-login';
-    button.textContent = '返回登录';
-    button.addEventListener('click', returnToMarketLogin);
-    heading.appendChild(button);
+  const marketView = $('#marketView');
+  marketView?.classList.toggle('is-admin-surface', marketSurface === 'admin');
+  $('#marketDecksSurface')?.toggleAttribute('hidden', marketSurface !== 'decks');
+  $('#marketAdminSurface')?.toggleAttribute('hidden', marketSurface !== 'admin');
+  if (marketSurface === 'admin') {
+    renderAdminWorkspace();
+    renderMarketAccountMenu();
+    return;
   }
   const grid = $('#marketGrid');
   $('#marketView')?.classList.toggle('is-locked', !marketUnlocked);
@@ -273,6 +383,92 @@ function renderMarket() {
   if (!grid) return;
   const decks = marketDecksForDisplay();
   grid.innerHTML = decks.length ? decks.map((deck) => `<article class="market-deck-card" data-market-deck="${esc(deck.id)}"><div class="market-deck-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}"><span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${esc(deck.tags.join(' · '))}</small><i aria-hidden="true"></i></div><div class="market-deck-body"><div class="market-deck-heading"><div><h3>${esc(deck.title)}</h3><span>作者 ${esc(deck.author)}</span></div><button type="button" class="market-more-button" data-market-detail="${esc(deck.id)}" aria-label="查看牌组详情"><svg><use href="#i-chevron-right"></use></svg></button></div><p>${esc(deck.description)}</p><div class="market-deck-meta"><span><strong>${deck.cards}</strong> 张卡片</span><span><strong>${deck.downloads}</strong> 次下载</span><span>${esc(deck.updated)}</span></div><button type="button" class="market-view-deck" data-market-detail="${esc(deck.id)}">查看牌组</button></div></article>`).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
+  renderMarketAccountMenu();
+}
+
+function marketCardPayload(card, folder, remoteCardId = '') {
+  const payload = structuredClone(card);
+  payload.id = remoteCardId || card.id;
+  payload.folder = folder;
+  delete payload.fsrs;
+  delete payload.dueAt;
+  delete payload.interval;
+  delete payload.reviews;
+  delete payload.mastery;
+  delete payload.resetAt;
+  delete payload.source;
+  return payload;
+}
+
+function localMarketCards(deckId) {
+  return state.cards.filter((card) => card.source?.type === 'market' && card.source.deckId === deckId);
+}
+
+function cardFingerprint(card, remoteCardId = '') {
+  const copy = marketCardPayload(card, card.folder || '未分组', remoteCardId || card.source?.remoteCardId || '');
+  return JSON.stringify(copy);
+}
+
+function findLocalMarketCard(deckId, remoteCardId) {
+  return state.cards.find((card) => card.source?.type === 'market' && card.source.deckId === deckId && card.source.remoteCardId === remoteCardId);
+}
+
+function importMarketCards(deck, packageData) {
+  const folder = `市场 · ${deck.title}`;
+  if (!state.groups.includes(folder)) state.groups.push(folder);
+  const imported = [];
+  const conflicts = [];
+  const remoteIds = new Set();
+  packageData.cards.forEach((remoteCard, index) => {
+    if (!remoteCard || typeof remoteCard !== 'object') return;
+    const remoteCardId = String(remoteCard.id || `remote-${index + 1}`);
+    remoteIds.add(remoteCardId);
+    const normalized = normCard({ ...remoteCard, id: id('card'), folder });
+    const existing = findLocalMarketCard(deck.id, remoteCardId);
+    if (!existing) {
+      normalized.source = { type: 'market', deckId: deck.id, version: packageData.version, remoteCardId, remoteFingerprint: cardFingerprint(normalized, remoteCardId) };
+      state.cards.push(normalized);
+      imported.push(normalized);
+      return;
+    }
+    const original = existing.source?.remoteFingerprint || '';
+    const localChanged = original && cardFingerprint(existing, remoteCardId) !== original;
+    const incomingFingerprint = cardFingerprint(normalized, remoteCardId);
+    if (localChanged && incomingFingerprint !== original) {
+      conflicts.push({ deckId: deck.id, deckTitle: deck.title, cardId: existing.id, remoteCardId, version: packageData.version });
+      return;
+    }
+    Object.assign(existing, normalized, { id: existing.id, source: { type: 'market', deckId: deck.id, version: packageData.version, remoteCardId, remoteFingerprint: incomingFingerprint } });
+    imported.push(existing);
+  });
+  localMarketCards(deck.id).forEach((card) => {
+    const remoteCardId = card.source?.remoteCardId;
+    if (remoteCardId && !remoteIds.has(remoteCardId)) card.source = { ...card.source, version: packageData.version, remoteDeletedAt: new Date().toISOString() };
+  });
+  const previous = state.market?.conflicts || [];
+  state.market = { ...(state.market || {}), decks: { ...(state.market?.decks || {}), [deck.id]: { ...deck, version: packageData.version, importedAt: new Date().toISOString(), folder } }, conflicts: [...previous.filter((item) => item.deckId !== deck.id), ...conflicts] };
+  save();
+  refresh();
+  return { count: imported.length, conflicts: conflicts.length, folder };
+}
+
+async function downloadSelectedMarketDeck() {
+  if (!marketSelectedDeck || !marketUnlocked || marketBusy) return;
+  marketBusy = true;
+  const button = $('#marketDownloadButton');
+  if (button) { button.disabled = true; button.textContent = '正在下载并校验…'; }
+  try {
+    const result = await window.reviewBridge.market.downloadDeck({ baseUrl: marketApiBase, token: marketToken, deckId: marketSelectedDeck.id, version: marketSelectedDeck.version });
+    if (!result?.ok) throw new Error(result?.error || '下载牌组失败。');
+    const imported = importMarketCards(marketSelectedDeck, result);
+    $('#marketDetailModal')?.close();
+    toast(imported.conflicts ? `已导入 ${imported.count} 张卡片，${imported.conflicts} 张卡片存在本地修改，未覆盖。` : `已安全导入 ${imported.count} 张卡片。`);
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '下载牌组失败。');
+  } finally {
+    marketBusy = false;
+    if (button) { button.disabled = false; button.textContent = '下载牌组'; }
+  }
 }
 function openMarketDetail(deckId) {
   const deck = marketDecks.find((item) => item.id === deckId);
@@ -288,7 +484,7 @@ function handleMarketClick(event) {
   const button = event.target.closest('[data-market-detail]');
   if (button) openMarketDetail(button.dataset.marketDetail);
 }
-function submitMarketAuth(event) {
+async function submitMarketAuth(event) {
   event.preventDefault();
   const serverKey = $('#marketServerKey')?.value.trim();
   const username = $('#marketUsername')?.value.trim();
@@ -297,16 +493,167 @@ function submitMarketAuth(event) {
     window.marketLoginCharacters?.triggerError?.();
     return;
   }
-  marketUnlocked = true;
   const status = $('#marketAuthStatus');
-  if (status) status.textContent = '原型认证已通过 · 已解锁牌组市场预览';
-  $('#marketAuthForm')?.classList.add('is-authenticated');
-  renderMarket();
-  toast('牌组市场预览已解锁。正式版本将连接服务器验证权限。');
+  const submit = $('#marketAuthForm button[type="submit"]');
+  if (submit) submit.disabled = true;
+  if (status) status.textContent = '正在连接服务器验证…';
+  try {
+    const result = await marketApi('/auth/login', { method: 'POST', body: JSON.stringify({ accessKey: serverKey, username, password }) });
+    marketToken = result.token || '';
+    marketUser = result.user || null;
+    if (!marketToken) throw new Error('服务器没有返回有效登录令牌');
+    await loadMarketDecks();
+    marketUnlocked = true;
+    if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
+    $('#marketAuthForm')?.classList.add('is-authenticated');
+    await saveMarketLoginCredentials(serverKey, username, password);
+    showMarketWorkspace();
+    toast('服务器认证成功，牌组市场已开启。');
+  } catch (error) {
+    marketToken = '';
+    marketUnlocked = false;
+    if (status) status.textContent = '服务器认证失败';
+    const errorBox = $('#marketLoginError');
+    if (errorBox) { errorBox.textContent = error instanceof Error ? error.message : '无法连接牌组市场服务器'; errorBox.classList.add('is-visible'); }
+    window.marketLoginCharacters?.triggerError?.();
+  } finally {
+    if (submit) submit.disabled = false;
+  }
 }
 function profileData() { return state.profile || (state.profile = structuredClone(base.profile)); }
 function profileGroups() { return [...new Set((state.groups || []).filter(Boolean))]; }
 function profileGroupCards(group) { return state.cards.filter((card) => (card.folder || '未分组') === group); }
+function profileDeckMeta(group) {
+  return profileData().myDecks.find((item) => item.group === group || item.name === group) || null;
+}
+function openMarketUpload(group, mode = 'create') {
+  if (!marketUnlocked || !marketToken) return toast('请先登录牌组市场。');
+  const cards = profileGroupCards(group);
+  if (!cards.length) return toast('这个卡组没有可上传的卡片。');
+  const meta = profileDeckMeta(group);
+  const isUpdate = mode === 'update' && meta?.remoteId;
+  $('#marketUploadTitle').textContent = isUpdate ? '更新牌组' : '上传牌组';
+  $('#marketUploadDeckId').value = isUpdate ? meta.remoteId : '';
+  $('#marketUploadGroup').value = group;
+  $('#marketUploadName').value = group;
+  $('#marketUploadCategory').value = meta?.category || '通识知识';
+  $('#marketUploadDescription').value = meta?.description || `由 ${profileData().name || 'Knowledge Learner'} 分享的学习牌组。`;
+  $('#marketUploadModal').showModal();
+}
+async function submitMarketUpload(event) {
+  event.preventDefault();
+  if (!marketUnlocked || !marketToken) return toast('请先登录牌组市场。');
+  const name = $('#marketUploadName').value.trim();
+  const category = $('#marketUploadCategory').value.trim();
+  const group = $('#marketUploadGroup').value.trim();
+  const cards = profileGroupCards(group);
+  if (!name || !category || !cards.length) return toast('请确认牌组名称、分类和卡片内容。');
+  const meta = profileDeckMeta(group);
+  const deckId = $('#marketUploadDeckId').value.trim();
+  const version = deckId ? Number(meta?.version || 0) + 1 : 1;
+  const submit = $('#marketUploadForm button[type="submit"]');
+  if (submit) { submit.disabled = true; submit.textContent = '正在上传…'; }
+  try {
+    const result = await window.reviewBridge.market.uploadDeck({ baseUrl: marketApiBase, token: marketToken, deckId, title: name, category, description: $('#marketUploadDescription').value.trim(), version, tags: [category], cards: cards.map((card) => marketCardPayload(card, group)) });
+    if (!result?.ok) throw new Error(result?.error || '上传牌组失败。');
+    const next = { ...(meta || {}), group, name, remoteId: result.id || deckId, version: Number(result.version || version), category, description: $('#marketUploadDescription').value.trim(), status: 'pending', updatedAt: new Date().toISOString() };
+    const index = profileData().myDecks.findIndex((item) => item.group === group || item.name === group);
+    if (index >= 0) profileData().myDecks[index] = next; else profileData().myDecks.push(next);
+    save();
+    $('#marketUploadModal').close();
+    renderProfile();
+    toast(deckId ? `牌组已上传新版本 v${next.version}，等待管理员审核。` : '牌组已上传，等待管理员审核。');
+  } catch (error) {
+    toast(error instanceof Error ? error.message : '上传牌组失败。');
+  } finally {
+    if (submit) { submit.disabled = false; submit.textContent = '开始上传'; }
+  }
+}
+async function adminApi(path, options = {}) {
+  return marketApi(path, options);
+}
+function adminPaginate(items, page) {
+  const totalPages = Math.max(1, Math.ceil(items.length / adminPageSize));
+  const current = Math.min(Math.max(1, page), totalPages);
+  return { items: items.slice((current - 1) * adminPageSize, current * adminPageSize), page: current, totalPages, total: items.length };
+}
+function adminPaginationMarkup(kind, data) {
+  return `<div class="admin-pagination"><span>第 ${data.page} / ${data.totalPages} 页 · 共 ${data.total} 条</span><div><button type="button" data-admin-page="${kind}" data-page="${data.page - 1}" ${data.page <= 1 ? 'disabled' : ''}>上一页</button><button type="button" data-admin-page="${kind}" data-page="${data.page + 1}" ${data.page >= data.totalPages ? 'disabled' : ''}>下一页</button></div></div>`;
+}
+async function renderAdminWorkspace() {
+  const viewNode = $('#marketAdminSurface');
+  if (!viewNode || marketUser?.role !== 'ADMIN') return;
+  viewNode.hidden = false;
+  const header = viewNode.querySelector('.admin-main-header');
+  if (header && !header.querySelector('.admin-header-actions')) {
+    const sessionBadge = header.querySelector('.admin-session-badge');
+    const headerActions = document.createElement('div');
+    headerActions.className = 'admin-header-actions';
+    if (sessionBadge) headerActions.appendChild(sessionBadge);
+    const accountSlot = document.createElement('div');
+    accountSlot.id = 'marketAdminAccountSlot';
+    accountSlot.className = 'market-admin-account-slot';
+    headerActions.appendChild(accountSlot);
+    header.appendChild(headerActions);
+  }
+  $('#adminSessionName').textContent = marketUser.username || '管理员';
+  const titleMap = { overview: ['市场总览', '查看市场状态和最近的管理活动。'], users: ['许可用户', '创建、启用或停用牌组市场许可账户。'], decks: ['牌组审核', '审核用户上传的牌组并控制公开状态。'] };
+  const [title, subtitle] = titleMap[adminActiveTab] || titleMap.overview;
+  $('#adminPageTitle').textContent = title;
+  $('#adminPageSubtitle').textContent = subtitle;
+  $$('.admin-nav [data-admin-tab]').forEach((button) => button.classList.toggle('active', button.dataset.adminTab === adminActiveTab));
+  const content = $('#adminPageContent');
+  if (adminActiveTab === 'overview') {
+    const [users, decks] = await Promise.all([adminApi('/admin/users'), adminApi('/admin/decks')]);
+    const published = decks.filter((deck) => deck.status === 'PUBLISHED').length;
+    const pending = decks.filter((deck) => deck.status !== 'PUBLISHED').length;
+    content.innerHTML = `<div class="admin-stat-grid"><article><span>许可用户</span><strong>${users.length}</strong><small>当前账户总数</small></article><article><span>全部牌组</span><strong>${decks.length}</strong><small>包含待审核和已下架</small></article><article><span>已公开</span><strong>${published}</strong><small>用户可见牌组</small></article><article><span>待处理</span><strong>${pending}</strong><small>需要管理员确认</small></article></div><section class="admin-overview-card"><div><span class="market-eyebrow">QUICK ACTIONS</span><h2>快速管理</h2><p>从这里进入用户或牌组审核页面。</p></div><div class="admin-quick-actions"><button type="button" data-admin-go="users">管理许可用户</button><button type="button" data-admin-go="decks">审核牌组</button></div></section>`;
+  } else if (adminActiveTab === 'users') {
+    const users = await adminApi('/admin/users');
+    const page = adminPaginate(users, adminPage.users);
+    content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">LICENSED ACCOUNTS</span><h2>许可用户</h2><p>普通用户必须启用后才能进入牌组市场。</p></div></div><form id="adminCreateUserForm" class="admin-create-form"><input id="adminNewUsername" required minlength="3" placeholder="账户名" /><input id="adminNewPassword" required minlength="8" type="password" placeholder="初始密码（至少 8 位）" /><button type="submit" class="primary">创建账户</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>账户</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${page.items.map((user) => `<tr><td><strong>${esc(user.username)}</strong></td><td><span class="admin-role">${user.role}</span></td><td><span class="admin-enabled ${user.enabled ? 'on' : 'off'}">${user.enabled ? '已启用' : '已停用'}</span></td><td>${esc(formatDate(user.createdAt))}</td><td><button type="button" class="table-action" data-admin-user-action="${user.enabled ? 'disable' : 'enable'}" data-admin-user-id="${user.id}">${user.enabled ? '停用' : '启用'}</button></td></tr>`).join('')}</tbody></table></div>${adminPaginationMarkup('users', page)}</section>`;
+  } else {
+    const decks = await adminApi('/admin/decks');
+    const page = adminPaginate(decks, adminPage.decks);
+    content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">DECK MODERATION</span><h2>牌组审核</h2><p>每个版本均不可变，发布后用户才能下载。</p></div></div><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>牌组</th><th>作者</th><th>状态</th><th>版本</th><th>大小</th><th>操作</th></tr></thead><tbody>${page.items.map((deck) => `<tr><td><strong>${esc(deck.title)}</strong><small>${esc(deck.category)}</small></td><td>${esc(deck.owner.username)}</td><td><span class="admin-deck-status ${String(deck.status).toLowerCase()}">${deck.status}</span></td><td>v${deck.currentVersion}</td><td>${esc(deck.versions?.[0]?.packageSize || '0')} B</td><td><button type="button" class="table-action" data-admin-deck-action="${deck.status === 'PUBLISHED' ? 'disable' : 'publish'}" data-admin-deck-id="${deck.id}">${deck.status === 'PUBLISHED' ? '下架' : '发布'}</button></td></tr>`).join('')}</tbody></table></div>${adminPaginationMarkup('decks', page)}</section>`;
+  }
+  bindAdminWorkspaceEvents();
+}
+function bindAdminWorkspaceEvents() {
+  $$('.admin-nav [data-admin-tab]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminTab; renderAdminWorkspace(); });
+  $$('[data-admin-go]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminGo; renderAdminWorkspace(); });
+  $$('[data-admin-page]').forEach((button) => button.onclick = () => { const kind = button.dataset.adminPage; adminPage[kind] = Number(button.dataset.page); renderAdminWorkspace(); });
+  $('#adminCreateUserForm')?.addEventListener('submit', async (event) => { event.preventDefault(); try { await adminApi('/admin/users', { method: 'POST', body: JSON.stringify({ username: $('#adminNewUsername').value.trim(), password: $('#adminNewPassword').value }) }); toast('许可账户已创建。'); renderAdminWorkspace(); } catch (error) { toast(error.message || '创建账户失败。'); } });
+  $$('[data-admin-user-action]').forEach((button) => button.onclick = async () => { try { await adminApi(`/admin/users/${button.dataset.adminUserId}/${button.dataset.adminUserAction}`, { method: 'PATCH' }); renderAdminWorkspace(); } catch (error) { toast(error.message || '更新账户失败。'); } });
+  $$('[data-admin-deck-action]').forEach((button) => button.onclick = async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    try {
+      await adminApi(`/admin/decks/${button.dataset.adminDeckId}/${button.dataset.adminDeckAction}`, { method: 'PATCH' });
+      await loadMarketDecks();
+      toast('牌组状态已更新。');
+      await renderAdminWorkspace();
+    } catch (error) {
+      toast(error.message || '更新牌组失败。');
+      button.disabled = false;
+    }
+  });
+}
+async function renderAdminPanel() {
+  const panel = $('#marketAdminPanel');
+  if (!panel || !marketUnlocked || marketUser?.role !== 'ADMIN') { if (panel) panel.hidden = true; return; }
+  panel.hidden = false;
+  panel.innerHTML = '<div class="market-admin-heading"><div><span class="market-eyebrow">ADMINISTRATION</span><h2>市场管理</h2><p>管理许可账户和公开牌组审核状态。</p></div><button type="button" id="adminRefreshButton">刷新</button></div><div class="market-admin-grid"><section><h3>许可账户</h3><form id="adminCreateUserForm" class="market-admin-form"><input id="adminNewUsername" required minlength="3" placeholder="新账户名" /><input id="adminNewPassword" required minlength="8" type="password" placeholder="初始密码" /><button type="submit">创建账户</button></form><div id="adminUsersList"></div></section><section><h3>牌组审核</h3><div id="adminDecksList"></div></section></div>';
+  const [users, decks] = await Promise.all([adminApi('/admin/users'), adminApi('/admin/decks')]);
+  const userList = $('#adminUsersList');
+  userList.innerHTML = users.map((user) => `<div class="admin-row"><div><strong>${esc(user.username)}</strong><small>${user.role} · ${user.enabled ? '已启用' : '已停用'}</small></div><button type="button" data-admin-user-action="${user.enabled ? 'disable' : 'enable'}" data-admin-user-id="${user.id}">${user.enabled ? '停用' : '启用'}</button></div>`).join('');
+  const deckList = $('#adminDecksList');
+  deckList.innerHTML = decks.length ? decks.map((deck) => `<div class="admin-row"><div><strong>${esc(deck.title)}</strong><small>${esc(deck.owner.username)} · ${deck.status} · v${deck.currentVersion}</small></div><button type="button" data-admin-deck-action="${deck.status === 'PUBLISHED' ? 'disable' : 'publish'}" data-admin-deck-id="${deck.id}">${deck.status === 'PUBLISHED' ? '下架' : '发布'}</button></div>`).join('') : '<p class="market-empty">暂无待审核牌组。</p>';
+  $('#adminRefreshButton').addEventListener('click', renderAdminPanel);
+  $('#adminCreateUserForm').addEventListener('submit', async (event) => { event.preventDefault(); try { await adminApi('/admin/users', { method: 'POST', body: JSON.stringify({ username: $('#adminNewUsername').value.trim(), password: $('#adminNewPassword').value }) }); toast('许可账户已创建。'); renderAdminPanel(); } catch (error) { toast(error.message || '创建账户失败。'); } });
+  userList.addEventListener('click', async (event) => { const button = event.target.closest('[data-admin-user-action]'); if (!button) return; try { await adminApi(`/admin/users/${button.dataset.adminUserId}/${button.dataset.adminUserAction}`, { method: 'PATCH' }); renderAdminPanel(); } catch (error) { toast(error.message || '更新账户失败。'); } });
+  deckList.addEventListener('click', async (event) => { const button = event.target.closest('[data-admin-deck-action]'); if (!button) return; try { await adminApi(`/admin/decks/${button.dataset.adminDeckId}/${button.dataset.adminDeckAction}`, { method: 'PATCH' }); toast('牌组状态已更新。'); await loadMarketDecks(); renderMarket(); } catch (error) { toast(error.message || '更新牌组失败。'); } });
+}
 function renderProfile() {
   const profile = profileData();
   const name = profile.name || 'Knowledge Learner';
@@ -346,11 +693,12 @@ function openProfileEditor() {
   $('#profileEditModal').showModal();
   $('#profileNameInput').focus();
 }
-function saveProfile(event) { event.preventDefault(); const profile = profileData(); const name = $('#profileNameInput').value.trim(); if (!name) return toast('请输入名称。'); profile.name = name; profile.bio = $('#profileBioInput').value.trim(); save(); $('#profileEditModal').close(); renderProfile(); toast('个人资料已保存。'); }
+function saveProfile(event) { event.preventDefault(); const profile = profileData(); const name = $('#profileNameInput').value.trim(); if (!name) return toast('请输入名称。'); profile.name = name; profile.bio = $('#profileBioInput').value.trim(); save(); $('#profileEditModal').close(); renderProfile(); if (marketUnlocked) renderMarketAccountMenu(); toast('个人资料已保存。'); }
 function handleProfileAvatar(event) { const file = event.target.files?.[0]; if (!file) return; if (file.size > 2 * 1024 * 1024) return toast('头像不能超过 2 MB。'); const reader = new FileReader(); reader.onload = () => { profileData().avatar = String(reader.result || ''); save(); renderProfile(); toast('头像已更新。'); }; reader.readAsDataURL(file); }
-function handleProfileDeckAction(event) { const button = event.target.closest('[data-profile-deck-action]'); if (!button) return; const group = button.dataset.profileDeckId; if (!profileGroups().includes(group)) return; const action = button.dataset.profileDeckAction; if (action === 'view') { view('cards'); els.folderFilter.value = group; syncCustomSelect(els.folderFilter); renderCards(true); return; } const profile = profileData(); profile.publishedGroups = profile.publishedGroups || {}; profile.publishedGroups[group] = true; save(); renderProfile(); toast(action === 'upload' ? '已标记为待上传；服务器接口接入后将执行真实上传。' : '已标记为待同步更新；服务器接口接入后将执行真实更新。'); }
+// Keep profile actions wired to the market without replacing the local deck source.
+function handleProfileDeckAction(event) { const button = event.target.closest('[data-profile-deck-action]'); if (!button) return; const group = button.dataset.profileDeckId; if (!profileGroups().includes(group)) return; const action = button.dataset.profileDeckAction; if (action === 'view') { view('cards'); els.folderFilter.value = group; syncCustomSelect(els.folderFilter); renderCards(true); return; } openMarketUpload(group, action === 'update' ? 'update' : 'create'); }
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketCategoryFilter', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'profileDeckList', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketCategoryFilter', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadCategory', 'marketUploadDescription', 'profileDeckList', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
   els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
   els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
@@ -385,7 +733,7 @@ async function init() {
     state = hydrate('');
     save();
   }
-  cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh();
+  cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); await loadSavedMarketCredentials(); cardSortDirection = state.settings?.cardSortDirection === 'desc' ? 'desc' : 'asc'; loadDoc(); syncSettings(); refresh();
 }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
@@ -580,10 +928,21 @@ function bind() {
   $('#marketSortSelect')?.addEventListener('change', (event) => { marketSort = event.target.value; renderMarket(); });
   $('#marketGrid')?.addEventListener('click', handleMarketClick);
   $('#marketAuthForm')?.addEventListener('submit', submitMarketAuth);
+  $('#marketPasswordToggle')?.addEventListener('click', () => { const field = $('#marketPassword'); if (field) field.type = field.type === 'password' ? 'text' : 'password'; });
+  $('#adminBackMarketButton')?.addEventListener('click', showMarketDecks);
   $('#marketReturnLoginButton')?.addEventListener('click', returnToMarketLogin);
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('.market-account')) return;
+    const menu = $('#marketAccountMenu');
+    if (menu) menu.hidden = true;
+    $('#marketAccountButton')?.setAttribute('aria-expanded', 'false');
+  });
   $('#closeMarketDetailButton')?.addEventListener('click', () => $('#marketDetailModal').close());
   $('#cancelMarketDetailButton')?.addEventListener('click', () => $('#marketDetailModal').close());
-  $('#marketDownloadButton')?.addEventListener('click', () => toast(marketUnlocked ? '下载接口尚未连接，牌组不会写入本地数据。' : '请先输入服务器密钥、账号和密码。'));
+  $('#marketDownloadButton')?.addEventListener('click', downloadSelectedMarketDeck);
+  $('#marketUploadForm')?.addEventListener('submit', submitMarketUpload);
+  $('#closeMarketUploadButton')?.addEventListener('click', () => $('#marketUploadModal').close());
+  $('#cancelMarketUploadButton')?.addEventListener('click', () => $('#marketUploadModal').close());
   $('#profileAvatarButton')?.addEventListener('click', () => $('#profileAvatarInput')?.click());
   $('#profileAvatarInput')?.addEventListener('change', handleProfileAvatar);
   $('#editProfileButton')?.addEventListener('click', openProfileEditor);
@@ -612,7 +971,7 @@ function bind() {
   [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
 }
- function view(name) { $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === name)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'market') renderMarket(); if (name === 'profile') renderProfile(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
+ function view(name) { const canOpenAdmin = marketUnlocked && marketUser?.role === 'ADMIN'; const target = name === 'admin' && !canOpenAdmin ? 'market' : name; if (target === 'admin' && canOpenAdmin) { marketSurface = 'admin'; name = 'market'; } $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === target)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'market') renderMarket(); if (name === 'profile') renderProfile(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
  function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderMarket(); renderProfile(); renderTrash(); badges(); }
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
 function formatBytes(value) {

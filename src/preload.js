@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld('reviewBridge', {
     }
   },
   openCardsFile: () => ipcRenderer.invoke('dialog:openCards'),
+  market: {
+    downloadDeck: (payload) => ipcRenderer.invoke('market:downloadDeck', payload),
+    uploadDeck: (payload) => ipcRenderer.invoke('market:uploadDeck', payload),
+    getCredentials: () => ipcRenderer.invoke('market:getCredentials'),
+    saveCredentials: (payload) => ipcRenderer.invoke('market:saveCredentials', payload),
+    clearCredentials: () => ipcRenderer.invoke('market:clearCredentials')
+  },
   data: {
     load: () => ipcRenderer.invoke('data:load'),
     save: (data) => ipcRenderer.invoke('data:save', data)

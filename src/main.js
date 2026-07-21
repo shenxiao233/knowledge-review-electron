@@ -5,6 +5,11 @@ const fs = require('fs/promises');
 const fsSync = require('fs');
 const http = require('http');
 const https = require('https');
+const os = require('os');
+const crypto = require('crypto');
+const AdmZip = require('adm-zip');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 
 app.setName('KnowledgeReview');
 const legacyRuntimeDataPaths = [
@@ -219,6 +224,104 @@ ipcMain.handle('dialog:openCards', async () => {
   };
 });
 
+function marketUrl(baseUrl, endpoint) {
+  const base = String(baseUrl || '').replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(base)) throw new Error('牌组市场地址无效。');
+  return `${base}${endpoint}`;
+}
+
+function sha256Buffer(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+function readDeckPackage(zipPath) {
+  const zip = new AdmZip(zipPath);
+  const manifestEntry = zip.getEntry('manifest.json');
+  const cardsEntry = zip.getEntry('cards.json');
+  if (!manifestEntry || !cardsEntry) throw new Error('牌组包缺少 manifest.json 或 cards.json。');
+  let manifest;
+  let cards;
+  try {
+    manifest = JSON.parse(manifestEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
+    cards = JSON.parse(cardsEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
+  } catch {
+    throw new Error('牌组包中的 JSON 无法解析。');
+  }
+  if (!manifest || typeof manifest !== 'object' || !String(manifest.title || '').trim() || !Array.isArray(cards)) throw new Error('牌组包格式不正确。');
+  if (manifest.cardCount !== undefined && Number(manifest.cardCount) !== cards.length) throw new Error('牌组卡片数量校验失败。');
+  const assets = {};
+  let assetBytes = 0;
+  zip.getEntries().forEach((entry) => {
+    if (entry.isDirectory || !entry.entryName.startsWith('assets/')) return;
+    const data = entry.getData();
+    assetBytes += data.length;
+    if (assetBytes > 30 * 1024 * 1024) return;
+    const ext = path.extname(entry.entryName).toLowerCase();
+    const types = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml' };
+    if (types[ext]) assets[entry.entryName] = `data:${types[ext]};base64,${data.toString('base64')}`;
+  });
+  const replaceAssets = (value) => {
+    if (typeof value === 'string') return value.replace(/(?:\.\/)?(assets\/[^\s)"']+)/g, (match, assetPath) => assets[assetPath] || match);
+    if (Array.isArray(value)) return value.map(replaceAssets);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceAssets(item)]));
+    return value;
+  };
+  return { manifest, cards: replaceAssets(cards), assets };
+}
+
+async function downloadMarketDeck(payload) {
+  const deckId = encodeURIComponent(String(payload?.deckId || ''));
+  if (!deckId) throw new Error('牌组编号不能为空。');
+  const version = payload?.version ? `?version=${encodeURIComponent(String(payload.version))}` : '';
+  const response = await fetch(marketUrl(payload.baseUrl, `/decks/${deckId}/download${version}`), { headers: { Authorization: `Bearer ${payload.token || ''}` } });
+  if (!response.ok || !response.body) {
+    let message = `下载牌组失败（${response.status}）。`;
+    try { const body = await response.json(); message = body.error || message; } catch {}
+    throw new Error(message);
+  }
+  const tempPath = path.join(os.tmpdir(), `knowledge-review-market-${crypto.randomUUID()}.zip`);
+  try {
+    await pipeline(Readable.fromWeb(response.body), fsSync.createWriteStream(tempPath));
+    const buffer = await fs.readFile(tempPath);
+    const result = readDeckPackage(tempPath);
+    return { ...result, sha256: sha256Buffer(buffer), version: Number(response.headers.get('x-deck-version') || result.manifest.version || 1) };
+  } finally {
+    await fs.rm(tempPath, { force: true });
+  }
+}
+
+function createDeckPackage(payload) {
+  const manifest = { format: 'knowledge-review-deck', title: String(payload.title || '未命名牌组'), description: String(payload.description || ''), category: String(payload.category || '未分类'), version: Number(payload.version || 1), cardCount: Array.isArray(payload.cards) ? payload.cards.length : 0, tags: Array.isArray(payload.tags) ? payload.tags : [] };
+  const zip = new AdmZip();
+  zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
+  zip.addFile('cards.json', Buffer.from(JSON.stringify(Array.isArray(payload.cards) ? payload.cards : [], null, 2), 'utf8'));
+  return zip.toBuffer();
+}
+
+async function uploadMarketDeck(payload) {
+  const zip = createDeckPackage(payload);
+  const form = new FormData();
+  form.append('metadata', JSON.stringify({ title: payload.title, description: payload.description, category: payload.category }));
+  form.append('package', new Blob([zip], { type: 'application/zip' }), 'deck.zip');
+  const endpoint = payload.deckId ? `/my-decks/${encodeURIComponent(payload.deckId)}/versions` : '/my-decks';
+  const response = await fetch(marketUrl(payload.baseUrl, endpoint), { method: 'POST', headers: { Authorization: `Bearer ${payload.token || ''}` }, body: form });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body.error || `上传牌组失败（${response.status}）。`);
+  return body;
+}
+
+ipcMain.handle('market:downloadDeck', async (_event, payload) => {
+  try { return { ok: true, ...(await downloadMarketDeck(payload)) }; } catch (error) { return { ok: false, error: error.message || '下载牌组失败。' }; }
+});
+
+ipcMain.handle('market:uploadDeck', async (_event, payload) => {
+  try { return { ok: true, ...(await uploadMarketDeck(payload)) }; } catch (error) { return { ok: false, error: error.message || '上传牌组失败。' }; }
+});
+
+ipcMain.handle('market:getCredentials', async () => ({ ok: true, ...(await readMarketCredentials()) }));
+ipcMain.handle('market:saveCredentials', async (_event, payload) => writeMarketCredentials(payload));
+ipcMain.handle('market:clearCredentials', async () => clearMarketCredentials());
+
 ipcMain.handle('data:load', async () => {
   const stored = await readLocalState();
   return stored ? { ok: true, ...stored } : { ok: false };
@@ -267,6 +370,7 @@ ipcMain.handle('dialog:saveExport', async (_event, payload) => {
 
 const appConfigPath = path.join(runtimeDataPath, 'app-config.json');
 const webDavCredentialsPath = path.join(runtimeDataPath, 'webdav-credentials.json');
+const marketCredentialsPath = path.join(runtimeDataPath, 'market-credentials.json');
 const defaultWebDavUrl = 'https://dav.jianguoyun.com/dav/';
 const defaultWebDavFolder = 'knowledge-review-electron';
 
@@ -287,6 +391,47 @@ async function writeAppConfig(config) {
     await fs.rm(appConfigPath, { force: true });
     await fs.rename(tempPath, appConfigPath);
   }
+}
+
+async function readMarketCredentials() {
+  try {
+    const saved = JSON.parse(await fs.readFile(marketCredentialsPath, 'utf8'));
+    if (!saved?.remember || !safeStorage.isEncryptionAvailable()) return { remember: false, accessKey: '', username: '', password: '' };
+    return {
+      remember: true,
+      accessKey: saved.accessKey ? safeStorage.decryptString(Buffer.from(saved.accessKey, 'base64')) : '',
+      username: String(saved.username || ''),
+      password: saved.password ? safeStorage.decryptString(Buffer.from(saved.password, 'base64')) : ''
+    };
+  } catch {
+    return { remember: false, accessKey: '', username: '', password: '' };
+  }
+}
+
+async function writeMarketCredentials(payload) {
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: '系统加密存储暂不可用，无法安全记住密码。' };
+  const accessKey = String(payload?.accessKey || '');
+  const username = String(payload?.username || '');
+  const password = String(payload?.password || '');
+  if (!accessKey || !username || !password) return { ok: false, error: '牌组市场登录信息不完整。' };
+  const tempPath = `${marketCredentialsPath}.tmp`;
+  const saved = {
+    remember: true,
+    accessKey: safeStorage.encryptString(accessKey).toString('base64'),
+    username,
+    password: safeStorage.encryptString(password).toString('base64')
+  };
+  await fs.writeFile(tempPath, JSON.stringify(saved, null, 2), 'utf8');
+  await fs.rename(tempPath, marketCredentialsPath).catch(async () => {
+    await fs.copyFile(tempPath, marketCredentialsPath);
+    await fs.rm(tempPath, { force: true });
+  });
+  return { ok: true, remember: true, username };
+}
+
+async function clearMarketCredentials() {
+  await fs.rm(marketCredentialsPath, { force: true });
+  return { ok: true, remember: false };
 }
 
 function normalizeWebDavUrl(value) {

@@ -1,0 +1,92 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum DeckStatus {
+  DRAFT
+  PENDING
+  PUBLISHED
+  DISABLED
+}
+
+model User {
+  id           String        @id @default(uuid()) @db.Uuid
+  username     String        @unique @db.VarChar(80)
+  passwordHash String
+  role         UserRole      @default(USER)
+  enabled      Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  lastLoginAt  DateTime?
+  decks        Deck[]
+  downloads    DeckDownload[]
+  auditLogs    AuditLog[]
+}
+
+model Deck {
+  id             String        @id @default(uuid()) @db.Uuid
+  ownerId        String        @db.Uuid
+  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  title          String        @db.VarChar(160)
+  description    String        @db.VarChar(2000)
+  category       String        @db.VarChar(80)
+  status         DeckStatus    @default(PENDING)
+  currentVersion Int           @default(0)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  versions       DeckVersion[]
+  downloads      DeckDownload[]
+
+  @@index([status, updatedAt])
+  @@index([ownerId, updatedAt])
+}
+
+model DeckVersion {
+  id           String   @id @default(uuid()) @db.Uuid
+  deckId       String   @db.Uuid
+  deck         Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  version      Int
+  packagePath  String
+  packageSize  BigInt
+  sha256       String   @db.Char(64)
+  manifest     Json
+  createdAt    DateTime @default(now())
+
+  @@unique([deckId, version])
+  @@index([deckId, version])
+}
+
+model DeckDownload {
+  id        String   @id @default(uuid()) @db.Uuid
+  deckId    String   @db.Uuid
+  deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version   Int
+  createdAt DateTime @default(now())
+
+  @@index([deckId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String   @db.VarChar(120)
+  targetId  String?  @db.VarChar(120)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
