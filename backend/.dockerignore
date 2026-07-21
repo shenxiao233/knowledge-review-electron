@@ -1,0 +1,11 @@
+node_modules
+dist
+storage
+*.log
+.env
+.npm-cache
+pg-test-data
+pg-test-data-*
+market-test-package
+downloaded-deck.zip
+market-test.zip

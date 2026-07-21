@@ -2,7 +2,7 @@ import 'dotenv/config';
 import argon2 from 'argon2';
 import { PrismaClient } from '@prisma/client';
 
-const username = process.env.ADMIN_USERNAME;
+const username = process.env.ADMIN_USERNAME?.trim().toLowerCase();
 const password = process.env.ADMIN_PASSWORD;
 if (!username || !password) throw new Error('Set ADMIN_USERNAME and ADMIN_PASSWORD before running this command.');
 if (password.length < 12) throw new Error('ADMIN_PASSWORD must be at least 12 characters.');

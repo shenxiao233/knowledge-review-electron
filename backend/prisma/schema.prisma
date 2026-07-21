@@ -19,6 +19,18 @@ enum DeckStatus {
   DISABLED
 }
 
+enum DeckVersionStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
+enum CategoryStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
 model User {
   id           String        @id @default(uuid()) @db.Uuid
   username     String        @unique @db.VarChar(80)
@@ -30,6 +42,19 @@ model User {
   decks        Deck[]
   downloads    DeckDownload[]
   auditLogs    AuditLog[]
+  categoryRequests MarketCategory[] @relation("CategoryCreator")
+}
+
+model MarketCategory {
+  id          String         @id @default(uuid()) @db.Uuid
+  name        String         @unique @db.VarChar(80)
+  status      CategoryStatus @default(PENDING)
+  createdById String?        @db.Uuid
+  createdBy   User?          @relation("CategoryCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([status, updatedAt])
 }
 
 model Deck {
@@ -41,6 +66,7 @@ model Deck {
   category       String        @db.VarChar(80)
   status         DeckStatus    @default(PENDING)
   currentVersion Int           @default(0)
+  publishedVersion Int?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   versions       DeckVersion[]
@@ -55,6 +81,7 @@ model DeckVersion {
   deckId       String   @db.Uuid
   deck         Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
   version      Int
+  status       DeckVersionStatus @default(PENDING)
   packagePath  String
   packageSize  BigInt
   sha256       String   @db.Char(64)
@@ -63,6 +90,7 @@ model DeckVersion {
 
   @@unique([deckId, version])
   @@index([deckId, version])
+  @@index([deckId, status, version])
 }
 
 model DeckDownload {

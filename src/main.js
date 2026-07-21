@@ -291,7 +291,7 @@ async function downloadMarketDeck(payload) {
 }
 
 function createDeckPackage(payload) {
-  const manifest = { format: 'knowledge-review-deck', title: String(payload.title || '未命名牌组'), description: String(payload.description || ''), category: String(payload.category || '未分类'), version: Number(payload.version || 1), cardCount: Array.isArray(payload.cards) ? payload.cards.length : 0, tags: Array.isArray(payload.tags) ? payload.tags : [] };
+  const manifest = { format: 'knowledge-review-deck', title: String(payload.title || '未命名牌组'), description: String(payload.description || ''), category: String(payload.category || '未分类'), version: Number(payload.version || 1), cardCount: Array.isArray(payload.cards) ? payload.cards.length : 0, tags: Array.isArray(payload.tags) ? payload.tags : [], changelog: String(payload.changelog || '') };
   const zip = new AdmZip();
   zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
   zip.addFile('cards.json', Buffer.from(JSON.stringify(Array.isArray(payload.cards) ? payload.cards : [], null, 2), 'utf8'));
