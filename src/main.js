@@ -11,7 +11,7 @@ const AdmZip = require('adm-zip');
 const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
-app.setName('KnowledgeReview');
+app.setName('Notion Card');
 const legacyRuntimeDataPaths = [
   path.join(__dirname, '..', 'runtime-data'),
   path.join(process.cwd(), 'runtime-data'),
@@ -163,7 +163,8 @@ const createWindow = () => {
     minHeight: 760,
     frame: false,
     resizable: true,
-    title: '知识管理与复习工具',
+    title: 'Notion Card',
+    icon: path.join(__dirname, 'assets', 'notion-card.ico'),
     backgroundColor: '#fbfaf8',
     autoHideMenuBar: true,
     webPreferences: {

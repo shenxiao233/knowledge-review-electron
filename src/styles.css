@@ -1603,6 +1603,14 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .review-study .review-main-column { width: 100%; }
 .review-study .review-main-column .review-shell { width: min(820px, 100%); }
 
+/* Keep the study viewport bounded so long cards scroll inside the card rather
+   than pushing the whole review page beyond the window. */
+.review-page.active .review-stage { display: flex; flex-direction: column; }
+.review-page.active .review-study { height: 0; flex: 1 1 auto; }
+.review-page.active .review-study .review-layout { height: 100%; flex: 1 1 auto; align-items: stretch; }
+.review-page.active .review-study .review-main-column { height: 100%; min-height: 0; align-items: center; }
+.review-page.active .review-study .review-main-column .review-shell { max-height: 100%; }
+
 /* Completion uses the remaining study viewport, so the poster stays centered at every window size. */
 .review-page .review-study .review-layout:has(.manifesto-complete-shell),
 .review-page .review-study .review-main-column:has(.manifesto-complete-shell),
@@ -1788,6 +1796,21 @@ select option { color: #34413b; background: #fff; }
 .answer-choices { display: flex; flex-wrap: wrap; gap: 8px; }
 .answer-choices label { display: inline-flex; grid-template-columns: none; align-items: center; gap: 6px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: pointer; }
 .answer-choices input { accent-color: var(--green); }
+.card-metadata-field { margin: 14px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.card-metadata-field legend { padding: 0 6px; color: #69766e; font-size: 13px; font-weight: 700; }
+.card-metadata-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.card-metadata-grid .card-source-field { grid-column: 1 / -1; }
+.card-metadata-grid input { width: 100%; }
+.card-meta-grid, .review-card-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; color: #738079; font-size: 11px; line-height: 1.45; }
+.card-meta-grid > span, .review-card-meta > span { display: inline-flex; align-items: center; max-width: 100%; padding: 3px 7px; border: 1px solid #e0e8e3; border-radius: 999px; background: #f7faf8; }
+.card-meta-rate { color: #2d7c62; font-weight: 700; }
+.card-meta-point { color: #6f5da6; }
+.card-meta-source a, .review-card-meta a { color: #287c67; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.review-card-meta { margin: -4px 0 12px; font-size: 12px; }
+.review-card-meta > span { padding: 4px 9px; }
+@media (max-width: 760px) { .card-metadata-grid { grid-template-columns: 1fr; } .card-metadata-grid .card-source-field { grid-column: auto; } }
+.card-item .katex-display, .question-title .katex-display, .option-button .katex-display, .explanation .katex-display, .note-answer-content .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.latex-error { color: #a74747; font-family: Consolas, monospace; white-space: pre-wrap; }
 .note-answer-content { margin: 12px 0; padding: 16px; border: 1px solid #d8e8df; border-radius: 10px; background: #f5fbf7; color: #486257; line-height: 1.7; }
 .note-answer-content h1, .note-answer-content h2, .note-answer-content h3, .note-answer-content h4, .note-answer-content h5, .note-answer-content h6 { margin: 0 0 10px; color: #314139; line-height: 1.35; }
 .note-answer-content h1 { font-size: 22px; }
@@ -2421,6 +2444,63 @@ select option { color: #34413b; background: #fff; }
   .note-rating-main { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .note-rating { min-height: 62px; }
 }
+
+/* Choice review surface: a focused question, a clear result stamp, and an
+   explicit decision about whether the card stays in the learning loop. */
+.review-page .review-shell { width: min(860px, 100%); padding: 24px clamp(20px, 4vw, 42px) 30px; border-color: #dce8e1; border-radius: 20px; background: #fff; box-shadow: 0 18px 46px rgba(37, 70, 57, .08); }
+.review-page .standalone-question { min-height: 0; }
+.review-page .standalone-question > .tag-row { margin-bottom: 8px; }
+.review-page .standalone-question > .question-title { min-height: 0; margin: 0; padding: 12px 0 16px; color: #273d34; font-size: clamp(20px, 2.5vw, 30px); font-weight: 800; line-height: 1.45; }
+.review-page .standalone-question > .question-title.choice-question { font-size: 14px; font-weight: 700; line-height: 1.6; }
+.review-page .review-card-meta { margin: 0 0 18px; }
+.review-page .options-block { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 4px; }
+.review-page .option-button { min-height: 74px; margin: 0; padding: 13px 16px; border: 1px solid #dce7e1; border-radius: 13px; background: #fbfdfb; color: #52645b; font-size: 14px; line-height: 1.55; transition: border-color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease; }
+.review-page .option-button .key { width: 29px; height: 29px; border-color: #cddbd3; border-radius: 9px; background: #fff; color: #678075; font-size: 12px; font-weight: 800; }
+.review-page .option-button:hover:not(:disabled) { transform: translateY(-2px); border-color: #82bda3; background: #f2faf5; box-shadow: 0 8px 18px rgba(47, 125, 100, .09); }
+.review-page .option-button.selected { border-color: #55a985; background: #eaf8f0; color: #267657; box-shadow: inset 0 0 0 1px rgba(47,125,100,.12); }
+.review-page .option-button.correct { border-color: #4ba77d; background: #e9f8ef; color: #20704d; }
+.review-page .option-button.wrong { border-color: #d36e6e; background: #fff0f0; color: #a34242; }
+.answer-result-row { display: flex; justify-content: center; min-height: 92px; padding: 14px 0 4px; }
+.answer-stamp { position: relative; width: 82px; height: 82px; display: grid; place-items: center; border: 3px solid currentColor; border-radius: 50%; opacity: .82; transform: rotate(-10deg) scale(.7); animation: answer-stamp-in .34s cubic-bezier(.2,.9,.25,1.3) forwards; filter: saturate(1.1); }
+.answer-stamp::before, .answer-stamp::after { content: ''; position: absolute; inset: 6px; border: 1px solid currentColor; border-radius: 50%; }
+.answer-stamp::after { inset: 11px; border-style: dashed; opacity: .7; }
+.answer-stamp span { position: relative; z-index: 1; font-size: 17px; font-weight: 900; letter-spacing: .12em; }
+.answer-stamp.is-correct { color: #21845b; background: rgba(229, 248, 237, .72); }
+.answer-stamp.is-wrong { color: #b34b4b; background: rgba(255, 232, 232, .76); transform: rotate(8deg) scale(.7); animation-name: answer-stamp-wrong-in; }
+@keyframes answer-stamp-in { to { opacity: .82; transform: rotate(-10deg) scale(1); } }
+@keyframes answer-stamp-wrong-in { to { opacity: .82; transform: rotate(8deg) scale(1); } }
+.review-disposition-panel { margin-top: 20px; padding-top: 17px; border-top: 1px solid #e6eee9; }
+.review-disposition-panel > p { margin: 0 0 10px; color: #7a8b81; font-size: 12px; font-weight: 700; }
+.review-disposition-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.review-disposition { min-height: 57px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 3px; padding: 0 14px; border: 1px solid #d9e4dd; border-radius: 11px; background: #fff; color: #596b61; text-align: left; transition: transform .16s ease, border-color .16s ease, background .16s ease, box-shadow .16s ease; }
+.review-disposition:hover { transform: translateY(-2px); box-shadow: 0 7px 16px rgba(37,55,46,.08); }
+.review-disposition strong { font-size: 13px; }
+.review-disposition span { color: #8b9991; font-size: 11px; }
+.review-disposition.remove-missed { border-color: #e2bcbc; background: #fffafa; color: #a64f4f; }
+.review-disposition.remove-missed:hover { background: #fff1f1; border-color: #cf8787; }
+.review-disposition.continue-review { border-color: #b5d8c5; background: #f4fbf6; color: #2e7d61; }
+.review-disposition.continue-review:hover { background: #e8f7ee; border-color: #83bc9e; }
+.review-page .fsrs-grade-panel { margin-top: 18px; padding-top: 17px; }
+.review-page .review-space-actions { margin-top: 18px; }
+.card-review-count { margin-left: auto; color: #687e73; font-size: 11px; font-weight: 800; white-space: nowrap; }
+@media (max-width: 620px) { .review-page .review-shell { padding: 18px 15px 22px; border-radius: 15px; } .review-page .options-block, .review-disposition-actions { grid-template-columns: 1fr; } .review-page .option-button { min-height: 60px; } }
+
+/* Choice cards keep their own scroll area when a question or explanation is long. */
+.review-page .review-shell { display: flex; flex-direction: column; min-height: 0; max-height: 100%; }
+.review-page .review-shell .review-strip { flex: 0 0 auto; }
+.review-page .review-shell .standalone-question { flex: 1 1 auto; min-height: 0; max-height: none; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #afd0bd transparent; padding-right: 10px; }
+.review-page .standalone-question::-webkit-scrollbar { width: 7px; }
+.review-page .standalone-question::-webkit-scrollbar-track { background: transparent; }
+.review-page .standalone-question::-webkit-scrollbar-thumb { border-radius: 99px; background: #afd0bd; }
+.review-page .question-title img, .review-page .option-button img, .review-page .explanation img, .editor img, .card-note-preview img { cursor: zoom-in; }
+
+/* Images open in a native dialog so the close button and Escape key behave consistently. */
+.image-lightbox { width: min(94vw, 1180px); max-width: 94vw; max-height: 94vh; padding: 0; border: 0; border-radius: 14px; background: rgba(18, 24, 21, .96); box-shadow: 0 28px 90px rgba(0,0,0,.42); }
+.image-lightbox::backdrop { background: rgba(14, 20, 17, .72); backdrop-filter: blur(3px); }
+.image-lightbox form { position: absolute; top: 12px; right: 12px; z-index: 2; }
+.image-lightbox-close { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.24); border-radius: 50%; background: rgba(0,0,0,.42); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; }
+.image-lightbox-close:hover { background: rgba(255,255,255,.18); }
+.image-lightbox > img { display: block; width: auto; max-width: 94vw; height: auto; max-height: 94vh; margin: auto; object-fit: contain; }
 
 /* Editor and recovery previews */
 .editor a { color: #287c67; text-decoration: underline; text-decoration-color: #a8d0bf; text-underline-offset: 3px; }

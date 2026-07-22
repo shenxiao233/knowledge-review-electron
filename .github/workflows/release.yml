@@ -45,7 +45,7 @@ jobs:
         shell: pwsh
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
-          $installer = "dist/KnowledgeReview-$version-Setup.exe"
+          $installer = "dist/NotionCard-$version-Setup.exe"
           Get-ChildItem dist -File | Format-Table Name,Length
           if (-not (Test-Path $installer)) {
             throw 'Windows installer was not generated.'
@@ -55,7 +55,7 @@ jobs:
           $sha512 = [Convert]::ToBase64String($hash)
           $size = (Get-Item $installer).Length
           $releaseDate = (Get-Date).ToUniversalTime().ToString('o')
-          @("version: $version", 'files:', "  - url: KnowledgeReview-$version-Setup.exe", "    sha512: $sha512", "    size: $size", "path: KnowledgeReview-$version-Setup.exe", "sha512: $sha512", "releaseDate: $releaseDate") | Set-Content -Path 'dist/latest.yml' -Encoding utf8
+          @("version: $version", 'files:', "  - url: NotionCard-$version-Setup.exe", "    sha512: $sha512", "    size: $size", "path: NotionCard-$version-Setup.exe", "sha512: $sha512", "releaseDate: $releaseDate") | Set-Content -Path 'dist/latest.yml' -Encoding utf8
           if (-not (Test-Path 'dist/latest.yml')) { throw 'latest.yml was not generated.' }
 
       - name: Create draft GitHub Release
@@ -75,8 +75,8 @@ jobs:
         run: |
           $version = (Get-Content package.json | ConvertFrom-Json).version
           gh release upload "${{ github.ref_name }}" `
-            "dist/KnowledgeReview-$version-Setup.exe" `
-            "dist/KnowledgeReview-$version-Setup.exe.blockmap" `
+            "dist/NotionCard-$version-Setup.exe" `
+            "dist/NotionCard-$version-Setup.exe.blockmap" `
             'dist/latest.yml' `
             --clobber
         env:
@@ -88,8 +88,8 @@ jobs:
           $version = (Get-Content package.json | ConvertFrom-Json).version
           $release = gh release view "${{ github.ref_name }}" --json isDraft,assets | ConvertFrom-Json
           $expected = @(
-            "KnowledgeReview-$version-Setup.exe",
-            "KnowledgeReview-$version-Setup.exe.blockmap",
+            "NotionCard-$version-Setup.exe",
+            "NotionCard-$version-Setup.exe.blockmap",
             'latest.yml'
           )
           $actual = @($release.assets | ForEach-Object name)

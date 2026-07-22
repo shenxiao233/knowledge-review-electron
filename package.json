@@ -1,7 +1,7 @@
 {
     "name": "knowledge-review-electron",
-    "version": "0.1.7",
-    "description": "Knowledge management and spaced-review desktop app built with Electron.",
+    "version": "0.1.8",
+    "description": "Notion Card knowledge management and spaced-review desktop app built with Electron.",
     "author": "shenxiao233",
     "main": "src/main.js",
     "scripts": {
@@ -27,11 +27,12 @@
     "dependencies": {
         "adm-zip": "^0.5.16",
         "electron-updater": "^6.8.9",
+        "katex": "^0.16.22",
         "ts-fsrs": "^5.4.1"
     },
     "build": {
         "appId": "com.shenxiao233.knowledgereview",
-        "productName": "知识管理与复习工具",
+        "productName": "Notion Card",
         "asar": true,
         "directories": {
             "output": "dist"
@@ -41,6 +42,7 @@
             "package.json"
         ],
         "win": {
+            "icon": "src/assets/notion-card.ico",
             "target": [
                 {
                     "target": "nsis",
@@ -49,7 +51,7 @@
                     ]
                 }
             ],
-            "artifactName": "KnowledgeReview-${version}-${arch}.${ext}"
+            "artifactName": "NotionCard-${version}-${arch}.${ext}"
         },
         "nsis": {
             "oneClick": false,
@@ -59,7 +61,7 @@
             "selectPerMachineByDefault": true,
             "packElevateHelper": true,
             "deleteAppDataOnUninstall": false,
-            "artifactName": "KnowledgeReview-${version}-Setup.${ext}"
+            "artifactName": "NotionCard-${version}-Setup.${ext}"
         },
         "publish": {
             "provider": "github",
