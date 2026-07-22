@@ -273,3 +273,17 @@
 pm run check to cover renderer.js, fsrs-adapter.js, and market-login-characters.js
 
 **Data recovery**: No data was actually lost - it was a loading issue. IndexedDB, persistent storage, and localStorage all retain copies. After this fix, init() properly loads state from all sources with priority selection.
+
+
+### Bug Fix v2: init() Robust Overhaul (d55dfa3)
+
+**Problem**: Even after restoring the init() call in renderer.js, the app may still fail if any step inside init() throws an unhandled error. The original init() had zero try/catch protection.
+
+**Fix**: Complete rewrite of init() with:
+- 4-phase architecture: data loading -> data selection -> data application -> UI init
+- Every step wrapped in independent try/catch
+- Console.log diagnostics at each phase ([INIT] prefix)
+- safeCall() wrapper for all UI panel setup functions
+- bootstrap() wrapper in renderer.js with emergency render fallback
+
+**Verification**: Electron state.json confirmed 1221 cards (3.2MB) intact. Data was never lost - only a loading/rendering issue.
