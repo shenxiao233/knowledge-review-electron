@@ -113,6 +113,107 @@ function ensureToolbarPalettes() {
   });
 }
 function closeToolbarPalettes(keep = null) { document.querySelectorAll('.toolbar-palette-wrap.open').forEach((wrap) => { if (keep && wrap === keep) return; wrap.classList.remove('open'); const palette = wrap.querySelector('.toolbar-palette'); if (palette) palette.hidden = true; }); }
+
+// Global search (Phase 1-7)
+let globalSearchResults = [];
+let globalSearchSelectedIdx = 0;
+function openGlobalSearch() {
+  const modal = $('#globalSearchModal');
+  if (!modal) return;
+  modal.showModal();
+  const input = $('#globalSearchInput');
+  if (input) { input.value = ''; input.focus(); }
+  renderGlobalSearchResults('');
+}
+function closeGlobalSearch() {
+  const modal = $('#globalSearchModal');
+  if (modal) modal.close();
+}
+function performGlobalSearch(query) {
+  if (!query || query.length < 1) return [];
+  const q = query.toLowerCase();
+  const results = [];
+  // Search documents
+  (state.documents || []).forEach((doc) => {
+    const titleMatch = (doc.title || '').toLowerCase().includes(q);
+    const contentMatch = (doc.content || '').toLowerCase().includes(q);
+    if (titleMatch || contentMatch) {
+      results.push({ type: 'document', id: doc.id, title: doc.title, subtitle: doc.folder || '', score: titleMatch ? 2 : 1 });
+    }
+  });
+  // Search cards
+  (state.cards || []).forEach((card) => {
+    const qMatch = (card.question || '').toLowerCase().includes(q);
+    const tagMatch = (card.tags || []).some(t => t.toLowerCase().includes(q));
+    const folderMatch = (card.folder || '').toLowerCase().includes(q);
+    if (qMatch || tagMatch || folderMatch) {
+      const preview = card.type === 'note' ? (card.noteContent || '').substring(0, 80) : (card.options || []).join(', ').substring(0, 80);
+      results.push({ type: 'card', id: card.id, title: (card.question || '').replace(/<[^>]*>/g, '').substring(0, 60), subtitle: card.folder + (tagMatch ? ' · ' + card.tags.join(', ') : ''), preview, score: qMatch ? 3 : tagMatch ? 2 : 1 });
+    }
+  });
+  // Search market decks (only if unlocked)
+  if (marketUnlocked) {
+    (marketDecks || []).forEach((deck) => {
+      const titleMatch = (deck.title || '').toLowerCase().includes(q);
+      const authorMatch = (deck.author || '').toLowerCase().includes(q);
+      const descMatch = (deck.description || '').toLowerCase().includes(q);
+      if (titleMatch || authorMatch || descMatch) {
+        results.push({ type: 'market', id: deck.id, title: deck.title, subtitle: deck.author + ' · ' + deck.category, score: titleMatch ? 3 : 2 });
+      }
+    });
+  }
+  return results.sort((a, b) => b.score - a.score).slice(0, 50);
+}
+function renderGlobalSearchResults(query) {
+  const container = $('#globalSearchResults');
+  if (!container) return;
+  globalSearchResults = query ? performGlobalSearch(query) : [];
+  globalSearchSelectedIdx = 0;
+  if (!query) {
+    container.innerHTML = '<div class="global-search-empty"><strong>开始输入以搜索</strong><span>搜索卡片、文章和牌组市场</span></div>';
+    return;
+  }
+  if (!globalSearchResults.length) {
+    container.innerHTML = '<div class="global-search-empty"><strong>没有找到结果</strong><span>尝试更换关键词</span></div>';
+    return;
+  }
+  const grouped = { document: [], card: [], market: [] };
+  globalSearchResults.forEach((r) => { if (grouped[r.type]) grouped[r.type].push(r); });
+  const typeLabels = { document: '文章', card: '卡片', market: '牌组市场' };
+  let html = '';
+  for (const [type, items] of Object.entries(grouped)) {
+    if (!items.length) continue;
+    html += '<div class="global-search-group"><div class="global-search-group-label">' + typeLabels[type] + ' (' + items.length + ')</div>';
+    items.forEach((item) => {
+      const idx = globalSearchResults.indexOf(item);
+      html += '<button class="global-search-item' + (idx === globalSearchSelectedIdx ? ' is-selected' : '') + '" data-search-idx="' + idx + '"><div class="global-search-item-main"><strong>' + esc(item.title) + '</strong><small>' + esc(item.subtitle) + '</small></div>' + (item.preview ? '<p class="global-search-preview">' + esc(item.preview) + '</p>' : '') + '</button>';
+    });
+    html += '</div>';
+  }
+  container.innerHTML = html;
+  container.querySelectorAll('.global-search-item').forEach((el) => {
+    el.addEventListener('click', () => activateGlobalSearchResult(globalSearchResults[Number(el.dataset.searchIdx)]));
+  });
+}
+function activateGlobalSearchResult(result) {
+  if (!result) return;
+  closeGlobalSearch();
+  if (result.type === 'document') {
+    view('library');
+    state.activeDocId = result.id;
+    loadDoc();
+    refresh();
+  } else if (result.type === 'card') {
+    view('library');
+    state.selectedCardId = result.id;
+    refresh();
+    setTimeout(() => { const el = document.querySelector('[data-card="' + result.id + '"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 100);
+  } else if (result.type === 'market') {
+    view('market');
+    showMarketWorkspace();
+  }
+}
+
 function bind() {
   $('#windowMinimizeButton')?.addEventListener('click', () => window.reviewBridge.windowControls.minimize());
   $('#windowMaximizeButton')?.addEventListener('click', async () => { const maximized = await window.reviewBridge.windowControls.toggleMaximize(); $('#windowMaximizeButton').title = maximized ? '还原窗口' : '最大化'; });
@@ -235,6 +336,12 @@ function bind() {
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => setting(button.dataset.setting)));
   [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
+  $('#globalSearchInput')?.addEventListener('input', (e) => renderGlobalSearchResults(e.target.value));
+  $('#globalSearchModal')?.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); globalSearchSelectedIdx = Math.min(globalSearchSelectedIdx + 1, globalSearchResults.length - 1); renderGlobalSearchResults($('#globalSearchInput')?.value || ''); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); globalSearchSelectedIdx = Math.max(globalSearchSelectedIdx - 1, 0); renderGlobalSearchResults($('#globalSearchInput')?.value || ''); }
+    else if (e.key === 'Enter') { e.preventDefault(); activateGlobalSearchResult(globalSearchResults[globalSearchSelectedIdx]); }
+  });
 }
 
 // Replace the native confirmation with the themed dialog when the card-library code calls it.

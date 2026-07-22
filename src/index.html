@@ -201,5 +201,20 @@
     <script src="./modules/kr-ui.js"></script>
     <script src="./renderer.js"></script>
     <script src="./market-login-characters.js"></script>
+  
+    <dialog id="globalSearchModal" class="global-search-modal">
+      <div class="global-search-header">
+        <svg class="global-search-icon" viewBox="0 0 24 24"><use href="#i-search"></use></svg>
+        <input id="globalSearchInput" type="search" placeholder="搜索卡片、文章、牌组…" autocomplete="off" />
+        <kbd>Esc</kbd>
+      </div>
+      <div id="globalSearchResults" class="global-search-results"></div>
+      <div class="global-search-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> 导航</span>
+        <span><kbd>Enter</kbd> 打开</span>
+        <span><kbd>Esc</kbd> 关闭</span>
+      </div>
+    </dialog>
+
   </body>
 </html>
