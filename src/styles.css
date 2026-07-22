@@ -2956,3 +2956,14 @@ select option { color: #34413b; background: #fff; }
 .market-fav-button svg { width: 16px; height: 16px; fill: none; stroke: #888; stroke-width: 1.5; transition: fill .2s ease, stroke .2s ease; }
 .market-fav-button.is-fav svg { fill: #e07a5f; stroke: #e07a5f; }
 .market-deck-heading { position: relative; }
+
+/* Tag color system (Phase 1-6) */
+.tag.tag-colored { background: color-mix(in srgb, var(--tag-color) 18%, #fff); color: var(--tag-color); border: 1px solid color-mix(in srgb, var(--tag-color) 30%, transparent); font-weight: 500; }
+.tag-manager-section { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e0d9; }
+.tag-manager-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.tag-color-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border: 1px solid #e5e0d9; border-radius: 8px; background: #fff; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; font-size: 13px; }
+.tag-color-chip:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.06); }
+.tag-chip-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--chip-color); flex-shrink: 0; }
+.tag-chip-name { font-weight: 500; color: #444; }
+.tag-chip-hex { font-size: 11px; color: #aaa; font-family: Consolas, monospace; }
+.tag-manager-empty { color: #aaa; font-size: 13px; font-style: italic; }

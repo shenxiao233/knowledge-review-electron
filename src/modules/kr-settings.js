@@ -75,6 +75,42 @@ function ensureAccountSecurityPanel() {
   }
 }
 
+function ensureTagManagerPanel() {
+  const panel = $('#appearancePanel');
+  if (!panel || panel.dataset.tagManagerAdded === 'true') return;
+  panel.dataset.tagManagerAdded = 'true';
+  const section = document.createElement('div');
+  section.className = 'tag-manager-section';
+  section.innerHTML = '<h2>标签颜色管理</h2><p class="setting-description">为卡片标签设置颜色，方便视觉区分。点击标签可更换颜色。</p><div id="tagManagerList" class="tag-manager-list"></div>';
+  panel.appendChild(section);
+  refreshTagManager();
+}
+function refreshTagManager() {
+  const list = $('#tagManagerList');
+  if (!list) return;
+  const allTags = [...new Set(state.cards.flatMap((card) => card.tags))];
+  const colors = state.settings.tagColors || {};
+  list.innerHTML = allTags.length ? allTags.map((tag) => {
+    const color = colors[tag] || getTagColor(tag);
+    return '<button class="tag-color-chip" data-tag-name="' + esc(tag) + '" style="--chip-color:' + color + '"><span class="tag-chip-dot"></span><span class="tag-chip-name">' + esc(tag) + '</span><span class="tag-chip-hex">' + color + '</span></button>';
+  }).join('') : '<p class="tag-manager-empty">暂无标签，请先创建卡片并添加标签。</p>';
+  list.querySelectorAll('.tag-color-chip').forEach((chip) => {
+    chip.addEventListener('click', () => {
+      const tagName = chip.dataset.tagName;
+      const currentColors = state.settings.tagColors || {};
+      const currentColor = currentColors[tagName] || getTagColor(tagName);
+      const palette = ['#81b29a', '#f2cc8f', '#e07a5f', '#3d405b', '#6c9bcf', '#d4a373', '#a98467', '#8ecae6', '#e5989b', '#b5838d', '#cdb4db', '#ffc8dd', '#bde0fe', '#a2d2ff', '#ffafcc'];
+      const currentIdx = palette.indexOf(currentColor);
+      const nextColor = palette[(currentIdx + 1) % palette.length];
+      if (!state.settings.tagColors) state.settings.tagColors = {};
+      state.settings.tagColors[tagName] = nextColor;
+      save();
+      refreshTagManager();
+      refresh();
+    });
+  });
+}
+
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
   if (!panel) return;
@@ -116,7 +152,7 @@ async function init() {
   idbReady = true;
   marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl);
   document.querySelector('.profile-hero > #editProfileButton')?.remove();
-  cache(); ensureAccountSecurityPanel(); cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); ensureServerSettingsPanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); ensureCardEditorFields(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); await loadSavedMarketCredentials(); cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc'; loadDoc(); syncSettings(); refresh(); view('library');
+  cache(); ensureAccountSecurityPanel(); cache(); ensureTagManagerPanel(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); ensureServerSettingsPanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); ensureCardEditorFields(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); await loadSavedMarketCredentials(); cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc'; loadDoc(); syncSettings(); refresh(); view('library');
 }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
