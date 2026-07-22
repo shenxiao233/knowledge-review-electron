@@ -1,4 +1,4 @@
-﻿/**
+/**
  * idb-store.js — Lightweight IndexedDB adapter for application state persistence.
  * Replaces localStorage as the primary storage backend (larger capacity, async).
  * Dependencies: None (browser IndexedDB API)
@@ -11,14 +11,27 @@ const IDB_VERSION = 1;
 function idbOpen() {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(IDB_DB_NAME, IDB_VERSION);
+    const timeout = setTimeout(() => {
+      reject(new Error('IndexedDB open timed out'));
+    }, 2000);
     request.onupgradeneeded = () => {
       const db = request.result;
       if (!db.objectStoreNames.contains(IDB_STORE_NAME)) {
         db.createObjectStore(IDB_STORE_NAME);
       }
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onblocked = () => {
+      clearTimeout(timeout);
+      reject(new Error('IndexedDB blocked'));
+    };
+    request.onsuccess = () => {
+      clearTimeout(timeout);
+      resolve(request.result);
+    };
+    request.onerror = () => {
+      clearTimeout(timeout);
+      reject(request.error);
+    };
   });
 }
 

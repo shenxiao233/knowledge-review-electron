@@ -3,6 +3,12 @@
  * Dependencies: kr-core.js, kr-state.js
  * Note: Contains updated versions that override earlier compressed defs.
  */
+function renderTagSpan(text) {
+  var tagColors = state.settings.tagColors || {};
+  var plain = text.replace(/<[^>]*>/g, '');
+  var color = tagColors[plain] || getTagColor(plain);
+  return '<span class="tag-chip" style="--tag-color:' + color + '">' + text + '</span>';
+}
 function quickCard() { const text = state.extractedText.trim(); if (!text) return toast('请先在编辑器中选中文本。'); openCard(); $('#questionInput').value = `解释：${text.slice(0, 40)}`; $('#explanationInput').value = text; }
 function openCard(cardId = null) { ensureBatchModeButton(); const card = cardId ? state.cards.find((item) => item.id === cardId) : null; els.cardForm.reset(); els.cardModal.dataset.editingId = card?.id || ''; els.cardForm.dataset.autoTag = card ? 'false' : 'true'; if (card) batchCardMode = false; const modeButton = $('#batchModeButton'); modeButton.classList.toggle('active', batchCardMode); modeButton.textContent = batchCardMode ? '批量制卡中' : '批量制卡'; modeButton.disabled = Boolean(card); els.cardModal.classList.toggle('batch-mode', batchCardMode); $('#cardModalTitle').textContent = card ? '编辑复习卡片' : '新建复习卡片'; fill(els.cardGroupSelect, [...new Set([...(state.groups || []), ...state.cards.map((item) => item.folder)])]); els.cardGroupSelect.value = card?.folder || state.groups?.[0] || '学习科学'; syncCustomSelect(els.cardGroupSelect); $('#cardTypeSelect').value = card?.type || 'single'; syncCustomSelect(els.cardTypeSelect); $('#questionInput').value = card?.question || state.extractedText || ''; $('#optionA').value = card?.options.A || ''; $('#optionB').value = card?.options.B || ''; $('#optionC').value = card?.options.C || ''; $('#optionD').value = card?.options.D || ''; $('#noteContentInput').value = card?.noteContent || ''; $('#explanationInput').value = card?.explanation || ''; $('#tagInput').value = (card?.tags || [els.cardGroupSelect.value || '未分组']).join(', '); renderCardTypeFields(); renderAnswerChoices(card?.answer || []); els.cardModal.showModal(); }
 function renderCardTypeFields() { const note = els.cardTypeSelect.value === 'note'; $('#cardOptionsGrid').classList.toggle('hidden', note); $('#cardAnswersField').classList.toggle('hidden', note); $('#noteContentField').classList.toggle('hidden', !note); $('#explanationField').classList.toggle('hidden', note); if (!note) renderAnswerChoices(); }

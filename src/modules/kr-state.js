@@ -44,6 +44,17 @@ function saveLegacyLocalStorage() {
 function load() {
   return hydrate(localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1'));
 }
+
+// Initialize state after load() is defined
+state = load();
+syncReviewLog();
+ensureCardOrder(state.cards);
+
+// State-dependent variable initialization (must run after state = load())
+cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection)
+  ? state.settings.cardSortDirection
+  : 'asc';
+marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl);
 let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
 let webdavPushPromise = Promise.resolve();
 let updateState = { status: 'idle', version: '', percent: 0, message: '' };

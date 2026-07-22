@@ -926,4 +926,11 @@ function ensureServerSettingsPanel() {
     }
   });
 }
-
+
+function toggleMarketAuthMode() {
+  var form = document.getElementById("marketAuthForm");
+  var btn = document.getElementById("marketRegisterToggle");
+  if (!form || !btn) return;
+  var isRegister = form.classList.toggle("is-register-mode");
+  btn.textContent = isRegister ? "Already have an account? Login" : "No account? Register";
+}

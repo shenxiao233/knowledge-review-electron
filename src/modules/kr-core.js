@@ -105,9 +105,14 @@ const base = {
   profile: { name: 'Knowledge Learner', bio: '正在整理和分享值得反复学习的知识。', avatar: '', myDecks: [], publishedGroups: {} }
 };
 
-let state = load();
-syncReviewLog();
-ensureCardOrder(state.cards);
+
+const TAG_PALETTE = ["#81b29a","#f2cc8f","#e07a5f","#3d405b","#6c9bcf","#d4a373","#a98467","#ddb892","#b5838d","#e5989b"];
+function getTagColor(tag) {
+  var hash = 0;
+  for (var i = 0; i < tag.length; i++) hash = ((hash << 5) - hash + tag.charCodeAt(i)) | 0;
+  return TAG_PALETTE[Math.abs(hash) % TAG_PALETTE.length];
+}
+let state;
 let els = {};
 let queue = [];
 let queueKey = '';
@@ -134,9 +139,9 @@ let reviewStudyActive = false;
 let tooltipTimer = null;
 let cardPage = 1;
 let cardPageSize = 50;
-let cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection)
-  ? state.settings.cardSortDirection
-  : 'asc';
+let cardSortDirection = 'asc';
+
+
 let cardBatchTotal = 1;
 let cardWheelDrag = null;
 let cardLoadedThrough = 1;
@@ -150,7 +155,7 @@ const marketUpdateCache = new Map();
 let marketUnlocked = false;
 let marketSurface = 'decks';
 let marketToken = '';
-let marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl);
+let marketApiBase = '';
 let marketUser = null;
 let marketBusy = false;
 let marketRememberCredentials = false;

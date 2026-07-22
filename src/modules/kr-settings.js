@@ -117,13 +117,11 @@ function ensureFSRSSettingsPanel() {
   panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div><div class="review-priority-settings"><div class="comic-radio-group" role="radiogroup" aria-label="复习优先模式"><input type="radio" id="priority-new" name="reviewPriority" value="new" /><label for="priority-new">新词</label><input type="radio" id="priority-review" name="reviewPriority" value="review" /><label for="priority-review">复习</label><input type="radio" id="priority-mixed" name="reviewPriority" value="mixed" checked /><label for="priority-mixed">混合</label><div class="comic-glider" aria-hidden="true"></div></div><p class="review-priority-description" id="reviewPriorityDescription"></p></div>';
 }
 async function init() {
-  console.log('[INIT] Starting data loading...');
 
   // === Phase 1: Load data from all sources ===
   let idbRecord = null;
   try {
     idbRecord = await idbLoadState();
-    console.log('[INIT] IDB record:', idbRecord ? 'found (' + (idbRecord.data || '').length + ' chars)' : 'empty');
   } catch (e) {
     console.warn('[INIT] IDB load failed:', e.message);
   }
@@ -131,13 +129,11 @@ async function init() {
   let persistent = null;
   try {
     persistent = await window.reviewBridge?.data?.load();
-    console.log('[INIT] Persistent:', persistent?.ok ? 'found, cards=' + (persistent.data?.cards?.length || 0) : 'empty/failed');
   } catch (e) {
     console.warn('[INIT] Persistent load failed:', e.message);
   }
 
   const browserState = localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1');
-  console.log('[INIT] localStorage:', browserState ? browserState.length + ' chars' : 'empty');
 
   // === Phase 2: Build candidates and select best ===
   const browserCandidate = (() => {
@@ -162,49 +158,46 @@ async function init() {
   const hasData = (c) => Boolean(c && (cardCount(c) || c.data?.documents?.length || c.data?.groups?.length));
 
   const candidates = [idbCandidate, persistentCandidate, browserCandidate].filter(hasData);
-  console.log('[INIT] Candidates:', candidates.map(c => c.source + '(' + cardCount(c) + ' cards)'));
 
   const selected = candidates.length > 1
     ? candidates.reduce((best, c) => cardCount(c) > cardCount(best) || (cardCount(c) === cardCount(best) && c.savedAt > best.savedAt) ? c : best)
     : candidates[0] || null;
 
-  console.log('[INIT] Selected:', selected ? selected.source + ' (' + cardCount(selected) + ' cards)' : 'NONE');
 
   // === Phase 3: Apply selected data to state ===
   if (selected) {
     try {
       state = hydrate(JSON.stringify(selected.data));
-      console.log('[INIT] State hydrated:', state.cards.length + ' cards, ' + state.documents.length + ' docs');
     } catch (e) {
       console.error('[INIT] Hydrate failed:', e.message);
       state = hydrate('');
     }
     try {
-      localStorage.setItem(KEY, JSON.stringify(state));
+      var _serialized = JSON.stringify(state);
+      if (_serialized.length > 4000000) { console.warn("[INIT] State too large for localStorage (" + _serialized.length + " chars), skipping"); }
+      else { localStorage.setItem(KEY, _serialized); }
       localStorage.setItem(STATE_META_KEY, selected.savedAt || new Date().toISOString());
     } catch (e) {
       console.warn('[INIT] localStorage write failed (may be full):', e.message);
     }
-    try { schedulePersistentSave(true); } catch (e) { console.warn('[INIT] schedulePersistentSave failed:', e.message); }
-    try { await idbSaveState(); } catch (e) { console.warn('[INIT] IDB save failed:', e.message); }
+    try { schedulePersistentSave(true); } catch (e) {}
+    try { idbSaveState().catch(function(){}); } catch (e) {}
     idbReady = true;
   } else {
-    console.log('[INIT] No data found in any source, using defaults');
     state = hydrate('');
-    try { save(); } catch (e) { console.warn('[INIT] Default save failed:', e.message); }
+    try { save(); } catch (e) {}
   }
 
-  try { await migrateLocalStorageToIDB(); } catch (e) { console.warn('[INIT] Migration failed:', e.message); }
+  try { migrateLocalStorageToIDB().catch(function(){}); } catch (e) {}
   idbReady = true;
 
-  console.log('[INIT] Data loading complete. Cards:', state.cards.length, 'Docs:', state.documents.length, 'Groups:', state.groups.length);
 
   // === Phase 4: UI initialization (each step wrapped in try/catch) ===
   const safeCall = (name, fn) => {
     try { fn(); } catch (e) { console.error('[INIT] ' + name + ' failed:', e.message); }
   };
 
-  try { marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl); } catch (e) { console.warn('[INIT] marketApiBase:', e.message); }
+  try { marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl); } catch (e) {}
 
   safeCall('removeEditButton', () => document.querySelector('.profile-hero > #editProfileButton')?.remove());
   safeCall('cache1', () => cache());
@@ -226,8 +219,8 @@ async function init() {
   safeCall('enableTooltips', enableTooltips);
   safeCall('bindUpdateEvents', bindUpdateEvents);
 
-  try { await loadWebDavConfig(); } catch (e) { console.warn('[INIT] loadWebDavConfig:', e.message); }
-  try { await loadSavedMarketCredentials(); } catch (e) { console.warn('[INIT] loadSavedMarketCredentials:', e.message); }
+  try { await loadWebDavConfig(); } catch (e) {}
+  try { await loadSavedMarketCredentials(); } catch (e) {}
 
   cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc';
 
@@ -236,7 +229,6 @@ async function init() {
   safeCall('refresh', refresh);
   safeCall('view', () => view('library'));
 
-  console.log('[INIT] Initialization complete!');
 }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
@@ -253,7 +245,7 @@ function ensureStampSetting() {
 }function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
  function view(name) { const canOpenAdmin = marketUnlocked && marketUser?.role === 'ADMIN'; const target = name === 'admin' && !canOpenAdmin ? 'market' : name; if (target === 'admin' && canOpenAdmin) { marketSurface = 'admin'; name = 'market'; } $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === target)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'market') renderMarket(); if (name === 'profile') renderProfile(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
  function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderMarket(); renderProfile(); renderTrash(); badges(); }
-function setting(name) { $('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); if (name === 'account') { const btn = $('#changePasswordButton'); const hint = $('#passwordChangeHint'); if (marketToken) { if (hint) hint.textContent = marketUser?.username ? '正在修改账户 ' + marketUser.username + ' 的密码。' : '已连接牌组市场，可以修改密码。'; if (btn) btn.disabled = false; } else { if (hint) hint.textContent = '需要连接牌组市场后才能修改密码。'; if (btn) btn.disabled = true; } } }
+function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); if (name === 'account') { const btn = $('#changePasswordButton'); const hint = $('#passwordChangeHint'); if (marketToken) { if (hint) hint.textContent = marketUser?.username ? '正在修改账户 ' + marketUser.username + ' 的密码。' : '已连接牌组市场，可以修改密码。'; if (btn) btn.disabled = false; } else { if (hint) hint.textContent = '需要连接牌组市场后才能修改密码。'; if (btn) btn.disabled = true; } } }
 function formatBytes(value) {
   const bytes = Number(value || 0);
   if (!bytes) return '0 B';

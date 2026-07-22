@@ -159,7 +159,7 @@ function syncSettings() {
     review: '优先安排已经到期的复习卡片，适合巩固已有记忆。',
     mixed: '在新词和到期复习之间平衡安排，适合日常学习。'
   };
-  $('input[name="reviewPriority"]').forEach((input) => { input.checked = input.value === priority; });
+  $$('input[name="reviewPriority"]').forEach((input) => { input.checked = input.value === priority; });
   els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
   if (els.reviewPriorityDescription) els.reviewPriorityDescription.textContent = descriptions[priority];
 
