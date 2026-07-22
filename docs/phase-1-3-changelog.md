@@ -249,3 +249,27 @@
 18. **Metrics dashboard**: Prometheus/Grafana integration for monitoring
 19. **Backup verification**: Automated restore testing from WebDAV backups
 20. **API versioning**: Proper versioned API routes for backward compatibility
+
+
+---
+
+## Critical Bug Fix - 2026-07-22
+
+### Bug: Application data loss / frozen UI (CRITICAL)
+**Commit**: c0fe7fa
+**Files changed**: src/modules/kr-review.js, src/renderer.js, package.json
+
+**Root cause**: During Phase 0-1 modularization, document.addEventListener('DOMContentLoaded', init) was left in kr-review.js (line 409). However, init() is defined in kr-settings.js which loads AFTER kr-review.js in index.html. When the browser executed kr-review.js, the init identifier was not yet in the global scope, causing a ReferenceError: init is not defined. This:
+
+1. Prevented the DOMContentLoaded listener from being registered
+2. Stopped kr-review.js execution (functions after line 409 never defined)
+3. Caused init() to never run - state was never loaded from IndexedDB
+4. Left the UI without event bindings (app appeared frozen/unclickable)
+
+**Fix**: 
+- Removed stale ddEventListener from kr-review.js
+- Added init() bootstrap to renderer.js (last loaded script) with eadyState check
+- Extended 
+pm run check to cover renderer.js, fsrs-adapter.js, and market-login-characters.js
+
+**Data recovery**: No data was actually lost - it was a loading issue. IndexedDB, persistent storage, and localStorage all retain copies. After this fix, init() properly loads state from all sources with priority selection.
