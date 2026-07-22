@@ -148,7 +148,69 @@ function renderTrash() { $$('.trash-tabs [data-trash-tab]').forEach((button) => 
 function restoreTrash(at) { const item = state.trash[trashTab][at]; if (!item) return; if (trashTab === 'documents') state.documents.push(normDoc(item)); if (trashTab === 'cards') state.cards.push(normCard(item)); if (trashTab === 'folders') { state.folders.push(item.folder); state.documents.push(...item.documents.map(normDoc)); } state.trash[trashTab].splice(at, 1); save(); refresh(); toast('内容已恢复。'); }
 function emptyTrash() { if (!state.trash[trashTab]?.length) return toast('当前分类没有内容。'); openDeleteConfirm('trash-all', trashTab, '清空当前回收站分类？', '此操作会永久删除当前分类中的全部内容，无法恢复。', '永久删除'); }
 function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(days * 24 * 60))} 分钟`; if (days < 2) return `${Math.max(1, Math.round(days * 24))} 小时`; return `${Math.round(days)} 天`; }
-function syncSettings() { els.desiredRetention.value = state.settings.desiredRetention; els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`; els.dailyLimit.value = state.settings.dailyLimit; els.dailyNewLimit.value = state.settings.dailyNewLimit; const priority = ['new', 'review', 'mixed'].includes(state.settings.reviewPriority) ? state.settings.reviewPriority : 'mixed'; const descriptions = { new: '优先安排尚未学习的新词，适合建立新的知识基础。', review: '优先安排已经到期的复习卡片，适合巩固已有记忆。', mixed: '在新词和到期复习之间平衡安排，适合日常学习。' }; $$('input[name="reviewPriority"]').forEach((input) => { input.checked = input.value === priority; }); els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked'); if (els.reviewPriorityDescription) els.reviewPriorityDescription.textContent = descriptions[priority]; const preview = window.knowledgeFSRS.preview({ dueAt: new Date().toISOString(), reviews: 0 }, state.settings); els.intervalPreview.innerHTML = preview.map((item) => `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}</div>`).join(''); updateStorageStatus(); }
+function syncSettings() {
+  els.desiredRetention.value = state.settings.desiredRetention;
+  els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`;
+  els.dailyLimit.value = state.settings.dailyLimit;
+  els.dailyNewLimit.value = state.settings.dailyNewLimit;
+  const priority = ['new', 'review', 'mixed'].includes(state.settings.reviewPriority) ? state.settings.reviewPriority : 'mixed';
+  const descriptions = {
+    new: '优先安排尚未学习的新词，适合建立新的知识基础。',
+    review: '优先安排已经到期的复习卡片，适合巩固已有记忆。',
+    mixed: '在新词和到期复习之间平衡安排，适合日常学习。'
+  };
+  $('input[name="reviewPriority"]').forEach((input) => { input.checked = input.value === priority; });
+  els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
+  if (els.reviewPriorityDescription) els.reviewPriorityDescription.textContent = descriptions[priority];
+
+  // Enhanced interval preview with dates
+  const now = new Date();
+  const preview = window.knowledgeFSRS.preview({ dueAt: now.toISOString(), reviews: 0 }, state.settings);
+  if (els.intervalPreview) {
+    els.intervalPreview.innerHTML = preview.map((item) => {
+      const dueDate = new Date(item.due);
+      const dateStr = `${dueDate.getMonth() + 1}/${dueDate.getDate()}`;
+      return `<div><strong>${item.label}</strong><br>${formatInterval(item.days)}<br><small class="fsrs-preview-date">${dateStr}</small></div>`;
+    }).join('');
+  }
+
+  // 7-day forecast based on current cards
+  const forecastEl = document.getElementById('fsrsForecast');
+  if (forecastEl) {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const forecast = [];
+    for (let d = 0; d < 7; d++) {
+      const dayStart = new Date(today);
+      dayStart.setDate(dayStart.getDate() + d);
+      const dayEnd = new Date(dayStart);
+      dayEnd.setDate(dayEnd.getDate() + 1);
+      const dayLabel = d === 0 ? '今天' : d === 1 ? '明天' : `${dayStart.getMonth() + 1}/${dayStart.getDate()}`;
+      const dueCount = (state.cards || []).filter((card) => {
+        if (!card.dueAt) return false;
+        const due = new Date(card.dueAt);
+        return due >= dayStart && due < dayEnd;
+      }).length;
+      const overdueCount = d === 0 ? (state.cards || []).filter((card) => {
+        if (!card.dueAt) return false;
+        const due = new Date(card.dueAt);
+        return due < today;
+      }).length : 0;
+      forecast.push({ label: dayLabel, due: dueCount + overdueCount, overdue: overdueCount });
+    }
+    const maxDue = Math.max(1, ...forecast.map(f => f.due));
+    forecastEl.innerHTML = forecast.map((f) => {
+      const pct = Math.max(4, (f.due / maxDue) * 100);
+      const barClass = f.overdue > 0 ? 'fsrs-bar-overdue' : f.due > state.settings.dailyLimit ? 'fsrs-bar-high' : '';
+      return `<div class="fsrs-forecast-day"><span class="fsrs-forecast-label">${f.label}</span><div class="fsrs-forecast-bar-wrap"><div class="fsrs-forecast-bar ${barClass}" style="width:${pct}%"></div></div><span class="fsrs-forecast-count">${f.due}</span></div>`;
+    }).join('');
+    const totalWeek = forecast.reduce((s, f) => s + f.due, 0);
+    const avgDaily = Math.round(totalWeek / 7);
+    forecastEl.insertAdjacentHTML('beforeend', `<div class="fsrs-forecast-summary">预计本周复习 <strong>${totalWeek}</strong> 张卡片，日均 <strong>${avgDaily}</strong> 张</div>`);
+  }
+
+  updateStorageStatus();
+}
 function settings() { if (Number(els.dailyLimit.value) <= 0 || Number(els.dailyNewLimit.value) < 0) { els.dailyLimit.value = Math.max(1, Number(els.dailyLimit.value) || 1); els.dailyNewLimit.value = Math.max(0, Number(els.dailyNewLimit.value) || 0); return toast('复习上限必须有效。'); } state.settings.desiredRetention = Math.min(0.99, Math.max(0.8, Number(els.desiredRetention.value) || 0.9)); state.settings.dailyLimit = Number(els.dailyLimit.value); state.settings.dailyNewLimit = Number(els.dailyNewLimit.value); save(); syncSettings(); buildQueue(); progress(); }
 async function exportAllState() { const result = await window.reviewBridge.saveExportFile({ format: 'json', filename: 'knowledge-review-backup', content: JSON.stringify(state, null, 2) }); if (!result?.canceled) toast('全部数据导出完成。'); }
 function openExport(scope) { $('#exportScope').value = scope; syncCustomSelect($('#exportScope')); syncCustomSelect($('#exportFormat')); els.exportModal.showModal(); }

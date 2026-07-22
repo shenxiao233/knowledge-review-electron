@@ -2927,3 +2927,25 @@ select option { color: #34413b; background: #fff; }
 .password-change-form input { width: 100%; margin-top: 8px; }
 .password-change-status { padding: 10px 14px; border: 1px solid #e5e0d9; border-radius: 9px; background: #f7f6f3; color: #89918a; font-size: 13px; margin-bottom: 16px; }
 .password-change-actions { margin-top: 22px; display: flex; gap: 10px; }
+
+/* FSRS settings enhancement (Phase 1-4) */
+.fsrs-setting-card { padding: 18px 20px !important; }
+.fsrs-setting-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.fsrs-setting-header strong { font-size: 14px; color: #314139; }
+.fsrs-setting-value { font-weight: 700; color: var(--green); font-size: 16px; }
+.fsrs-setting-hint { margin: 0 0 10px; color: #89918a; font-size: 12px; line-height: 1.5; }
+.fsrs-range-labels { display: flex; justify-content: space-between; font-size: 11px; color: #aaa; margin-top: 2px; }
+.fsrs-section-title { font-size: 13px; font-weight: 600; color: #7a7f78; margin: 20px 0 10px; padding-left: 2px; }
+.fsrs-preview-date { color: #aaa; font-size: 11px; }
+
+/* 7-day forecast */
+.fsrs-forecast { display: flex; flex-direction: column; gap: 6px; padding: 16px 20px; border: 1px solid #e5e0d9; border-radius: 12px; background: #fff; box-shadow: 0 9px 24px rgba(37,34,30,.04); }
+.fsrs-forecast-day { display: grid; grid-template-columns: 48px 1fr 32px; align-items: center; gap: 10px; }
+.fsrs-forecast-label { font-size: 12px; color: #6d726b; text-align: right; }
+.fsrs-forecast-bar-wrap { height: 14px; background: #f2f1ed; border-radius: 7px; overflow: hidden; }
+.fsrs-forecast-bar { height: 100%; background: var(--green); border-radius: 7px; transition: width .3s ease; min-width: 4px; }
+.fsrs-forecast-bar.fsrs-bar-overdue { background: #e07a5f; }
+.fsrs-forecast-bar.fsrs-bar-high { background: #f2cc8f; }
+.fsrs-forecast-count { font-size: 12px; color: #6d726b; text-align: center; font-variant-numeric: tabular-nums; }
+.fsrs-forecast-summary { margin-top: 8px; padding-top: 10px; border-top: 1px solid #e5e0d9; font-size: 13px; color: #6d726b; text-align: center; }
+.fsrs-forecast-summary strong { color: var(--green); }
