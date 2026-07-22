@@ -2949,3 +2949,10 @@ select option { color: #34413b; background: #fff; }
 .fsrs-forecast-count { font-size: 12px; color: #6d726b; text-align: center; font-variant-numeric: tabular-nums; }
 .fsrs-forecast-summary { margin-top: 8px; padding-top: 10px; border-top: 1px solid #e5e0d9; font-size: 13px; color: #6d726b; text-align: center; }
 .fsrs-forecast-summary strong { color: var(--green); }
+
+/* Deck favorites (Phase 1-5) */
+.market-fav-button { position: absolute; top: 10px; right: 42px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: rgba(255,255,255,.85); backdrop-filter: blur(4px); display: grid; place-items: center; cursor: pointer; transition: transform .18s ease, background .18s ease; z-index: 2; }
+.market-fav-button:hover { transform: scale(1.15); background: #fff; }
+.market-fav-button svg { width: 16px; height: 16px; fill: none; stroke: #888; stroke-width: 1.5; transition: fill .2s ease, stroke .2s ease; }
+.market-fav-button.is-fav svg { fill: #e07a5f; stroke: #e07a5f; }
+.market-deck-heading { position: relative; }

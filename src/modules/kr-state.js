@@ -31,7 +31,8 @@ function hydrate(raw) {
       profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {} },
       market: { ...(base.market || { conflicts: [], decks: {} }), ...(saved.market || {}), conflicts: Array.isArray(saved.market?.conflicts) ? saved.market.conflicts : [], decks: saved.market?.decks && typeof saved.market.decks === 'object' ? saved.market.decks : {} },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
-      activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
+      activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id,
+      favorites: Array.isArray(saved.favorites) ? saved.favorites : []
     };
   } catch {
     return structuredClone(base);

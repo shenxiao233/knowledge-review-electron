@@ -43,6 +43,7 @@ model User {
   downloads    DeckDownload[]
   auditLogs    AuditLog[]
   categoryRequests MarketCategory[] @relation("CategoryCreator")
+  favorites      DeckFavorite[]
 }
 
 model MarketCategory {
@@ -74,6 +75,7 @@ model Deck {
 
   @@index([status, updatedAt])
   @@index([ownerId, updatedAt])
+  favorites    DeckFavorite[]
 }
 
 model DeckVersion {
@@ -116,5 +118,17 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   @@index([createdAt])
+  @@index([userId, createdAt])
+}
+
+model DeckFavorite {
+  id        String   @id @default(uuid()) @db.Uuid
+  deckId    String   @db.Uuid
+  deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([deckId, userId])
   @@index([userId, createdAt])
 }

@@ -4,13 +4,41 @@
  * Provides: marketApi, renderMarket, showMarketWorkspace, handleMarketLogin,
  *           openAdminWorkspace, renderAdminWorkspace, bindAdminWorkspaceEvents,
  *           importMarketCards, resolveMarketConflicts, openMarketUpload,
- *           marketPublish, ensureServerSettingsPanel
+ *           marketPublish, ensureServerSettingsPanel, toggleFavorite, isDeckFavorited
  */
 function marketDeckMatches(deck) {
   const query = marketQuery.toLowerCase();
   return (marketCategory === 'all' || deck.category === marketCategory)
     && (!query || [deck.title, deck.author, deck.category, ...deck.tags].join(' ').toLowerCase().includes(query));
 }
+
+function isDeckFavorited(deckId) { return (state.favorites || []).includes(deckId); }
+async function toggleFavorite(deckId, event) {
+  if (event) { event.stopPropagation(); event.preventDefault(); }
+  const favorites = state.favorites || [];
+  const isFav = favorites.includes(deckId);
+  if (marketToken) {
+    try {
+      if (isFav) {
+        await marketApi('/favorites/' + deckId, { method: 'DELETE' });
+      } else {
+        await marketApi('/favorites/' + deckId, { method: 'POST' });
+      }
+    } catch (err) {
+      toast('收藏操作失败：' + (err.message || '网络错误'));
+      return;
+    }
+  }
+  if (isFav) {
+    state.favorites = favorites.filter(id => id !== deckId);
+  } else {
+    state.favorites = [...favorites, deckId];
+  }
+  save();
+  renderMarket();
+  toast(isFav ? '已取消收藏' : '已添加到收藏');
+}
+
 function marketDecksForDisplay() {
   const decks = marketDecks.filter(marketDeckMatches);
   return decks.sort((a, b) => marketSort === 'popular' ? b.downloads - a.downloads : marketSort === 'cards' ? b.cards - a.cards : b.updated.localeCompare(a.updated));
@@ -257,7 +285,7 @@ function renderMarket() {
   $('#marketUnlockedContent')?.toggleAttribute('hidden', !marketUnlocked);
   if (!grid) return;
   const decks = marketDecksForDisplay();
-  grid.innerHTML = decks.length ? decks.map((deck) => `<article class="market-deck-card${marketDeckHasUpdate(deck) ? ' has-update' : ''}" data-market-deck="${esc(deck.id)}"><div class="market-deck-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}">${marketDeckNewBadge(deck)}<span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${esc(deck.tags.join(' · '))}</small><i aria-hidden="true"></i></div><div class="market-deck-body"><div class="market-deck-heading"><div><h3>${esc(deck.title)}</h3><span>作者 ${esc(deck.author)}</span></div><button type="button" class="market-more-button" data-market-detail="${esc(deck.id)}" aria-label="查看牌组详情"><svg><use href="#i-chevron-right"></use></svg></button></div><p>${esc(deck.description)}</p><div class="market-deck-meta"><span><strong>${deck.cards}</strong> 张卡片</span><span><strong>${deck.downloads}</strong> 次下载</span><span>${esc(deck.updated)}</span></div><button type="button" class="market-view-deck" data-market-detail="${esc(deck.id)}">${marketDeckHasUpdate(deck) ? '更新牌组' : '查看牌组'}</button></div></article>`).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
+  grid.innerHTML = decks.length ? decks.map((deck) => `<article class="market-deck-card${marketDeckHasUpdate(deck) ? ' has-update' : ''}" data-market-deck="${esc(deck.id)}"><div class="market-deck-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}">${marketDeckNewBadge(deck)}<span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${esc(deck.tags.join(' · '))}</small><i aria-hidden="true"></i></div><div class="market-deck-body"><div class="market-deck-heading"><div><h3>${esc(deck.title)}</h3><span>作者 ${esc(deck.author)}</span></div><button type="button" class="market-fav-button${isDeckFavorited(deck.id) ? ' is-fav' : ''}" data-market-fav="${esc(deck.id)}" aria-label="收藏牌组"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button><button type="button" class="market-more-button" data-market-detail="${esc(deck.id)}" aria-label="查看牌组详情"><svg><use href="#i-chevron-right"></use></svg></button></div><p>${esc(deck.description)}</p><div class="market-deck-meta"><span><strong>${deck.cards}</strong> 张卡片</span><span><strong>${deck.downloads}</strong> 次下载</span><span>${esc(deck.updated)}</span></div><button type="button" class="market-view-deck" data-market-detail="${esc(deck.id)}">${marketDeckHasUpdate(deck) ? '更新牌组' : '查看牌组'}</button></div></article>`).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
   const pager = ensureMarketPagination();
   if (pager) {
     pager.hidden = marketTotalPages <= 1;

@@ -717,6 +717,37 @@ app.delete('/api/v1/admin/decks/:id', { preHandler: requireAdmin }, async (reque
   }
 });
 
+
+// ─── Favorites / Bookmarks (Phase 1-5) ───
+app.get('/api/v1/favorites', { preHandler: requireAuth }, async (request) => {
+  const userId = auth(request).id;
+  const favorites = await prisma.deckFavorite.findMany({
+    where: { userId },
+    include: { deck: { select: { id: true, title: true, category: true, status: true } } },
+    orderBy: { createdAt: 'desc' }
+  });
+  return { favorites: favorites.map(f => ({ id: f.id, deckId: f.deckId, deck: f.deck, createdAt: f.createdAt })) };
+});
+
+app.post('/api/v1/favorites/:deckId', { preHandler: requireAuth }, async (request, reply) => {
+  const userId = auth(request).id;
+  const { deckId } = request.params as { deckId: string };
+  const deck = await prisma.deck.findUnique({ where: { id: deckId } });
+  if (!deck) return fail(reply, 404, 'Deck not found');
+  const existing = await prisma.deckFavorite.findUnique({ where: { deckId_userId: { deckId, userId } } });
+  if (existing) return { favorited: true, alreadyExisted: true };
+  await prisma.deckFavorite.create({ data: { deckId, userId } });
+  await prisma.auditLog.create({ data: { userId, action: 'deck.favorite', targetId: deckId } });
+  return { favorited: true, alreadyExisted: false };
+});
+
+app.delete('/api/v1/favorites/:deckId', { preHandler: requireAuth }, async (request, reply) => {
+  const userId = auth(request).id;
+  const { deckId } = request.params as { deckId: string };
+  const deleted = await prisma.deckFavorite.deleteMany({ where: { deckId, userId } });
+  return { unfavorited: true, count: deleted.count };
+});
+
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);
   if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') return fail(reply, 413, 'Upload exceeds the configured size limit');
