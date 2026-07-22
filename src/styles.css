@@ -2920,3 +2920,10 @@ select option { color: #34413b; background: #fff; }
 .stamp-visibility-control input:focus-visible + .stamp-visibility-switch { outline: 2px solid #78b69a; outline-offset: 2px; }
 .stamp-visibility-control b { font-size: 12px; font-weight: 700; }
 @keyframes stamp-in { from { opacity: 0; } to { opacity: .9; } }
+
+/* Password change form (Phase 1-3) */
+.password-change-form { max-width: 700px; margin-top: 22px; }
+.password-change-form label { margin: 0; }
+.password-change-form input { width: 100%; margin-top: 8px; }
+.password-change-status { padding: 10px 14px; border: 1px solid #e5e0d9; border-radius: 9px; background: #f7f6f3; color: #89918a; font-size: 13px; margin-bottom: 16px; }
+.password-change-actions { margin-top: 22px; display: flex; gap: 10px; }

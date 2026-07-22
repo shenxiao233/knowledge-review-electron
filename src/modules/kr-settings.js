@@ -3,14 +3,78 @@
  * Dependencies: kr-core.js, kr-state.js
  * Provides: cache, init, ensureFSRSSettingsPanel, ensureStampSetting,
  *           ensureStoragePanel, ensureUpdatePanel, renderUpdateState,
- *           handleUpdateEvent, bindUpdateEvents, view, refresh, setting,
+ *           handleUpdateEvent, bindUpdateEvents, view, refresh, setting, ensureAccountSecurityPanel,
  *           restoreLatexForStorage, formatBytes
  */
 function cache() {
   ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketCategoryFilter', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadCategorySelect', 'marketUploadNewCategory', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
   els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
+  els.currentPasswordInput = document.getElementById('currentPasswordInput');
+  els.newPasswordInput = document.getElementById('newPasswordInput');
+  els.confirmPasswordInput = document.getElementById('confirmPasswordInput');
+  els.changePasswordButton = document.getElementById('changePasswordButton');
+  els.passwordChangeHint = document.getElementById('passwordChangeHint');
   els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
+function ensureAccountSecurityPanel() {
+  const panel = $('#accountPanel');
+  if (!panel || panel.dataset.ready === 'true') return;
+  panel.dataset.ready = 'true';
+  panel.innerHTML = '<div class="sync-panel-heading"><div><span class="modal-eyebrow">ACCOUNT SECURITY</span><h2>账户安全</h2><p class="setting-description">修改牌组市场的登录密码。修改成功后需要重新登录。</p></div></div><div class="password-change-form" id="passwordChangeForm"><div class="password-change-status" id="passwordChangeHint">需要连接牌组市场后才能修改密码。</div><label>当前密码<input id="currentPasswordInput" type="password" autocomplete="current-password" placeholder="输入当前密码" /></label><label>新密码<input id="newPasswordInput" type="password" autocomplete="new-password" placeholder="至少 8 个字符" minlength="8" /></label><label>确认新密码<input id="confirmPasswordInput" type="password" autocomplete="new-password" placeholder="再次输入新密码" /></label></div><div class="storage-actions password-change-actions"><button class="primary" id="changePasswordButton" type="button" disabled>修改密码</button></div>';
+  const updateFormState = () => {
+    const hint = $('#passwordChangeHint');
+    const btn = $('#changePasswordButton');
+    if (marketToken) {
+      if (hint) hint.textContent = marketUser?.username ? '正在修改账户 ' + marketUser.username + ' 的密码。' : '已连接牌组市场，可以修改密码。';
+      if (btn) btn.disabled = false;
+    } else {
+      if (hint) hint.textContent = '需要连接牌组市场后才能修改密码。';
+      if (btn) btn.disabled = true;
+    }
+  };
+  updateFormState();
+  const observer = new MutationObserver(updateFormState);
+  const statusEl = document.getElementById('marketAuthStatus');
+  if (statusEl) observer.observe(statusEl, { attributes: true, childList: true, characterData: true, subtree: true });
+  const btn = $('#changePasswordButton');
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      const current = ($('#currentPasswordInput')?.value || '').trim();
+      const newPwd = ($('#newPasswordInput')?.value || '').trim();
+      const confirm = ($('#confirmPasswordInput')?.value || '').trim();
+      if (!current) return toast('请输入当前密码。');
+      if (!newPwd || newPwd.length < 8) return toast('新密码至少需要 8 个字符。');
+      if (newPwd !== confirm) return toast('两次输入的新密码不一致。');
+      btn.disabled = true;
+      btn.textContent = '修改中…';
+      try {
+        await marketApi('/me/password', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ currentPassword: current, newPassword: newPwd })
+        });
+        toast('密码修改成功，请重新登录。');
+        if ($('#currentPasswordInput')) $('#currentPasswordInput').value = '';
+        if ($('#newPasswordInput')) $('#newPasswordInput').value = '';
+        if ($('#confirmPasswordInput')) $('#confirmPasswordInput').value = '';
+        marketToken = '';
+        marketUser = null;
+        marketUnlocked = false;
+        if (window.reviewBridge?.market?.clearCredentials) {
+          void window.reviewBridge.market.clearCredentials();
+        }
+        updateFormState();
+      } catch (err) {
+        toast('密码修改失败：' + (err.message || '未知错误'));
+      } finally {
+        btn.disabled = !marketToken;
+        btn.textContent = '修改密码';
+        updateFormState();
+      }
+    });
+  }
+}
+
 function ensureFSRSSettingsPanel() {
   const panel = $('#algorithmPanel');
   if (!panel) return;
@@ -52,7 +116,7 @@ async function init() {
   idbReady = true;
   marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl);
   document.querySelector('.profile-hero > #editProfileButton')?.remove();
-  cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); ensureServerSettingsPanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); ensureCardEditorFields(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); await loadSavedMarketCredentials(); cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc'; loadDoc(); syncSettings(); refresh(); view('library');
+  cache(); ensureAccountSecurityPanel(); cache(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); ensureServerSettingsPanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); ensureCardEditorFields(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); await loadSavedMarketCredentials(); cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc'; loadDoc(); syncSettings(); refresh(); view('library');
 }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
@@ -69,7 +133,7 @@ function ensureStampSetting() {
 }function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
  function view(name) { const canOpenAdmin = marketUnlocked && marketUser?.role === 'ADMIN'; const target = name === 'admin' && !canOpenAdmin ? 'market' : name; if (target === 'admin' && canOpenAdmin) { marketSurface = 'admin'; name = 'market'; } $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === target)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'market') renderMarket(); if (name === 'profile') renderProfile(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
  function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderMarket(); renderProfile(); renderTrash(); badges(); }
-function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
+function setting(name) { $('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); if (name === 'account') { const btn = $('#changePasswordButton'); const hint = $('#passwordChangeHint'); if (marketToken) { if (hint) hint.textContent = marketUser?.username ? '正在修改账户 ' + marketUser.username + ' 的密码。' : '已连接牌组市场，可以修改密码。'; if (btn) btn.disabled = false; } else { if (hint) hint.textContent = '需要连接牌组市场后才能修改密码。'; if (btn) btn.disabled = true; } } }
 function formatBytes(value) {
   const bytes = Number(value || 0);
   if (!bytes) return '0 B';
