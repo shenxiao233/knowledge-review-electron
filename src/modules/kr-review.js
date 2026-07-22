@@ -406,7 +406,6 @@ function recordReview(card, rating, suspendAfter = false, forceTomorrow = false)
 }
 function streak() { let count = 0; for (let i = 0; i < 366; i += 1) { const key = dateKey(Date.now() - i * DAY); if (state.reviewLog[key]) count += 1; else if (i) break; } return count; }
 function toast(message) { const box = els.toast; const label = box.querySelector('.toast-message'); label.textContent = message; box.classList.remove('show'); requestAnimationFrame(() => box.classList.add('show')); clearTimeout(toast.timer); toast.timer = setTimeout(() => box.classList.remove('show'), 3000); }
-document.addEventListener('DOMContentLoaded', init);
 function renderQuestion(box, card, standalone) {
   renderQuestionOriginal(box, card, standalone);
   if (!card) return;

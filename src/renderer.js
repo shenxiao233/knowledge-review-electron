@@ -1,4 +1,4 @@
-﻿/**
+/**
  * renderer.js — Thin entry point for the Knowledge Review Electron renderer process.
  *
  * All application logic has been extracted into modular files loaded via <script> tags
@@ -22,5 +22,11 @@
  * See docs/renderer-modules.md for the full architecture guide.
  */
 
-// This file intentionally left minimal.
-// All functionality is in src/modules/*.js loaded before this script in index.html.
+// Bootstrap: init() is defined in kr-settings.js (loaded before this script).
+// It asynchronously loads state from IndexedDB/persistent/localStorage and renders the UI.
+// We use a DOMContentLoaded wrapper so init runs after the DOM is fully parsed.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => init());
+} else {
+  init();
+}
