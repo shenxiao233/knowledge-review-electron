@@ -1,32 +1,44 @@
 /**
- * renderer.js — Thin entry point for the Knowledge Review Electron renderer process.
+ * renderer.js — Application bootstrap entry point
  *
- * All application logic has been extracted into modular files loaded via <script> tags
- * in index.html (in dependency order):
+ * Load order in index.html (all shared global scope, no bundler):
+ *   idb-store -> kr-core -> kr-state -> kr-cards -> kr-documents ->
+ *   kr-review -> kr-market -> kr-profile -> kr-settings -> kr-ui -> THIS FILE
  *
- *   modules/kr-core.js      — Constants, utilities, sample data, normalization
- *   modules/kr-state.js     — State management, load/save, hydration
- *   modules/kr-cards.js     — Card CRUD, library, filtering, batch operations
- *   modules/kr-documents.js — Document tree, editor, knowledge home, LaTeX
- *   modules/kr-review.js    — Review sessions, FSRS, heatmaps, progress
- *   modules/kr-market.js    — Deck market, authentication, admin workspace
- *   modules/kr-profile.js   — Profile editing, avatar management
- *   modules/kr-settings.js  — Settings panels, FSRS config, update panel, init
- *   modules/kr-ui.js        — View switching, event binding, WebDAV, keydown
- *
- * Architecture: All modules share the browser's global scope (loaded via <script> tags
- * without type="module"). Functions and variables declared at the top level of each
- * module are accessible to all subsequently loaded modules.
- *
- * Load order matters: dependencies must be loaded before dependents.
- * See docs/renderer-modules.md for the full architecture guide.
+ * init() is defined in kr-settings.js. This file is the LAST script loaded,
+ * so all dependencies are available when init() runs.
  */
 
-// Bootstrap: init() is defined in kr-settings.js (loaded before this script).
-// It asynchronously loads state from IndexedDB/persistent/localStorage and renders the UI.
-// We use a DOMContentLoaded wrapper so init runs after the DOM is fully parsed.
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => init());
+console.log("[BOOT] renderer.js loaded, readyState:", document.readyState);
+
+async function bootstrap() {
+  console.log("[BOOT] bootstrap() starting...");
+  try {
+    await init();
+    console.log("[BOOT] init() completed successfully");
+  } catch (error) {
+    console.error("[BOOT] init() FAILED:", error);
+    try {
+      console.log("[BOOT] attempting emergency render...");
+      if (typeof refresh === "function") refresh();
+      if (typeof view === "function") view("library");
+      console.log("[BOOT] emergency render done. cards:", state?.cards?.length);
+    } catch (e2) {
+      console.error("[BOOT] emergency render also failed:", e2);
+    }
+    if (typeof toast === "function") {
+      toast("Application init error. Cards: " + (state?.cards?.length || 0) + ". See console (Ctrl+Shift+I).");
+    }
+  }
+}
+
+if (document.readyState === "loading") {
+  console.log("[BOOT] DOM still loading, waiting for DOMContentLoaded");
+  document.addEventListener("DOMContentLoaded", function() {
+    console.log("[BOOT] DOMContentLoaded fired, calling bootstrap");
+    bootstrap();
+  });
 } else {
-  init();
+  console.log("[BOOT] DOM already ready, calling bootstrap immediately");
+  bootstrap();
 }

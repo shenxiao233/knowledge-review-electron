@@ -117,42 +117,126 @@ function ensureFSRSSettingsPanel() {
   panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div><div class="review-priority-settings"><div class="comic-radio-group" role="radiogroup" aria-label="复习优先模式"><input type="radio" id="priority-new" name="reviewPriority" value="new" /><label for="priority-new">新词</label><input type="radio" id="priority-review" name="reviewPriority" value="review" /><label for="priority-review">复习</label><input type="radio" id="priority-mixed" name="reviewPriority" value="mixed" checked /><label for="priority-mixed">混合</label><div class="comic-glider" aria-hidden="true"></div></div><p class="review-priority-description" id="reviewPriorityDescription"></p></div>';
 }
 async function init() {
-  // Phase 0-②: Try IndexedDB first (primary storage)
-  const idbRecord = await idbLoadState().catch(() => null);
-  const persistent = await window.reviewBridge?.data?.load().catch(() => null);
+  console.log('[INIT] Starting data loading...');
+
+  // === Phase 1: Load data from all sources ===
+  let idbRecord = null;
+  try {
+    idbRecord = await idbLoadState();
+    console.log('[INIT] IDB record:', idbRecord ? 'found (' + (idbRecord.data || '').length + ' chars)' : 'empty');
+  } catch (e) {
+    console.warn('[INIT] IDB load failed:', e.message);
+  }
+
+  let persistent = null;
+  try {
+    persistent = await window.reviewBridge?.data?.load();
+    console.log('[INIT] Persistent:', persistent?.ok ? 'found, cards=' + (persistent.data?.cards?.length || 0) : 'empty/failed');
+  } catch (e) {
+    console.warn('[INIT] Persistent load failed:', e.message);
+  }
+
   const browserState = localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1');
+  console.log('[INIT] localStorage:', browserState ? browserState.length + ' chars' : 'empty');
+
+  // === Phase 2: Build candidates and select best ===
   const browserCandidate = (() => {
     if (!browserState) return null;
     try {
-      return { data: JSON.parse(browserState), savedAt: localStorage.getItem(STATE_META_KEY) || '' };
-    } catch {
-      return null;
-    }
+      const parsed = JSON.parse(browserState);
+      return { data: parsed, savedAt: localStorage.getItem(STATE_META_KEY) || '', source: 'localStorage' };
+    } catch { return null; }
   })();
-  const persistentCandidate = persistent?.ok && persistent.data ? { data: persistent.data, savedAt: persistent.savedAt || '' } : null;
-  const idbCandidate = idbRecord && idbRecord.data ? (() => { try { return { data: JSON.parse(idbRecord.data), savedAt: idbRecord.savedAt || '' }; } catch { return null; } })() : null;
-  const cardCount = (candidate) => Array.isArray(candidate?.data?.cards) ? candidate.data.cards.length : 0;
-  const hasData = (candidate) => Boolean(candidate && (cardCount(candidate) || candidate.data.documents?.length || candidate.data.groups?.length));
+
+  const persistentCandidate = persistent?.ok && persistent.data
+    ? { data: persistent.data, savedAt: persistent.savedAt || '', source: 'electron' }
+    : null;
+
+  const idbCandidate = idbRecord && idbRecord.data ? (() => {
+    try {
+      return { data: JSON.parse(idbRecord.data), savedAt: idbRecord.savedAt || '', source: 'indexedDB' };
+    } catch { return null; }
+  })() : null;
+
+  const cardCount = (c) => Array.isArray(c?.data?.cards) ? c.data.cards.length : 0;
+  const hasData = (c) => Boolean(c && (cardCount(c) || c.data?.documents?.length || c.data?.groups?.length));
+
   const candidates = [idbCandidate, persistentCandidate, browserCandidate].filter(hasData);
+  console.log('[INIT] Candidates:', candidates.map(c => c.source + '(' + cardCount(c) + ' cards)'));
+
   const selected = candidates.length > 1
     ? candidates.reduce((best, c) => cardCount(c) > cardCount(best) || (cardCount(c) === cardCount(best) && c.savedAt > best.savedAt) ? c : best)
     : candidates[0] || null;
+
+  console.log('[INIT] Selected:', selected ? selected.source + ' (' + cardCount(selected) + ' cards)' : 'NONE');
+
+  // === Phase 3: Apply selected data to state ===
   if (selected) {
-    state = hydrate(JSON.stringify(selected.data));
-    localStorage.setItem(KEY, JSON.stringify(state));
-    localStorage.setItem(STATE_META_KEY, selected.savedAt || new Date().toISOString());
-    schedulePersistentSave(true);
-    await idbSaveState().catch(() => {});
+    try {
+      state = hydrate(JSON.stringify(selected.data));
+      console.log('[INIT] State hydrated:', state.cards.length + ' cards, ' + state.documents.length + ' docs');
+    } catch (e) {
+      console.error('[INIT] Hydrate failed:', e.message);
+      state = hydrate('');
+    }
+    try {
+      localStorage.setItem(KEY, JSON.stringify(state));
+      localStorage.setItem(STATE_META_KEY, selected.savedAt || new Date().toISOString());
+    } catch (e) {
+      console.warn('[INIT] localStorage write failed (may be full):', e.message);
+    }
+    try { schedulePersistentSave(true); } catch (e) { console.warn('[INIT] schedulePersistentSave failed:', e.message); }
+    try { await idbSaveState(); } catch (e) { console.warn('[INIT] IDB save failed:', e.message); }
     idbReady = true;
   } else {
+    console.log('[INIT] No data found in any source, using defaults');
     state = hydrate('');
-    save();
+    try { save(); } catch (e) { console.warn('[INIT] Default save failed:', e.message); }
   }
-  await migrateLocalStorageToIDB().catch(() => {});
+
+  try { await migrateLocalStorageToIDB(); } catch (e) { console.warn('[INIT] Migration failed:', e.message); }
   idbReady = true;
-  marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl);
-  document.querySelector('.profile-hero > #editProfileButton')?.remove();
-  cache(); ensureAccountSecurityPanel(); cache(); ensureTagManagerPanel(); ensureFSRSSettingsPanel(); cache(); ensureStoragePanel(); ensureServerSettingsPanel(); cache(); ensureUpdatePanel(); cache(); ensureStampSetting(); ensureCardEditorFields(); enhanceSelectsPortal(); ensureToolbarPalettes(); bind(); enableTooltips(); bindUpdateEvents(); await loadWebDavConfig(); await loadSavedMarketCredentials(); cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc'; loadDoc(); syncSettings(); refresh(); view('library');
+
+  console.log('[INIT] Data loading complete. Cards:', state.cards.length, 'Docs:', state.documents.length, 'Groups:', state.groups.length);
+
+  // === Phase 4: UI initialization (each step wrapped in try/catch) ===
+  const safeCall = (name, fn) => {
+    try { fn(); } catch (e) { console.error('[INIT] ' + name + ' failed:', e.message); }
+  };
+
+  try { marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl); } catch (e) { console.warn('[INIT] marketApiBase:', e.message); }
+
+  safeCall('removeEditButton', () => document.querySelector('.profile-hero > #editProfileButton')?.remove());
+  safeCall('cache1', () => cache());
+  safeCall('ensureAccountSecurityPanel', ensureAccountSecurityPanel);
+  safeCall('cache2', () => cache());
+  safeCall('ensureTagManagerPanel', ensureTagManagerPanel);
+  safeCall('ensureFSRSSettingsPanel', ensureFSRSSettingsPanel);
+  safeCall('cache3', () => cache());
+  safeCall('ensureStoragePanel', ensureStoragePanel);
+  safeCall('ensureServerSettingsPanel', ensureServerSettingsPanel);
+  safeCall('cache4', () => cache());
+  safeCall('ensureUpdatePanel', ensureUpdatePanel);
+  safeCall('cache5', () => cache());
+  safeCall('ensureStampSetting', ensureStampSetting);
+  safeCall('ensureCardEditorFields', ensureCardEditorFields);
+  safeCall('enhanceSelectsPortal', enhanceSelectsPortal);
+  safeCall('ensureToolbarPalettes', ensureToolbarPalettes);
+  safeCall('bind', bind);
+  safeCall('enableTooltips', enableTooltips);
+  safeCall('bindUpdateEvents', bindUpdateEvents);
+
+  try { await loadWebDavConfig(); } catch (e) { console.warn('[INIT] loadWebDavConfig:', e.message); }
+  try { await loadSavedMarketCredentials(); } catch (e) { console.warn('[INIT] loadSavedMarketCredentials:', e.message); }
+
+  cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc';
+
+  safeCall('loadDoc', loadDoc);
+  safeCall('syncSettings', syncSettings);
+  safeCall('refresh', refresh);
+  safeCall('view', () => view('library'));
+
+  console.log('[INIT] Initialization complete!');
 }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');
