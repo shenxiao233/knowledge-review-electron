@@ -1,73 +1,73 @@
 {
-    "name": "knowledge-review-electron",
-    "version": "0.1.8",
-    "description": "Notion Card knowledge management and spaced-review desktop app built with Electron.",
-    "author": "shenxiao233",
-    "main": "src/main.js",
-    "scripts": {
-        "start": "electron .",
-        "dev": "electron .",
-        "build": "electron-builder --win nsis --publish never",
-        "release": "electron-builder --win nsis --publish never",
-        "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer.js",
-        "doctor": "node scripts/doctor.js",
-        "test:fsrs": "node scripts/test-fsrs.js"
+  "name": "knowledge-review-electron",
+  "version": "0.1.8",
+  "description": "Notion Card knowledge management and spaced-review desktop app built with Electron.",
+  "author": "shenxiao233",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron .",
+    "build": "electron-builder --win nsis --publish never",
+    "release": "electron-builder --win nsis --publish never",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/modules/idb-store.js && node --check src/modules/kr-core.js && node --check src/modules/kr-state.js && node --check src/modules/kr-documents.js && node --check src/modules/kr-cards.js && node --check src/modules/kr-review.js && node --check src/modules/kr-market.js && node --check src/modules/kr-profile.js && node --check src/modules/kr-settings.js && node --check src/modules/kr-ui.js",
+    "doctor": "node scripts/doctor.js",
+    "test:fsrs": "node scripts/test-fsrs.js"
+  },
+  "keywords": [
+    "electron",
+    "knowledge-management",
+    "spaced-repetition",
+    "markdown"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "electron-updater": "^6.8.9",
+    "katex": "^0.16.22",
+    "ts-fsrs": "^5.4.1"
+  },
+  "build": {
+    "appId": "com.shenxiao233.knowledgereview",
+    "productName": "Notion Card",
+    "asar": true,
+    "directories": {
+      "output": "dist"
     },
-    "keywords": [
-        "electron",
-        "knowledge-management",
-        "spaced-repetition",
-        "markdown"
+    "files": [
+      "src/**/*",
+      "package.json"
     ],
-    "license": "MIT",
-    "devDependencies": {
-        "electron": "^28.3.3",
-        "electron-builder": "^26.15.3"
-    },
-    "dependencies": {
-        "adm-zip": "^0.5.16",
-        "electron-updater": "^6.8.9",
-        "katex": "^0.16.22",
-        "ts-fsrs": "^5.4.1"
-    },
-    "build": {
-        "appId": "com.shenxiao233.knowledgereview",
-        "productName": "Notion Card",
-        "asar": true,
-        "directories": {
-            "output": "dist"
-        },
-        "files": [
-            "src/**/*",
-            "package.json"
-        ],
-        "win": {
-            "icon": "src/assets/notion-card.ico",
-            "target": [
-                {
-                    "target": "nsis",
-                    "arch": [
-                        "x64"
-                    ]
-                }
-            ],
-            "artifactName": "NotionCard-${version}-${arch}.${ext}"
-        },
-        "nsis": {
-            "oneClick": false,
-            "allowToChangeInstallationDirectory": true,
-            "perMachine": true,
-            "allowElevation": true,
-            "selectPerMachineByDefault": true,
-            "packElevateHelper": true,
-            "deleteAppDataOnUninstall": false,
-            "artifactName": "NotionCard-${version}-Setup.${ext}"
-        },
-        "publish": {
-            "provider": "github",
-            "owner": "shenxiao233",
-            "repo": "knowledge-review-electron",
-            "releaseType": "release"
+    "win": {
+      "icon": "src/assets/notion-card.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
         }
+      ],
+      "artifactName": "NotionCard-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": true,
+      "allowElevation": true,
+      "selectPerMachineByDefault": true,
+      "packElevateHelper": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "NotionCard-${version}-Setup.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "shenxiao233",
+      "repo": "knowledge-review-electron",
+      "releaseType": "release"
     }
+  }
 }

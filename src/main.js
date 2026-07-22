@@ -320,7 +320,10 @@ ipcMain.handle('market:uploadDeck', async (_event, payload) => {
 });
 
 ipcMain.handle('market:getCredentials', async () => ({ ok: true, ...(await readMarketCredentials()) }));
-ipcMain.handle('market:saveCredentials', async (_event, payload) => writeMarketCredentials(payload));
+ipcMain.handle('market:saveCredentials', async (_event, payload) => {
+  if (!safeStorage.isEncryptionAvailable()) return { ok: false, error: '系统加密存储暂不可用，无法安全记住密码。' };
+  return writeMarketCredentials(payload);
+});
 ipcMain.handle('market:clearCredentials', async () => clearMarketCredentials());
 
 ipcMain.handle('data:load', async () => {
@@ -706,7 +709,9 @@ ipcMain.handle('update:install', async () => {
     updateInstallStarted = true;
     const backupPath = await backupUserData('before-update');
     sendUpdateEvent('backup-created', { path: backupPath });
-    setImmediate(() => autoUpdater.quitAndInstall(false, true));
+    setImmediate(() => {
+      try { autoUpdater.quitAndInstall(false, true); } catch { updateInstallStarted = false; }
+    });
     return { ok: true };
   } catch (error) {
     updateInstallStarted = false;

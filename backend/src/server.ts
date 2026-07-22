@@ -41,7 +41,8 @@ const allowedOrigins = new Set((process.env.CORS_ORIGIN || '').split(',').map((i
 await app.register(cors, {
   origin: (origin, callback) => {
     // Electron loads the renderer from file://, which is reported as a null origin.
-    if (!origin || origin === 'null' || allowedOrigins.has(origin)) return callback(null, true);
+    // Only allow null origin in development to prevent CSRF in production.
+    if (!origin || (process.env.NODE_ENV !== 'production' && origin === 'null') || allowedOrigins.has(origin)) return callback(null, true);
     return callback(new Error('Origin is not allowed'), false);
   }
 });
@@ -51,6 +52,11 @@ await app.register(multipart, { limits: { fileSize: maxUploadBytes, files: 1 } }
 type AuthRequest = FastifyRequest & { user: { id: string; username: string; role: UserRole } };
 type RateLimitBucket = { count: number; resetAt: number };
 const rateLimitBuckets = new Map<string, RateLimitBucket>();
+// Periodically clean expired rate-limit buckets to prevent memory leaks.
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateLimitBuckets) if (bucket.resetAt <= now) rateLimitBuckets.delete(key);
+}, 60_000).unref();
 
 function consumeRateLimit(reply: FastifyReply, key: string, max: number, windowMs: number) {
   const now = Date.now();

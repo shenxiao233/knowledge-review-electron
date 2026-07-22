@@ -1,0 +1,139 @@
+/**
+ * kr-state.js - State management, load/save, hydration
+ * Dependencies: kr-core.js
+ * Provides: hydrate, load, save, schedulePersistentSave, storageSnapshot,
+ *           syncReviewLog, activeDoc, debounce
+ * Globals: state, webdavConfig, updateState, persistentSaveTimer, persistentSaveQueue
+ */
+function hydrate(raw) {
+  try {
+    if (!raw) return { ...structuredClone(base), documents: sampleDocs.map(normDoc) };
+    const saved = JSON.parse(raw);
+    const documents = Array.isArray(saved.documents) && saved.documents.length ? saved.documents.map(normDoc) : structuredClone(sampleDocs);
+    sampleDocs.forEach((doc) => { if (!documents.some((item) => item.id === doc.id)) documents.push(normDoc(doc)); });
+    const cards = Array.isArray(saved.cards) && saved.cards.length ? saved.cards.map(normCard) : structuredClone(sampleCards);
+    ensureCardOrder(cards);
+    const latestMastery = new Map();
+    (Array.isArray(saved.reviewEvents) ? saved.reviewEvents : []).forEach((event) => { if (event.cardId && event.rating) latestMastery.set(event.cardId, event.rating === 'Easy' ? 'tooEasy' : event.rating === 'Good' ? 'familiar' : event.rating === 'Hard' ? 'fuzzy' : 'forgot'); });
+    cards.forEach((card) => { if (!card.mastery && latestMastery.has(card.id)) card.mastery = latestMastery.get(card.id); });
+    return {
+      ...structuredClone(base), ...saved,
+      folders: Array.isArray(saved.folders) && saved.folders.length ? saved.folders : structuredClone(sampleFolders),
+      documents,
+      cards,
+      reviewLog: saved.reviewLog || {},
+      reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
+      schemaVersion: 3,
+      algorithm: 'fsrs',
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerUrl: typeof saved.settings?.marketServerUrl === 'string' ? saved.settings.marketServerUrl.trim() : '' },
+      reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
+      trash: { ...base.trash, ...(saved.trash || {}) },
+      profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {} },
+      market: { ...(base.market || { conflicts: [], decks: {} }), ...(saved.market || {}), conflicts: Array.isArray(saved.market?.conflicts) ? saved.market.conflicts : [], decks: saved.market?.decks && typeof saved.market.decks === 'object' ? saved.market.decks : {} },
+      groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
+      activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id
+    };
+  } catch {
+    return structuredClone(base);
+  }
+}
+function saveLegacyLocalStorage() {
+  try { ensureCardOrder(state.cards); syncReviewLog(); localStorage.setItem(KEY, JSON.stringify(state)); } catch { toast('本地空间不足，请先导出备份。'); }
+}
+function load() {
+  return hydrate(localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1'));
+}
+let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
+let webdavPushPromise = Promise.resolve();
+let updateState = { status: 'idle', version: '', percent: 0, message: '' };
+let persistentSaveTimer = null;
+let persistentSaveQueue = Promise.resolve();
+function schedulePersistentSave(immediate = false) {
+  clearTimeout(persistentSaveTimer);
+  const write = () => {
+    const snapshot = structuredClone(state);
+    persistentSaveQueue = persistentSaveQueue.catch(() => {}).then(() => window.reviewBridge?.data?.save(snapshot));
+  };
+  if (immediate) write();
+  else persistentSaveTimer = setTimeout(write, 350);
+}
+function storageSnapshot() {
+  const snapshot = structuredClone(state);
+  if (snapshot.settings) delete snapshot.settings.dataDirectory;
+  return JSON.stringify(snapshot, null, 2);
+}
+function save() {
+  try {
+    ensureCardOrder(state.cards);
+    syncReviewLog();
+    const serialized = JSON.stringify(state);
+    const savedAt = new Date().toISOString();
+    localStorage.setItem(KEY, serialized);
+    localStorage.setItem(STATE_META_KEY, savedAt);
+    schedulePersistentSave();
+    scheduleIDBSave();
+  } catch {
+    toast('本地空间不足，请先导出备份。');
+  }
+}
+function syncReviewLog() {
+  if (!state?.reviewEvents) return;
+  const next = {};
+  state.reviewEvents.filter(reviewEventIsActive).forEach((event) => {
+    const key = event.reviewedAt?.slice(0, 10);
+    if (key) next[key] = (next[key] || 0) + 1;
+  });
+  state.reviewLog = next;
+}
+function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
+function debounce(callback, delay = 250) {
+  let timer;
+  return (...args) => { clearTimeout(timer); timer = setTimeout(() => callback(...args), delay); };
+}
+// ---- IndexedDB integration (Phase 0-②) ----
+// IDB is the primary storage backend; localStorage remains as sync fallback.
+
+let idbReady = false;
+let idbSaveTimer = null;
+
+async function idbSaveState() {
+  try {
+    const serialized = JSON.stringify(state);
+    await idbSet('app-state', { data: serialized, savedAt: new Date().toISOString() });
+    return true;
+  } catch (err) {
+    console.warn('[IDB] save failed:', err);
+    return false;
+  }
+}
+
+async function idbLoadState() {
+  try {
+    const record = await idbGet('app-state');
+    if (record && record.data) return record;
+    return null;
+  } catch (err) {
+    console.warn('[IDB] load failed:', err);
+    return null;
+  }
+}
+
+function scheduleIDBSave() {
+  clearTimeout(idbSaveTimer);
+  idbSaveTimer = setTimeout(() => idbSaveState(), 500);
+}
+
+async function migrateLocalStorageToIDB() {
+  const existing = await idbGet('app-state');
+  if (existing) return false;
+  const raw = localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1');
+  if (!raw) return false;
+  try {
+    await idbSet('app-state', { data: raw, savedAt: localStorage.getItem(STATE_META_KEY) || new Date().toISOString() });
+    console.log('[IDB] migrated localStorage data to IndexedDB');
+    return true;
+  } catch (err) {
+    console.warn('[IDB] migration failed:', err);
+    return false;
+  }
+}
