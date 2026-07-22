@@ -1,3 +1,40 @@
+/**
+ * main.js - Electron 主进程入口
+ *
+ * 概述：
+ *   本文件是 Notion Card 桌面应用的主进程（main process）入口。
+ *   负责创建浏览器窗口、管理应用生命周期、处理 IPC 通信、
+ *   自动更新、数据持久化、WebDAV 云同步、牌组市场交互等功能。
+ *
+ * 核心模块：
+ *   - 窗口管理: createWindow() - 创建 BrowserWindow，设置 CSP 和安全策略
+ *   - 数据迁移: migrateLegacyRuntimeData() - 旧版数据迁移到新路径
+ *   - 状态持久化: readLocalState() / writeLocalState() - 读写 state.json
+ *   - 自动更新: checkForUpdates() / configureAutoUpdater() - GitHub Releases 更新
+ *   - 数据备份: backupUserData() - 用户数据备份到本地
+ *   - 牌组市场: downloadMarketDeck() / uploadMarketDeck() - 市场 API 交互
+ *   - WebDAV 同步: pushWebDavState() / getWebDavConfig() - 坚果云等 WebDAV 同步
+ *   - 凭证管理: readMarketCredentials() / readWebDavCredentials() - 安全存储凭证
+ *
+ * 数据路径：
+ *   - 应用数据: %APPDATA%/KnowledgeReview/
+ *   - 状态文件: %APPDATA%/KnowledgeReview/data/state.json
+ *   - 会话数据: %APPDATA%/KnowledgeReview/session/
+ *   - 日志文件: %APPDATA%/KnowledgeReview/logs/
+ *   - 备份目录: %APPDATA%/KnowledgeReview-backups/
+ *
+ * IPC 通道（主进程 <-> 渲染进程）：
+ *   - app:getInfo - 获取应用信息（版本、数据路径等）
+ *   - update:check / update:install - 检查和安装更新
+ *   - data:load / data:save - 加载/保存应用状态
+ *   - market:downloadDeck / market:uploadDeck - 市场牌组操作
+ *   - webdav:test / webdav:save / webdav:sync - WebDAV 操作
+ *   - window:minimize / window:toggleMaximize / window:close - 窗口控制
+ *
+ * 依赖：electron, electron-updater, adm-zip
+ * 版本：v0.1.9
+ */
+
 const { app, BrowserWindow, dialog, ipcMain, Menu, shell, safeStorage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');

@@ -1,3 +1,48 @@
+/**
+ * fsrs-adapter.js - FSRS 间隔重复算法适配器
+ *
+ * 概述：
+ *   本文件将 ts-fsrs 库的 FSRS（Free Spaced Repetition Scheduler）算法
+ *   适配到 Notion Card 的数据模型中。FSRS 是一种基于机器学习的间隔重复算法，
+ *   能根据用户的复习表现自动优化复习间隔。
+ *
+ * FSRS 核心概念：
+ *   - State（状态）: New -> Learning -> Review -> Relearning
+ *   - Rating（评分）: Again(1) / Hard(2) / Good(3) / Easy(4)
+ *   - Stability（稳定性）: 记忆强度，决定复习间隔
+ *   - Difficulty（难度）: 卡片固有难度
+ *   - Retrievability（可提取性）: 当前记忆可提取概率
+ *
+ * 暴露的 API（通过 window.knowledgeFSRS）：
+ *
+ *   knowledgeFSRS.schedule(card, rating, settings)
+ *     计算下次复习时间和卡片新状态
+ *
+ *   knowledgeFSRS.preview(card, settings)
+ *     预览不同评分下的复习间隔（用于设置界面）
+ *
+ *   knowledgeFSRS.retrievability(card, now)
+ *     计算当前卡片的可提取概率（0~1）
+ *
+ *   knowledgeFSRS.forget(card)
+ *     重置卡片为全新状态
+ *
+ * 卡片字段映射：
+ *   Notion Card        -> FSRS
+ *   card.fsrsState     -> FSRS Card State
+ *   card.dueAt         -> 下次复习时间 (ISO string)
+ *   card.stability     -> 记忆稳定性
+ *   card.difficulty    -> 难度参数
+ *
+ * 配置项（state.settings）：
+ *   - desiredRetention: 目标保留率（默认 0.9）
+ *   - enableFuzz: 是否启用间隔随机偏移（避免大量卡片同天到期）
+ *   - maximumInterval: 最大复习间隔（天）
+ *
+ * 依赖：ts-fsrs (window.FSRS)
+ * 参考：https://github.com/open-spaced-repetition/ts-fsrs
+ */
+
 (function attachKnowledgeFSRS(global) {
   const lib = global.FSRS;
   if (!lib) throw new Error('FSRS runtime was not loaded');

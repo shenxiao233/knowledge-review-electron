@@ -1,3 +1,31 @@
+/**
+ * market-login-characters.js - 牌组市场登录页动画角色
+ *
+ * 概述：
+ *   本文件实现牌组市场登录页面的交互式动画角色。
+ *   角色会根据用户输入（用户名/密码）产生不同的动画反应：
+ *   - 输入用户名时：角色注视输入框
+ *   - 输入密码时：角色捂眼（保护隐私的趣味表达）
+ *   - 切换显示密码时：角色张开/闭合手
+ *
+ * DOM 依赖：
+ *   - #marketCharactersScene: 动画场景容器
+ *   - #marketServerKey: 服务器地址输入框
+ *   - #marketUsername: 用户名输入框
+ *   - #marketPassword: 密码输入框
+ *   - #marketPasswordToggle: 密码显示/隐藏切换按钮
+ *
+ * 技术要点：
+ *   - 使用 CSS transform 实现平滑动画
+ *   - requestAnimationFrame 驱动动画循环
+ *   - 事件监听 input/focus/blur 实时响应
+ *
+ * 加载时机：
+ *   仅在显示市场登录界面时动态加载（懒加载）
+ *
+ * 依赖：无（纯 DOM 操作）
+ */
+
 (function () {
   const q = (selector) => document.querySelector(selector);
   const scene = q('#marketCharactersScene');
