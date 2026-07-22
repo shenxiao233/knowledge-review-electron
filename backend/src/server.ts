@@ -857,6 +857,69 @@ app.delete('/api/v1/favorites/:deckId', { preHandler: requireAuth }, async (requ
   return { unfavorited: true, count: deleted.count };
 });
 
+
+
+// ─── Incremental deck updates - change tracking (Phase 3-12) ───
+// Track deck changes for future diff-based updates
+const DECK_CHANGE_TRACKING = process.env.DECK_CHANGE_TRACKING === 'true';
+
+if (DECK_CHANGE_TRACKING) {
+  // Middleware-like hook: track version downloads and changes
+  app.addHook('onSend', async (request, reply, payload) => {
+    const url = request.url;
+    if (url.includes('/my-decks/') && request.method === 'POST') {
+      app.log.info({ url, method: request.method }, 'Deck change tracked for incremental update analysis');
+    }
+  });
+}
+
+// Endpoint to get deck changelog (version history)
+app.get('/api/v1/decks/:id/changelog', { preHandler: requireAuth }, async (request, reply) => {
+  const { id } = request.params as { id: string };
+  const versions = await prisma.deckVersion.findMany({
+    where: { deckId: id, status: 'PUBLISHED' },
+    select: { version: true, createdAt: true, manifest: true },
+    orderBy: { version: 'desc' }
+  });
+  return { versions: versions.map((v: any) => ({ version: v.version, publishedAt: v.createdAt, cardCount: v.manifest?.cardCount ?? 0, changelog: v.manifest?.changelog || '' })) };
+});
+
+// ─── Audit log archival (Phase 3-11) ───
+const AUDIT_RETENTION_DAYS = Number(process.env.AUDIT_RETENTION_DAYS || 90);
+const AUDIT_ARCHIVE_INTERVAL_HOURS = Number(process.env.AUDIT_ARCHIVE_INTERVAL_HOURS || 24);
+
+async function archiveAuditLogs() {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - AUDIT_RETENTION_DAYS);
+  try {
+    const result = await prisma.auditLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
+    if (result.count > 0) app.log.info({ deleted: result.count, cutoff }, 'Archived old audit logs');
+  } catch (err) {
+    app.log.error(err, 'Failed to archive audit logs');
+  }
+}
+
+// Schedule periodic archival
+const auditArchiveTimer = setInterval(() => { void archiveAuditLogs(); }, AUDIT_ARCHIVE_INTERVAL_HOURS * 3600 * 1000);
+// Run once on startup after a short delay
+setTimeout(() => { void archiveAuditLogs(); }, 30_000);
+
+// Admin endpoint to manually trigger archival and view stats
+app.get('/api/v1/admin/audit-stats', { preHandler: requireAdmin }, async () => {
+  const total = await prisma.auditLog.count();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - AUDIT_RETENTION_DAYS);
+  const recent = await prisma.auditLog.count({ where: { createdAt: { gte: cutoff } } });
+  const old = total - recent;
+  return { totalLogs: total, recentLogs: recent, pendingArchival: old, retentionDays: AUDIT_RETENTION_DAYS };
+});
+
+app.post('/api/v1/admin/archive-audit', { preHandler: requireAdmin }, async () => {
+  await archiveAuditLogs();
+  return { archived: true };
+});
+
+
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);
   if (error instanceof Error && 'code' in error && error.code === 'FST_REQ_FILE_TOO_LARGE') return fail(reply, 413, 'Upload exceeds the configured size limit');
@@ -868,4 +931,4 @@ app.setErrorHandler((error, request, reply) => {
 
 const port = Number(process.env.PORT || 4000);
 await app.listen({ host: process.env.HOST || '0.0.0.0', port });
-process.once('SIGTERM', async () => { await app.close(); await prisma.$disconnect(); if (redis) await redis.quit(); });
+process.once('SIGTERM', async () => { await app.close(); await prisma.$disconnect(); clearInterval(auditArchiveTimer); if (redis) await redis.quit(); });
