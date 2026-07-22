@@ -1,3 +1,4 @@
+import Redis from 'ioredis';
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -58,6 +59,15 @@ setInterval(() => {
   for (const [key, bucket] of rateLimitBuckets) if (bucket.resetAt <= now) rateLimitBuckets.delete(key);
 }, 60_000).unref();
 
+
+/ --- Redis connection for shared rate limiting (Phase 2-8) ---
+const REDIS_URL = process.env.REDIS_URL || '';
+let redis: Redis | null = null;
+if (REDIS_URL) {
+  redis = new Redis(REDIS_URL, { maxRetriesPerRequest: 1, lazyConnect: true, enableReadyCheck: false });
+  redis.on('error', (err) => app.log.warn(err, 'Redis connection error'));
+  try { await redis.connect(); app.log.info('Redis connected for shared rate limiting'); } catch { redis = null; app.log.warn('Redis unavailable, using in-memory rate limiter'); }
+}
 function consumeRateLimit(reply: FastifyReply, key: string, max: number, windowMs: number) {
   const now = Date.now();
   for (const [bucketKey, bucket] of rateLimitBuckets) if (bucket.resetAt <= now) rateLimitBuckets.delete(bucketKey);
@@ -75,6 +85,28 @@ function consumeRateLimit(reply: FastifyReply, key: string, max: number, windowM
   return true;
 }
 
+
+async function consumeRateLimitAsync(reply: FastifyReply, key: string, max: number, windowMs: number): Promise<boolean> {
+  if (redis) {
+    try {
+      const redisKey = `rl:${key}`;
+      const current = await redis.incr(redisKey);
+      if (current === 1) await redis.pexpire(redisKey, windowMs);
+      const ttl = await redis.pttl(redisKey);
+      reply.header('X-RateLimit-Limit', String(max));
+      reply.header('X-RateLimit-Remaining', String(Math.max(0, max - current)));
+      reply.header('X-RateLimit-Reset', String(Math.ceil((Date.now() + (ttl > 0 ? ttl : windowMs)) / 1000)));
+      if (current > max) {
+        reply.code(429).send({ error: `请求过频频过过，请用后启心试` });
+        return false;
+      }
+      return true;
+    } catch {
+      // Fall through to in-memory
+    }
+  }
+  return consumeRateLimit(reply, key, max, windowMs);
+}
 function requestRateLimitKey(request: FastifyRequest, scope: string, suffix = '') {
   return `${scope}:${request.ip}:${suffix}`;
 }
@@ -273,8 +305,8 @@ app.get('/health', async () => ({
 app.post('/api/v1/auth/login', async (request, reply) => {
   const body = z.object({ accessKey: z.string().min(1), username: z.string().min(1), password: z.string().min(1) }).safeParse(request.body);
   const username = body.success ? body.data.username.trim().toLowerCase() : '';
-  if (!consumeRateLimit(reply, requestRateLimitKey(request, 'login-ip'), loginRateLimitMax, loginRateLimitWindowMs)) return;
-  if (username && !consumeRateLimit(reply, requestRateLimitKey(request, 'login-account', username), loginRateLimitMax, loginRateLimitWindowMs)) return;
+  if (!await consumeRateLimitAsync(reply, requestRateLimitKey(request, 'login-ip'), loginRateLimitMax, loginRateLimitWindowMs)) return;
+  if (username && !await consumeRateLimitAsync(reply, requestRateLimitKey(request, 'login-account', username), loginRateLimitMax, loginRateLimitWindowMs)) return;
   if (!body.success || body.data.accessKey !== accessKey) return fail(reply, 401, 'Invalid market credentials');
   const user = await prisma.user.findUnique({ where: { username } });
   if (!user || !user.enabled || !(await argon2.verify(user.passwordHash, body.data.password))) return fail(reply, 401, 'Invalid market credentials');
@@ -384,7 +416,7 @@ app.get('/api/v1/decks/:id', { preHandler: requireAuth }, async (request, reply)
 
 app.get('/api/v1/decks/:id/download', { preHandler: requireAuth }, async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-  if (!consumeRateLimit(reply, requestRateLimitKey(request, 'download', auth(request).id), downloadRateLimitMax, downloadRateLimitWindowMs)) return;
+  if (!await consumeRateLimitAsync(reply, requestRateLimitKey(request, 'download', auth(request).id), downloadRateLimitMax, downloadRateLimitWindowMs)) return;
   const requestedVersion = z.object({ version: z.coerce.number().int().positive().max(1000000000).optional() }).parse(request.query).version;
   const deck = await prisma.deck.findFirst({ where: { id, status: 'PUBLISHED' } });
   if (!deck) return fail(reply, 404, 'Deck not found');
@@ -398,7 +430,7 @@ app.get('/api/v1/decks/:id/download', { preHandler: requireAuth }, async (reques
 });
 
 app.post('/api/v1/my-decks', { preHandler: requireAuth }, async (request, reply) => {
-  if (!consumeRateLimit(reply, requestRateLimitKey(request, 'upload', auth(request).id), uploadRateLimitMax, uploadRateLimitWindowMs)) return;
+  if (!await consumeRateLimitAsync(reply, requestRateLimitKey(request, 'upload', auth(request).id), uploadRateLimitMax, uploadRateLimitWindowMs)) return;
   const parts = request.parts();
   let metadata: { title?: string; description?: string; category?: string } = {};
   let upload: Awaited<ReturnType<typeof readUpload>> | null = null;
@@ -435,7 +467,7 @@ app.post('/api/v1/my-decks/:id/versions', { preHandler: requireAuth }, async (re
   const deck = await prisma.deck.findFirst({ where: { id, ownerId: auth(request).id } });
   if (!deck) return fail(reply, 404, 'Deck not found');
   if (deck.status === 'DISABLED') return fail(reply, 409, 'Disabled decks cannot receive new versions');
-  if (!consumeRateLimit(reply, requestRateLimitKey(request, 'upload', auth(request).id), uploadRateLimitMax, uploadRateLimitWindowMs)) return;
+  if (!await consumeRateLimitAsync(reply, requestRateLimitKey(request, 'upload', auth(request).id), uploadRateLimitMax, uploadRateLimitWindowMs)) return;
   const parts = request.parts();
   let upload: Awaited<ReturnType<typeof readUpload>> | null = null;
   for await (const part of parts) if (part.type === 'file' && part.fieldname === 'package') upload = await readUpload(part);
@@ -759,4 +791,4 @@ app.setErrorHandler((error, request, reply) => {
 
 const port = Number(process.env.PORT || 4000);
 await app.listen({ host: process.env.HOST || '0.0.0.0', port });
-process.once('SIGTERM', async () => { await app.close(); await prisma.$disconnect(); });
+process.once('SIGTERM', async () => { await app.close(); await prisma.$disconnect(); if (redis) await redis.quit(); });
