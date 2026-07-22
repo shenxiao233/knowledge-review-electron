@@ -2992,3 +2992,23 @@ select option { color: #34413b; background: #fff; }
 .market-register-toggle { margin-top: 12px; text-align: center; }
 .market-register-toggle button { border: 0; background: transparent; color: #aaa; font-size: 12px; cursor: pointer; transition: color .15s ease; }
 .market-register-toggle button:hover { color: var(--green); }
+/* Deck reviews and ratings (Phase 2-10) */
+.market-reviews-section { margin-top: 24px; padding-top: 20px; border-top: 1px solid #e5e0d9; }
+.market-reviews-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.market-reviews-header h3 { font-size: 15px; color: #314139; margin: 0; }
+.market-reviews-summary { font-size: 13px; color: #888; }
+.market-review-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px; }
+.market-star-input { display: flex; gap: 4px; }
+.star-btn { border: 0; background: transparent; font-size: 24px; color: #ddd; cursor: pointer; padding: 0; line-height: 1; transition: color .15s ease, transform .1s ease; }
+.star-btn:hover, .star-btn.is-active { color: #f2cc8f; }
+.star-btn:hover { transform: scale(1.15); }
+.market-review-form textarea { border: 1px solid #e5e0d9; border-radius: 8px; padding: 10px 12px; font-size: 13px; resize: vertical; min-height: 48px; font-family: inherit; }
+.market-review-submit { align-self: flex-start; padding: 8px 18px; border-radius: 8px; border: 0; background: var(--green); color: #fff; font-size: 13px; cursor: pointer; }
+.market-review-submit:disabled { opacity: .5; }
+.market-review-list { display: flex; flex-direction: column; gap: 12px; }
+.market-review-item { padding: 12px 14px; background: #f9f8f5; border-radius: 10px; }
+.market-review-meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #888; margin-bottom: 6px; }
+.market-review-meta strong { color: #444; }
+.market-review-stars { color: #f2cc8f; letter-spacing: 1px; }
+.market-review-item p { font-size: 13px; color: #555; margin: 0; line-height: 1.5; }
+.market-reviews-empty { text-align: center; color: #aaa; font-size: 13px; font-style: italic; padding: 16px 0; }

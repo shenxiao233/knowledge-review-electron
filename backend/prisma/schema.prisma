@@ -44,6 +44,7 @@ model User {
   auditLogs    AuditLog[]
   categoryRequests MarketCategory[] @relation("CategoryCreator")
   favorites      DeckFavorite[]
+  reviews        DeckReview[]
 }
 
 model MarketCategory {
@@ -76,6 +77,7 @@ model Deck {
   @@index([status, updatedAt])
   @@index([ownerId, updatedAt])
   favorites    DeckFavorite[]
+  reviews      DeckReview[]
 }
 
 model DeckVersion {
@@ -131,4 +133,20 @@ model DeckFavorite {
 
   @@unique([deckId, userId])
   @@index([userId, createdAt])
+}
+
+model DeckReview {
+  id        String   @id @default(uuid()) @db.Uuid
+  deckId    String   @db.Uuid
+  deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rating    Int      // 1-5 stars
+  comment   String   @db.VarChar(2000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([deckId, userId])
+  @@index([deckId, createdAt])
+  @@index([userId])
 }
