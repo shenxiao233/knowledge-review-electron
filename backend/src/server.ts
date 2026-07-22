@@ -302,6 +302,32 @@ app.get('/health', async () => ({
   time: new Date().toISOString()
 }));
 
+
+// ─── User self-registration (Phase 2-9) ───
+const REGISTER_ENABLED = process.env.ALLOW_SELF_REGISTER !== 'false';
+const REGISTER_RATE_LIMIT_MAX = Number(process.env.REGISTER_RATE_LIMIT_MAX || 3);
+const REGISTER_RATE_LIMIT_WINDOW_MS = Number(process.env.REGISTER_RATE_LIMIT_WINDOW_SECONDS || 3600) * 1000;
+
+app.post('/api/v1/auth/register', async (request, reply) => {
+  if (!REGISTER_ENABLED) return fail(reply, 403, 'Self-registration is disabled');
+  const body = z.object({
+    accessKey: z.string().min(1),
+    username: z.string().min(3).max(80).regex(/^[a-zA-Z0-9_-]+$/, 'Username may only contain letters, numbers, hyphens and underscores'),
+    password: z.string().min(8).max(200)
+  }).safeParse(request.body);
+  if (!body.success) return fail(reply, 400, 'Invalid registration data');
+  if (body.data.accessKey !== accessKey) return fail(reply, 401, 'Invalid server key');
+  if (!await consumeRateLimitAsync(reply, requestRateLimitKey(request, 'register-ip'), REGISTER_RATE_LIMIT_MAX, REGISTER_RATE_LIMIT_WINDOW_MS)) return;
+  const username = body.data.username.trim().toLowerCase();
+  const existing = await prisma.user.findUnique({ where: { username } });
+  if (existing) return fail(reply, 409, 'Username already taken');
+  const passwordHash = await argon2.hash(body.data.password);
+  const user = await prisma.user.create({ data: { username, passwordHash, role: 'USER' } });
+  await prisma.auditLog.create({ data: { userId: user.id, action: 'auth.register' } });
+  const token = await app.jwt.sign({ id: user.id, username: user.username, role: user.role }, { expiresIn: '12h' });
+  return { token, user: { id: user.id, username: user.username, role: user.role } };
+});
+
 app.post('/api/v1/auth/login', async (request, reply) => {
   const body = z.object({ accessKey: z.string().min(1), username: z.string().min(1), password: z.string().min(1) }).safeParse(request.body);
   const username = body.success ? body.data.username.trim().toLowerCase() : '';

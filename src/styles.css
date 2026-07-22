@@ -2988,3 +2988,7 @@ select option { color: #34413b; background: #fff; }
 .global-search-empty strong { display: block; font-size: 15px; color: #666; margin-bottom: 4px; }
 .global-search-footer { display: flex; gap: 16px; justify-content: center; padding: 10px 20px; border-top: 1px solid #e5e0d9; font-size: 11px; color: #aaa; }
 .global-search-footer kbd { padding: 1px 5px; border: 1px solid #e5e0d9; border-radius: 3px; font-size: 10px; margin: 0 2px; }
+/* Market register toggle (Phase 2-9) */
+.market-register-toggle { margin-top: 12px; text-align: center; }
+.market-register-toggle button { border: 0; background: transparent; color: #aaa; font-size: 12px; cursor: pointer; transition: color .15s ease; }
+.market-register-toggle button:hover { color: var(--green); }

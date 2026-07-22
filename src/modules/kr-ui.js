@@ -288,6 +288,7 @@ function bind() {
   $('#marketGrid')?.addEventListener('click', handleMarketClick);
   $('#marketPagination')?.addEventListener('click', (event) => { const button = event.target.closest('[data-market-page]'); if (!button || button.disabled) return; marketPage = Number(button.dataset.marketPage); refreshMarketPage(); });
   $('#marketAuthForm')?.addEventListener('submit', submitMarketAuth);
+  $('#marketRegisterToggle')?.addEventListener('click', toggleMarketAuthMode);
   $('#marketPasswordToggle')?.addEventListener('click', () => { const field = $('#marketPassword'); if (field) field.type = field.type === 'password' ? 'text' : 'password'; });
   $('#adminBackMarketButton')?.addEventListener('click', showMarketDecks);
   $('#marketReturnLoginButton')?.addEventListener('click', returnToMarketLogin);
