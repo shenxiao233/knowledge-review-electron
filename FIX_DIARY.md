@@ -711,3 +711,364 @@ renderer.code = function(token) {
 2. 删除 `src/modules/markdown-renderer.js`
 3. 还原 `index.html` 中的 2 个 `<script>` 标签
 4. 还原 `kr-documents.js` 中的旧 `markdownToHtml` 函数
+
+
+---
+
+## 七、设置页无法切换选项 Bug 修复 + 全局选择器扫描
+
+> 日期：2026-07-23
+> 提交：`600faff` fix: 修复 38 处 $() 误用为 $$() 的选择器 bug
+> 严重度：🔴 严重（影响多个核心页面）
+
+### 问题现象
+
+设置页打开后，点击左侧导航（学习算法、关于、更新、数据恢复）时，其他选项卡无响应，页面卡在第一个面板上。
+
+### 根因
+
+`kr-settings.js` 第 169 行的 `setting()` 函数使用了 `$()`（`document.querySelector`，返回单个元素）来遍历多个 DOM 元素，但单个 DOM 元素没有 `.forEach()` 方法，导致 `TypeError` 抛出，后续面板切换逻辑中断。
+
+```javascript
+// 错误代码（kr-settings.js:169）
+function setting(name) {
+  $('.settings-nav button').forEach(...)   // ← TypeError!
+  $('.setting-panel').forEach(...)         // ← TypeError!
+}
+
+// 修复后
+function setting(name) {
+  $$('.settings-nav button').forEach(...)  // ← querySelectorAll，返回 NodeList
+  $$('.setting-panel').forEach(...)        // ← querySelectorAll
+}
+```
+
+### 全局扫描
+
+这不是孤立问题。对整个 `src/modules/` 目录做正则扫描 `(?<!\\\$)\\\$('...').forEach`，发现 **6 个文件共 38 处** 同类 bug：
+
+| 文件 | 修复数 | 影响范围 |
+|------|--------|----------|
+| `kr-market.js` | 18 | 管理后台所有操作按钮 |
+| `kr-ui.js` | 7 | 导航栏、格式栏、回收站标签 |
+| `kr-cards.js` | 6 | 卡片列表、卡组菜单、筛选器 |
+| `kr-settings.js` | 4 | 设置导航、视图切换 |
+| `kr-review.js` | 2 | 热力图、回收站标签 |
+| `kr-documents.js` | 1 | 右键菜单 |
+
+### 修复方法
+
+统一使用正则替换：
+```
+/\\\$(\'[^']*\')\)\.forEach/g → 替换为 →  $$\$1).forEach
+```
+
+### 教训
+
+1. **之前修复日记中已标记此 bug**（Bug #2/#3），但只修了 `kr-review.js` 和 `kr-settings.js` 的部分位置，未做全局扫描
+2. **建议添加 ESLint 规则** 检测 `$().forEach` 模式
+3. **单元测试应覆盖** `setting()`、`view()`、`renderMarket()` 等关键函数的调用
+
+---
+
+## 八、移动端适配 & 多端同步改造方案
+
+> 基于对后端 `server.ts`（936 行）+ Prisma Schema + 前端架构的深度分析
+
+### 现有架构现状
+
+```
+┌──────────────────────────────────────────────────┐
+│              桌面端 (Electron)                     │
+│                                                    │
+│  state.json ←→ preload.js ←→ IPC ←→ main.js     │
+│  (本地文件)    (安全桥接)     (进程间通信)  (文件读写)   │
+│                                                    │
+│  WebDAV 同步 (坚果云, 手动/自动推送整个 state.json) │
+│  市场 API (Fastify + PostgreSQL)                   │
+└──────────────────────────────────────────────────┘
+```
+
+**核心问题：**
+- **全量同步**：当前 `state.json`（3.2MB+）是整体读写，任何小改动都要传输全量
+- **无版本控制**：没有向量时钟或逻辑时钟，无法检测冲突
+- **单设备假设**：`state.json` 没有设备标识，WebDAV 是覆盖式写入
+- **无增量 API**：后端只有牌组市场的 API，没有用户个人数据的 CRUD API
+- **Electron 绑定**：`preload.js` 暴露的 `reviewBridge` 依赖 IPC，移动端不存在
+
+### 改造方案
+
+#### 阶段 A：后端新增用户数据 API（必须）
+
+**目标：** 将 `state.json` 的核心数据迁移到 PostgreSQL，支持多设备访问
+
+```prisma
+// 新增 Schema
+model UserState {
+  id        String   @id @default(uuid())
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  
+  // 分片存储（而非单个大 JSON）
+  cards     Json     // 卡片数组
+  documents Json     // 文档数组
+  groups    Json     // 卡组分组
+  folders   Json     // 文档文件夹
+  settings  Json     // 用户设置
+  trash     Json     // 回收站
+  
+  // 同步元数据
+  version   Int      @default(1)      // 乐观锁版本号
+  deviceId  String?  @db.VarChar(64)  // 最后写入的设备标识
+  updatedAt DateTime @updatedAt
+  
+  @@unique([userId])
+}
+
+model SyncLog {
+  id        String   @id @default(uuid())
+  userId    String   @db.Uuid
+  user      User     @relation(...)
+  deviceId  String   @db.VarChar(64)
+  action    String   @db.VarChar(20)  // push / pull / merge
+  fromVersion Int
+  toVersion   Int
+  conflict    Boolean @default(false)
+  createdAt DateTime @default(now())
+  
+  @@index([userId, createdAt])
+}
+```
+
+**新增 API 端点：**
+
+| 端点 | 方法 | 功能 |
+|------|------|------|
+| `/api/v1/sync/pull` | GET | 拉取云端最新状态 |
+| `/api/v1/sync/push` | POST | 推送本地变更（带版本冲突检测）|
+| `/api/v1/sync/diff` | POST | 增量同步（只传输变更部分）|
+| `/api/v1/sync/conflict` | GET | 获取冲突快照 |
+| `/api/v1/sync/resolve` | POST | 解决冲突 |
+
+**冲突处理策略（Last-Write-Wins + 冲突日志）：**
+
+```typescript
+// POST /api/v1/sync/push
+async (request, reply) => {
+  const { deviceId, clientVersion, payload } = body;
+  const state = await prisma.userState.findUnique({ where: { userId } });
+  
+  if (!state) {
+    // 首次同步：直接存储
+    await prisma.userState.create({ data: { userId, ...payload, version: 1, deviceId }});
+    return { ok: true, version: 1 };
+  }
+  
+  if (state.version === clientVersion) {
+    // 正常同步：版本匹配，直接更新
+    const newVersion = state.version + 1;
+    await prisma.userState.update({ where: { userId }, data: { ...payload, version: newVersion, deviceId }});
+    return { ok: true, version: newVersion };
+  }
+  
+  // 冲突！保存冲突快照，返回 409
+  await prisma.syncConflict.create({
+    data: {
+      userId,
+      serverVersion: state.version,
+      clientVersion,
+      serverSnapshot: state, // JSON 存储
+      clientSnapshot: payload,
+      deviceId
+    }
+  });
+  return reply.status(409).send({
+    conflict: true,
+    serverVersion: state.version,
+    clientVersion,
+    message: '数据冲突，请在设置中手动解决'
+  });
+}
+```
+
+#### 阶段 B：前端抽象层（必须）
+
+**目标：** 将 Electron 专属 API 抽象为跨平台接口
+
+```javascript
+// src/bridge/platform-bridge.js
+// 统一接口层，屏蔽 Electron / Web / Mobile 差异
+
+class PlatformBridge {
+  // 数据持久化
+  async loadData() { /* 子类实现 */ }
+  async saveData(state) { /* 子类实现 */ }
+  
+  // 云同步
+  async syncPull() { /* 统一调 API */ }
+  async syncPush(state, version) { /* 统一调 API */ }
+  
+  // 文件系统
+  async saveFile(data, filename) { /* 子类实现 */ }
+  
+  // 窗口控制
+  minimize() { /* 子类实现 */ }
+  close() { /* 子类实现 */ }
+}
+
+// Electron 实现
+class ElectronBridge extends PlatformBridge {
+  async loadData() { return window.reviewBridge.data.load(); }
+  async saveData(state) { return window.reviewBridge.data.save(state); }
+  minimize() { return window.reviewBridge.windowControls.minimize(); }
+}
+
+// Web/Mobile 实现（Capacitor / React Native）
+class WebBridge extends PlatformBridge {
+  async loadData() {
+    // 优先从 IndexedDB 读取，然后调 /api/v1/sync/pull 合并
+    const local = await idbLoadState();
+    const remote = await fetch('/api/v1/sync/pull', { headers: authHeaders() });
+    return mergeStates(local, await remote.json());
+  }
+  
+  async saveData(state) {
+    await idbSaveState(state);
+    // 后台异步推送到云端
+    navigator.serviceWorker?.ready?.then(sw => {
+      sw.active.postMessage({ type: 'SYNC_PUSH', state });
+    });
+  }
+}
+
+// 工厂方法
+function createBridge() {
+  if (window.reviewBridge) return new ElectronBridge();
+  if (window.Capacitor) return new CapacitorBridge();
+  return new WebBridge();
+}
+```
+
+#### 阶段 C：移动端技术选型
+
+| 方案 | 优点 | 缺点 | 推荐度 |
+|------|------|------|--------|
+| **Capacitor + 现有 HTML** | 代码复用率最高（90%+），开发快 | 性能上限低，离线能力弱 | ⭐⭐⭐⭐⭐ |
+| React Native | 原生性能好 | 需要重写全部 UI，工期 3-6 个月 | ⭐⭐ |
+| Flutter | 跨平台一致性好 | 需要学习 Dart，完全重写 | ⭐ |
+| PWA | 零安装，部署快 | 推送/后台同步受限 | ⭐⭐⭐⭐ |
+
+**推荐：Capacitor（首选） + PWA（备选）**
+
+理由：
+1. 现有前端是纯 HTML/JS（无 React/Vue），Capacitor 可以直接加载
+2. CSS 做响应式适配即可，不需要重写 UI 框架
+3. 通过 `createBridge()` 工厂方法，Electron 和 Capacitor 共享 95% 代码
+4. PWA 作为 Web 版本的基础，不需要额外开发
+
+#### 阶段 D：CSS 响应式适配
+
+```css
+/* styles.css 添加媒体查询 */
+@media (max-width: 768px) {
+  /* 侧边栏改为抽屉式 */
+  .card-group-rail {
+    position: fixed;
+    left: -100%;
+    transition: left 0.3s;
+    z-index: 100;
+  }
+  .card-group-rail.open { left: 0; }
+  
+  /* 卡片列表单列布局 */
+  .card-list { grid-template-columns: 1fr; }
+  
+  /* 底部导航栏替代顶部标签 */
+  .main-rail {
+    position: fixed;
+    bottom: 0;
+    flex-direction: row;
+  }
+  
+  /* 文档编辑器全屏模式 */
+  .document-workbench {
+    flex-direction: column;
+  }
+  .tree-panel { display: none; }
+  .tree-panel.open { display: block; position: fixed; }
+}
+```
+
+#### 阶段 E：离线优先 & 后台同步
+
+```javascript
+// Service Worker 策略
+self.addEventListener('sync', (event) => {
+  if (event.tag === 'sync-push') {
+    event.waitUntil(
+      fetch('/api/v1/sync/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': token },
+        body: JSON.stringify(pendingState)
+      })
+    );
+  }
+});
+
+// 网络恢复时自动同步
+self.addEventListener('online', () => {
+  self.registration.sync.register('sync-push');
+});
+```
+
+### 改造路线图
+
+```
+Phase A (2-3 周)    → 后端新增用户数据同步 API
+Phase B (1-2 周)    → 前端 PlatformBridge 抽象层
+Phase C (1 周)      → Capacitor 项目初始化 + Bridge 实现
+Phase D (2-3 周)    → CSS 响应式适配
+Phase E (1-2 周)    → Service Worker + 离线同步
+Phase F (持续)      → 测试 + 性能优化 + 发布
+```
+
+### 风险评估
+
+| 风险 | 概率 | 影响 | 缓解措施 |
+|------|------|------|----------|
+| 多设备冲突频繁 | 中 | 高 | LWW + 冲突日志 + 手动解决 UI |
+| state.json 迁移数据丢失 | 低 | 严重 | 迁移工具 + 回滚备份 |
+| 移动端性能不足 | 中 | 中 | 虚拟列表 + 懒加载 + Web Worker |
+| 后端单点故障 | 低 | 高 | Redis 缓存层 + 数据库备份 |
+| JWT Token 泄露 | 低 | 严重 | HttpOnly Cookie + Refresh Token |
+
+### 数据迁移脚本
+
+```javascript
+// 一次性迁移：state.json → PostgreSQL
+async function migrateUserState(userId, stateJson) {
+  const state = JSON.parse(stateJson);
+  await prisma.userState.upsert({
+    where: { userId },
+    create: {
+      userId,
+      cards: state.cards || [],
+      documents: state.documents || [],
+      groups: state.groups || [],
+      folders: state.folders || [],
+      settings: state.settings || {},
+      trash: state.trash || {},
+      version: 1,
+      deviceId: 'migration'
+    },
+    update: {
+      cards: state.cards,
+      documents: state.documents,
+      groups: state.groups,
+      folders: state.folders,
+      settings: state.settings,
+      trash: state.trash,
+    }
+  });
+}
+```
