@@ -4,11 +4,11 @@
  * Provides: marketApi, renderMarket, showMarketWorkspace, handleMarketLogin,
  *           openAdminWorkspace, renderAdminWorkspace, bindAdminWorkspaceEvents,
  *           importMarketCards, resolveMarketConflicts, openMarketUpload,
- *           marketPublish, ensureServerSettingsPanel, toggleFavorite, isDeckFavorited
+ *           marketPublish, ensureServerSettingsPanel, toggleFavorite, isDeckFavorited, openPasswordChangeDialog, loadMarketFavorites
  */
 function marketDeckMatches(deck) {
   const query = marketQuery.toLowerCase();
-  return (marketCategory === 'all' || deck.category === marketCategory)
+  return (marketCategory === 'all' || (marketCategory === 'favorites' ? isDeckFavorited(deck.id) : deck.category === marketCategory))
     && (!query || [deck.title, deck.author, deck.category, ...deck.tags].join(' ').toLowerCase().includes(query));
 }
 
@@ -88,13 +88,23 @@ function formatMarketDate(value) {
 async function loadMarketDecks() {
   const params = new URLSearchParams({ page: String(marketPage), pageSize: String(marketPageSize), sort: marketSort });
   if (marketQuery) params.set('q', marketQuery);
-  if (marketCategory !== 'all') params.set('category', marketCategory);
+  if (marketCategory !== 'all' && marketCategory !== 'favorites') params.set('category', marketCategory);
   const result = await marketApi(`/decks?${params.toString()}`);
   const decks = Array.isArray(result) ? result : result.items;
   marketTotal = Array.isArray(result) ? decks.length : Number(result.total || 0);
   marketTotalPages = Array.isArray(result) ? 1 : Math.max(1, Number(result.totalPages || 1));
   marketDecks = Array.isArray(decks) ? decks.map(normalizeMarketDeck) : [];
   marketUpdateCache.clear();
+}
+async function loadMarketFavorites() {
+  if (!marketToken) return;
+  try {
+    const result = await marketApi('/favorites');
+    state.favorites = Array.isArray(result?.favorites) ? result.favorites.map(f => f.deckId) : [];
+    save();
+  } catch (err) {
+    console.warn('[MARKET] 收藏加载失败:', err.message);
+  }
 }
 async function loadMarketCategories() {
   try {
@@ -103,8 +113,8 @@ async function loadMarketCategories() {
     const select = $('#marketCategoryFilter');
     if (select) {
       const current = marketCategory;
-      select.innerHTML = `<option value="all">全部分类</option>${marketCategories.map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('')}`;
-      select.value = marketCategories.includes(current) ? current : 'all';
+      select.innerHTML = `<option value="all">全部分类</option><option value="favorites">★ 我的收藏</option>${marketCategories.map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('')}`;
+      select.value = (current === 'favorites' || marketCategories.includes(current)) ? current : 'all';
       marketCategory = select.value;
     }
     const uploadSelect = $('#marketUploadCategorySelect');
@@ -238,6 +248,7 @@ async function showMarketDecks() {
     try {
       await loadMarketCategories();
       await loadMarketDecks();
+      await loadMarketFavorites();
     } catch (error) {
       toast(error instanceof Error ? error.message : '公开牌组刷新失败。');
     }
@@ -246,7 +257,7 @@ async function showMarketDecks() {
 }
 async function refreshMarketPage({ resetPage = false } = {}) {
   if (resetPage) marketPage = 1;
-  try { await loadMarketCategories(); await loadMarketDecks(); } catch (error) { toast(error instanceof Error ? error.message : '公开牌组刷新失败。'); }
+  try { await loadMarketCategories(); await loadMarketDecks(); await loadMarketFavorites(); } catch (error) { toast(error instanceof Error ? error.message : '公开牌组刷新失败。'); }
   renderMarket();
 }
 function marketProfileSummary() {
@@ -256,13 +267,57 @@ function marketProfileSummary() {
 function logoutMarket() {
   returnToMarketLogin();
 }
+function openPasswordChangeDialog() {
+  let dlg = document.getElementById('passwordChangeDialog');
+  if (dlg) dlg.remove();
+  dlg = document.createElement('dialog');
+  dlg.id = 'passwordChangeDialog';
+  dlg.className = 'modal';
+  dlg.innerHTML = '<form method="dialog" class="modal-card" style="max-width:420px;padding:24px"><div class="modal-header"><div><span class="modal-eyebrow">ACCOUNT SECURITY</span><h2>修改密码</h2><p class="modal-subtitle">正在修改账户 ' + (marketUser?.username || '') + ' 的密码</p></div><button type="button" id="pwdDialogClose" class="dialog-close" title="关闭">×</button></div><div style="display:flex;flex-direction:column;gap:12px;margin:16px 0"><label>当前密码<input id="pwdCurrentInput" type="password" autocomplete="current-password" placeholder="输入当前密码" style="width:100%;padding:8px 12px;border:1px solid #e5e0d9;border-radius:8px;font-size:14px" /></label><label>新密码<input id="pwdNewInput" type="password" autocomplete="new-password" placeholder="至少 8 个字符" minlength="8" style="width:100%;padding:8px 12px;border:1px solid #e5e0d9;border-radius:8px;font-size:14px" /></label><label>确认新密码<input id="pwdConfirmInput" type="password" autocomplete="new-password" placeholder="再次输入新密码" style="width:100%;padding:8px 12px;border:1px solid #e5e0d9;border-radius:8px;font-size:14px" /></label></div><menu style="display:flex;gap:8px;justify-content:flex-end;margin:0"><button type="button" id="pwdCancelBtn" value="cancel">取消</button><button type="button" class="primary" id="pwdSubmitBtn">修改密码</button></menu></form>';
+  document.body.appendChild(dlg);
+  dlg.showModal();
+  dlg.querySelector('#pwdDialogClose')?.addEventListener('click', () => dlg.close());
+  dlg.querySelector('#pwdCancelBtn')?.addEventListener('click', () => dlg.close());
+  dlg.querySelector('#pwdSubmitBtn')?.addEventListener('click', async () => {
+    const current = (dlg.querySelector('#pwdCurrentInput')?.value || '').trim();
+    const newPwd = (dlg.querySelector('#pwdNewInput')?.value || '').trim();
+    const confirm = (dlg.querySelector('#pwdConfirmInput')?.value || '').trim();
+    if (!current) return toast('请输入当前密码。');
+    if (!newPwd || newPwd.length < 8) return toast('新密码至少需要 8 个字符。');
+    if (newPwd !== confirm) return toast('两次输入的新密码不一致。');
+    const btn = dlg.querySelector('#pwdSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = '修改中…';
+    try {
+      await marketApi('/me/password', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: current, newPassword: newPwd })
+      });
+      toast('密码修改成功，请重新登录。');
+      dlg.close();
+      marketToken = '';
+      marketUser = null;
+      marketUnlocked = false;
+      if (window.reviewBridge?.market?.clearCredentials) {
+        void window.reviewBridge.market.clearCredentials();
+      }
+      returnToMarketLogin();
+    } catch (err) {
+      toast('密码修改失败：' + (err.message || '未知错误'));
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '修改密码';
+    }
+  });
+}
 function renderMarketAccountMenu() {
   const host = marketSurface === 'admin' ? $('#marketAdminAccountSlot') : $('#marketAccountSlot');
   if (!host || !marketUnlocked || !marketUser) return;
   const profile = marketProfileSummary();
-  host.innerHTML = `<div class="market-account"><button type="button" class="market-account-trigger" id="marketAccountButton" aria-expanded="false"><span class="market-account-avatar">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><span class="market-account-name">${esc(profile.name)}</span><svg><use href="#i-chevron-down"></use></svg></button><div class="market-account-menu" id="marketAccountMenu" hidden><div class="market-account-menu-head"><span class="market-account-avatar large">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><div><strong>${esc(profile.name)}</strong><small>${esc(marketUser.role === 'ADMIN' ? '管理员账户' : '许可账户')}</small></div></div><button type="button" data-market-account-action="profile">编辑资料</button>${marketUser.role === 'ADMIN' ? '<button type="button" data-market-account-action="admin">管理后台</button>' : ''}<button type="button" class="danger" data-market-account-action="logout">退出登录</button></div></div>`;
+  host.innerHTML = `<div class="market-account"><button type="button" class="market-account-trigger" id="marketAccountButton" aria-expanded="false"><span class="market-account-avatar">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><span class="market-account-name">${esc(profile.name)}</span><svg><use href="#i-chevron-down"></use></svg></button><div class="market-account-menu" id="marketAccountMenu" hidden><div class="market-account-menu-head"><span class="market-account-avatar large">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><div><strong>${esc(profile.name)}</strong><small>${esc(marketUser.role === 'ADMIN' ? '管理员账户' : '许可账户')}</small></div></div><button type="button" data-market-account-action="profile">编辑资料</button>${marketUser.role === 'ADMIN' ? '<button type="button" data-market-account-action="admin">管理后台</button>' : ''}<button type="button" data-market-account-action="password">修改密码</button><button type="button" class="danger" data-market-account-action="logout">退出登录</button></div></div>`;
   $('#marketAccountButton')?.addEventListener('click', (event) => { event.stopPropagation(); const menu = $('#marketAccountMenu'); if (menu) menu.hidden = !menu.hidden; $('#marketAccountButton').setAttribute('aria-expanded', String(!menu.hidden)); });
-  $$('#marketAccountMenu [data-market-account-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.marketAccountAction; if (action === 'profile') openProfileEditor(); if (action === 'admin') openAdminWorkspace(); if (action === 'logout') logoutMarket(); }));
+  $$('#marketAccountMenu [data-market-account-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.marketAccountAction; if (action === 'profile') openProfileEditor(); if (action === 'admin') openAdminWorkspace(); if (action === 'password') openPasswordChangeDialog(); if (action === 'logout') logoutMarket(); }));
 }
 function marketDeckHasUpdate(deck) {
   const localVersion = Number(state.market?.decks?.[deck.id]?.version || 0);
@@ -285,7 +340,11 @@ function renderMarket() {
   $('#marketUnlockedContent')?.toggleAttribute('hidden', !marketUnlocked);
   if (!grid) return;
   const decks = marketDecksForDisplay();
-  grid.innerHTML = decks.length ? decks.map((deck) => `<article class="market-deck-card${marketDeckHasUpdate(deck) ? ' has-update' : ''}" data-market-deck="${esc(deck.id)}"><div class="market-deck-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}">${marketDeckNewBadge(deck)}<span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${esc(deck.tags.join(' · '))}</small><i aria-hidden="true"></i></div><div class="market-deck-body"><div class="market-deck-heading"><div><h3>${esc(deck.title)}</h3><span>作者 ${esc(deck.author)}</span></div><button type="button" class="market-fav-button${isDeckFavorited(deck.id) ? ' is-fav' : ''}" data-market-fav="${esc(deck.id)}" aria-label="收藏牌组"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button><button type="button" class="market-more-button" data-market-detail="${esc(deck.id)}" aria-label="查看牌组详情"><svg><use href="#i-chevron-right"></use></svg></button></div><p>${esc(deck.description)}</p><div class="market-deck-meta"><span><strong>${deck.cards}</strong> 张卡片</span><span><strong>${deck.downloads}</strong> 次下载</span><span>${esc(deck.updated)}</span></div><button type="button" class="market-view-deck" data-market-detail="${esc(deck.id)}">${marketDeckHasUpdate(deck) ? '更新牌组' : '查看牌组'}</button></div></article>`).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
+  grid.innerHTML = decks.length ? decks.map((deck) => {
+    const hasUpdate = marketDeckHasUpdate(deck);
+    const isFav = isDeckFavorited(deck.id);
+    return `<article class="market-deck-card-v2${hasUpdate ? ' has-update' : ''}" data-market-deck="${esc(deck.id)}" style="--cat-color:${esc(deck.accent)}"><div class="mc2-header"><span class="mc2-category">${esc(deck.category)}</span><div style="display:flex;gap:6px;align-items:center">${hasUpdate ? '<span class="mc2-update-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>可更新</span>' : ''}<button type="button" class="market-fav-button${isFav ? ' is-fav' : ''}" data-market-fav="${esc(deck.id)}" aria-label="收藏牌组"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button></div></div><h3 class="mc2-title" data-market-detail="${esc(deck.id)}">${esc(deck.title)}</h3><p class="mc2-author">作者 ${esc(deck.author)}</p><p class="mc2-desc">${esc(deck.description || '由 ' + deck.author + ' 分享的学习牌组。')}</p><div class="mc2-meta"><span class="mc2-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>${deck.cards} 张卡片</span><span class="mc2-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${deck.downloads} 次下载</span><span class="mc2-meta-item mc2-date">${esc(deck.updated)}</span></div><button type="button" class="mc2-action-btn" data-market-detail="${esc(deck.id)}">${hasUpdate ? '更新牌组' : '查看牌组'}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button></article>`;
+  }).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
   const pager = ensureMarketPagination();
   if (pager) {
     pager.hidden = marketTotalPages <= 1;
@@ -398,6 +457,8 @@ async function openMarketDetail(deckId) {
   }
 }
 function handleMarketClick(event) {
+  const favButton = event.target.closest('[data-market-fav]');
+  if (favButton) { toggleFavorite(favButton.dataset.marketFav, event); return; }
   const button = event.target.closest('[data-market-detail]');
   if (button) openMarketDetail(button.dataset.marketDetail);
 }
@@ -426,6 +487,7 @@ async function submitMarketAuth(event) {
     await loadMarketCategories();
     await syncMyMarketDeckMetadata();
     await loadMarketDecks();
+    await loadMarketFavorites();
     marketUnlocked = true;
     if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
     $('#marketAuthForm')?.classList.add('is-authenticated');
