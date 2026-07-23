@@ -317,7 +317,7 @@ function renderMarketAccountMenu() {
   const profile = marketProfileSummary();
   host.innerHTML = `<div class="market-account"><button type="button" class="market-account-trigger" id="marketAccountButton" aria-expanded="false"><span class="market-account-avatar">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><span class="market-account-name">${esc(profile.name)}</span><svg><use href="#i-chevron-down"></use></svg></button><div class="market-account-menu" id="marketAccountMenu" hidden><div class="market-account-menu-head"><span class="market-account-avatar large">${profile.avatar ? `<img src="${esc(profile.avatar)}" alt="" />` : esc(profile.name.slice(0, 1).toUpperCase())}</span><div><strong>${esc(profile.name)}</strong><small>${esc(marketUser.role === 'ADMIN' ? '管理员账户' : '许可账户')}</small></div></div><button type="button" data-market-account-action="profile">编辑资料</button>${marketUser.role === 'ADMIN' ? '<button type="button" data-market-account-action="admin">管理后台</button>' : ''}<button type="button" data-market-account-action="password">修改密码</button><button type="button" class="danger" data-market-account-action="logout">退出登录</button></div></div>`;
   $('#marketAccountButton')?.addEventListener('click', (event) => { event.stopPropagation(); const menu = $('#marketAccountMenu'); if (menu) menu.hidden = !menu.hidden; $('#marketAccountButton').setAttribute('aria-expanded', String(!menu.hidden)); });
-  $$$('#marketAccountMenu [data-market-account-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.marketAccountAction; if (action === 'profile') openProfileEditor(); if (action === 'admin') openAdminWorkspace(); if (action === 'password') openPasswordChangeDialog(); if (action === 'logout') logoutMarket(); }));
+  $$('#marketAccountMenu [data-market-account-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.marketAccountAction; if (action === 'profile') openProfileEditor(); if (action === 'admin') openAdminWorkspace(); if (action === 'password') openPasswordChangeDialog(); if (action === 'logout') logoutMarket(); }));
 }
 function marketDeckHasUpdate(deck) {
   const localVersion = Number(state.market?.decks?.[deck.id]?.version || 0);
@@ -653,7 +653,7 @@ async function renderAdminWorkspace() {
   const [title, subtitle] = titleMap[adminActiveTab] || titleMap.overview;
   $('#adminPageTitle').textContent = title;
   $('#adminPageSubtitle').textContent = subtitle;
-  $$$('.admin-nav [data-admin-tab]').forEach((button) => button.classList.toggle('active', button.dataset.adminTab === adminActiveTab));
+  $$('.admin-nav [data-admin-tab]').forEach((button) => button.classList.toggle('active', button.dataset.adminTab === adminActiveTab));
   const content = $('#adminPageContent');
   // Bind navigation before awaiting remote data so a failed endpoint cannot freeze the workspace.
   bindAdminWorkspaceEvents();
@@ -741,12 +741,12 @@ async function renderAdminWorkspace() {
   bindAdminWorkspaceEvents();
 }
 function bindAdminWorkspaceEvents() {
-  $$$('.admin-nav [data-admin-tab]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminTab; renderAdminWorkspace(); });
-  $$$('[data-admin-go]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminGo; renderAdminWorkspace(); });
-  $$$('[data-admin-page]').forEach((button) => button.onclick = () => { const kind = button.dataset.adminPage; adminPage[kind] = Number(button.dataset.page); renderAdminWorkspace(); });
-  $$$('[data-admin-retry]').forEach((button) => button.onclick = () => renderAdminWorkspace());
-  $$$('[data-admin-storage-refresh]').forEach((button) => button.onclick = async () => { button.disabled = true; try { const result = await adminApi('/admin/storage/health'); toast(result.healthy ? '存储检查通过。' : `发现 ${result.missing.length + result.orphanFiles.length} 个文件问题。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '存储检查失败。'); } finally { button.disabled = false; } });
-  $$$('[data-admin-storage-cleanup]').forEach((button) => button.onclick = async () => { if (!window.confirm('只清理超过 24 小时的临时上传文件，继续吗？')) return; button.disabled = true; try { const result = await adminApi('/admin/storage/cleanup', { method: 'POST', body: JSON.stringify({ olderThanHours: 24, removeOrphans: false, removeQuarantine: false }) }); toast(`已清理 ${result.removed.length} 个临时文件。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '清理失败。'); } finally { button.disabled = false; } });
+  $$('.admin-nav [data-admin-tab]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminTab; renderAdminWorkspace(); });
+  $$('[data-admin-go]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminGo; renderAdminWorkspace(); });
+  $$('[data-admin-page]').forEach((button) => button.onclick = () => { const kind = button.dataset.adminPage; adminPage[kind] = Number(button.dataset.page); renderAdminWorkspace(); });
+  $$('[data-admin-retry]').forEach((button) => button.onclick = () => renderAdminWorkspace());
+  $$('[data-admin-storage-refresh]').forEach((button) => button.onclick = async () => { button.disabled = true; try { const result = await adminApi('/admin/storage/health'); toast(result.healthy ? '存储检查通过。' : `发现 ${result.missing.length + result.orphanFiles.length} 个文件问题。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '存储检查失败。'); } finally { button.disabled = false; } });
+  $$('[data-admin-storage-cleanup]').forEach((button) => button.onclick = async () => { if (!window.confirm('只清理超过 24 小时的临时上传文件，继续吗？')) return; button.disabled = true; try { const result = await adminApi('/admin/storage/cleanup', { method: 'POST', body: JSON.stringify({ olderThanHours: 24, removeOrphans: false, removeQuarantine: false }) }); toast(`已清理 ${result.removed.length} 个临时文件。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '清理失败。'); } finally { button.disabled = false; } });
   const createUserForm = $('#adminCreateUserForm');
   if (createUserForm) createUserForm.onsubmit = async (event) => {
     event.preventDefault();
@@ -780,7 +780,7 @@ function bindAdminWorkspaceEvents() {
       submit.disabled = false;
     }
   };
-  $$$('[data-admin-category-action]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-category-action]').forEach((button) => button.onclick = async () => {
     if (button.disabled) return;
     button.disabled = true;
     try {
@@ -793,7 +793,7 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-category-edit]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-category-edit]').forEach((button) => button.onclick = async () => {
     if (button.disabled) return;
     const row = button.closest('[data-admin-category-row]');
     const label = row?.querySelector('strong');
@@ -821,7 +821,7 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-category-cancel]').forEach((button) => button.onclick = () => {
+  $$('[data-admin-category-cancel]').forEach((button) => button.onclick = () => {
     const row = button.closest('[data-admin-category-row]');
     const edit = row?.querySelector('[data-admin-category-edit]');
     const label = row?.querySelector('strong');
@@ -832,7 +832,7 @@ function bindAdminWorkspaceEvents() {
     input?.toggleAttribute('hidden', true);
     button.toggleAttribute('hidden', true);
   });
-  $$$('[data-admin-category-delete]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-category-delete]').forEach((button) => button.onclick = async () => {
     if (button.disabled || !window.confirm(`确定删除分类“${button.dataset.adminCategoryName}”吗？`)) return;
     button.disabled = true;
     try {
@@ -845,7 +845,7 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-deck-category-save]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-deck-category-save]').forEach((button) => button.onclick = async () => {
     if (button.disabled) return;
     const select = document.querySelector(`[data-admin-deck-category-select="${button.dataset.adminDeckCategorySave}"]`);
     const category = select?.value.trim();
@@ -862,7 +862,7 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-deck-category]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-deck-category]').forEach((button) => button.onclick = async () => {
     const category = window.prompt('请输入新的牌组分类：', button.dataset.adminDeckCategory || '');
     if (!category?.trim()) return;
     button.disabled = true;
@@ -876,8 +876,8 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-user-action]').forEach((button) => button.onclick = async () => { try { await adminApi(`/admin/users/${button.dataset.adminUserId}/${button.dataset.adminUserAction}`, { method: 'PATCH' }); renderAdminWorkspace(); } catch (error) { toast(error.message || '更新账户失败。'); } });
-  $$$('[data-admin-deck-action]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-user-action]').forEach((button) => button.onclick = async () => { try { await adminApi(`/admin/users/${button.dataset.adminUserId}/${button.dataset.adminUserAction}`, { method: 'PATCH' }); renderAdminWorkspace(); } catch (error) { toast(error.message || '更新账户失败。'); } });
+  $$('[data-admin-deck-action]').forEach((button) => button.onclick = async () => {
     if (button.disabled) return;
     button.disabled = true;
     try {
@@ -890,7 +890,7 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-deck-delete]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-deck-delete]').forEach((button) => button.onclick = async () => {
     if (button.disabled || !window.confirm('永久删除后，服务器上的牌组、历史版本和下载记录都无法恢复。确定继续吗？')) return;
     button.disabled = true;
     try {
@@ -904,7 +904,7 @@ function bindAdminWorkspaceEvents() {
       button.disabled = false;
     }
   });
-  $$$('[data-admin-version-action]').forEach((button) => button.onclick = async () => {
+  $$('[data-admin-version-action]').forEach((button) => button.onclick = async () => {
     if (button.disabled) return;
     button.disabled = true;
     try {
