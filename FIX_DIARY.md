@@ -179,6 +179,52 @@ fix: resolve critical UI bugs causing unresponsive interface
 
 ---
 
+
+
+---
+
+### Bug #5：卡牌市场收藏功能未实装（严重）
+
+**文件：** `src/modules/kr-market.js`
+**提交：** `ecc5408`
+**严重度：** 🔴 严重
+
+**问题现象：**
+卡牌市场的收藏按钮（❤️）虽然渲染出来了，但点击收藏后数据不会持久化到服务器，且无法通过分类筛选查看已收藏的牌组。
+
+**根因分析：**
+1. **缺少 `loadMarketFavorites()` 函数** — 没有从服务器 `GET /api/v1/favorites` 拉取收藏列表，`state.favorites` 始终为空数组
+2. **登录流程未加载收藏** — 认证成功后没有调用收藏加载函数
+3. **分类筛选不支持 favorites** — `loadMarketCategories()` 重写 `<select>` 时没有包含 "★ 我的收藏" 选项
+4. **`marketDeckMatches()` 不识别 favorites** — 将 `favorites` 当作普通分类名匹配 `deck.category`，永远匹配不到
+5. **`loadMarketDecks()` 错误发送参数** — `category=favorites` 被发送到服务器查询，返回空结果
+
+**修复方案：**
+- 新增 `loadMarketFavorites()` 函数，登录后/刷新时自动调用
+- `marketDeckMatches()` 添加 `favorites` 特殊判断：`isDeckFavorited(deck.id)`
+- `loadMarketDecks()` 跳过 `favorites` 作为服务器分类参数
+- `loadMarketCategories()` 保留 "★ 我的收藏" 选项
+- `showMarketDecks()` 和 `refreshMarketPage()` 中也调用 `loadMarketFavorites()`
+
+---
+
+### Bug #6：密码修改功能位置不当（中等）
+
+**文件：** `src/modules/kr-market.js`, `src/modules/kr-settings.js`, `src/index.html`
+**提交：** `ecc5408`
+**严重度：** 🟡 中等
+
+**问题现象：**
+密码修改功能放在应用设置页面的"安全"标签页中。用户反馈应在牌组市场的个人设置菜单中找到此功能。
+
+**修复方案：**
+1. 从 `kr-settings.js` 移除 `ensureAccountSecurityPanel()` 函数
+2. 从 `index.html` 移除设置导航中的 "安全" 按钮和 `accountPanel` 面板
+3. 在市场账户菜单中添加"修改密码"按钮
+4. 新增 `openPasswordChangeDialog()` 使用 `<dialog>` 原生弹窗
+5. 简化 `setting()` 函数，移除 `account` 条件分支
+
+
 ## 二、已知限制与注意事项
 
 ### IndexedDB 超时
