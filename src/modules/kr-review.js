@@ -20,15 +20,15 @@ function buildQueue(force = false) {
   const priority = ['new', 'review', 'mixed'].includes(state.settings.reviewPriority) ? state.settings.reviewPriority : 'mixed';
   const limitedNewCards = newCards.slice(0, allowedNew);
   const candidates = priority === 'new' ? [...limitedNewCards, ...reviewCards] : priority === 'review' ? [...reviewCards, ...limitedNewCards] : [...reviewCards, ...limitedNewCards];
-  const candidateKey = `${priority}:${candidates.map((card) => `${card.id}:${card.dueAt}:${card.reviews}:${card.fsrs?.state || ''}`).join('|')}`;
+  // BUG-06 fix: Include queueVersion in the key so any card mutation invalidates the cache
+  const candidateKey = `${queueVersion}:${priority}:${candidates.map((card) => `${card.id}:${card.dueAt}:${card.reviews}:${card.fsrs?.state || ''}`).join('|')}`;
   const nextKey = `${activeGroup}:${order}:${remaining}:${candidateKey}`;
   if (!force && nextKey === queueKey) return;
   const groupOrder = new Map((state.groups || []).map((group, position) => [group, position]));
   if (order === 'ordered' && priority === 'mixed') {
     candidates.sort((a, b) => (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b) || new Date(a.dueAt) - new Date(b.dueAt));
   } else if (order === 'ordered') {
-    const rank = new Map(candidates.map((card, position) => [card.id, position]));
-    candidates.sort((a, b) => rank.get(a.id) - rank.get(b.id) || (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b));
+    candidates.sort((a, b) => (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999) || cardPosition(a) - cardPosition(b) || new Date(a.dueAt) - new Date(b.dueAt));
   } else {
     for (let i = candidates.length - 1; i > 0; i -= 1) {
       const target = Math.floor(Math.random() * (i + 1));
@@ -396,6 +396,7 @@ function recordReview(card, rating, suspendAfter = false, forceTomorrow = false)
   pendingCorrect = false;
   reviewDisposition = 'pending';
   save();
+  queueVersion++;
   buildQueue();
   renderDock();
   renderStandalone();
@@ -404,7 +405,20 @@ function recordReview(card, rating, suspendAfter = false, forceTomorrow = false)
   renderHeatmaps();
   badges();
 }
-function streak() { let count = 0; for (let i = 0; i < 366; i += 1) { const key = dateKey(Date.now() - i * DAY); if (state.reviewLog[key]) count += 1; else if (i) break; } return count; }
+function streak() {
+  // BUG-09 fix: If today has reviews, start counting from today (i=0).
+  // If today has no reviews yet, start from yesterday (i=1) so the streak
+  // reflects the ongoing run rather than prematurely breaking.
+  const todayHasReview = Boolean(state.reviewLog[today()]);
+  const startOffset = todayHasReview ? 0 : 1;
+  let count = 0;
+  for (let i = startOffset; i < 366; i += 1) {
+    const key = dateKey(Date.now() - i * DAY);
+    if (state.reviewLog[key]) count += 1;
+    else break;
+  }
+  return count;
+}
 function toast(message) { const box = els.toast; const label = box.querySelector('.toast-message'); label.textContent = message; box.classList.remove('show'); requestAnimationFrame(() => box.classList.add('show')); clearTimeout(toast.timer); toast.timer = setTimeout(() => box.classList.remove('show'), 3000); }
 function renderQuestion(box, card, standalone) {
   renderQuestionOriginal(box, card, standalone);
