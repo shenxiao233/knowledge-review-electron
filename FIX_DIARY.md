@@ -605,3 +605,109 @@ state.favorites = [
 - `$()` 与 `$$()` 的混淆是 DOM 操作中的常见陷阱
 - 自动化测试（即使是简单的启动测试）能快速发现初始化链中的问题
 - 错误处理应始终使用 try/catch 包装，避免单个组件故障导致整个应用崩溃
+---
+
+## 六、Markdown 渲染器重构记录
+
+> 日期：2026-07-23
+> 提交：`a9113e8` refactor: 替换自定义 Markdown 解析器为 marked v18
+
+### 背景
+
+原有的 `markdownToHtml` 函数（约 80 行，位于 `kr-documents.js`）是一个手写的逐行解析器，存在以下局限性：
+
+- 不支持嵌套列表（2 级以上）
+- 不支持 GFM 表格
+- 不支持任务列表（`- [ ]` / `- [x]`）
+- 不支持删除线（`~~text~~`）
+- 代码块只支持三个反引号语法，不支持缩进代码块
+
+### 方案选型
+
+| 方案 | 优点 | 缺点 |
+|------|------|------|
+| marked v18 (UMD) | 体积小（42KB）、GFM 完整、API 稳定 | 需要 LaTeX 保护层 |
+| markdown-it | 插件生态丰富 | 体积较大、UMD 构建复杂 |
+| Tiptap/ProseMirror | 所见即所得编辑 | 架构变更太大、工期长 |
+
+最终选择 **marked v18**，因为：
+1. UMD 模式直接可用（`window.marked`）
+2. GFM 内置支持（表格、任务列表、删除线）
+3. 自定义 Renderer API 灵活
+4. 体积仅 42KB（minified）
+
+### 改动文件
+
+```
+src/
+├── index.html                      # 新增 2 个 <script> 标签
+├── vendor/
+│   └── marked.js                   # 新增：marked v18.0.7 UMD
+├── modules/
+│   ├── markdown-renderer.js       # 新增：marked 封装层
+│   └── kr-documents.js            # 删除旧 markdownToHtml 函数
+```
+
+### 脚本加载顺序
+
+```
+katex.min.js → ts-fsrs.js → fsrs-adapter.js → idb-store.js →
+kr-core.js → kr-state.js → marked.js → markdown-renderer.js →
+kr-cards.js → kr-documents.js → kr-review.js → ...
+```
+
+### 技术细节
+
+#### LaTeX 保护策略
+
+```
+原文 → 提取 LaTeX 为占位符 → marked.parse() → 还原占位符
+```
+
+支持的 LaTeX 模式：
+- `$...$`（行内）
+- `\$\$...\$\$`（显示）
+- `\\(...\\)`（行内）
+- `\\[...\\]`（显示）
+
+#### 自定义 Renderer
+
+`javascript
+// 链接：安全 URL + 新窗口打开
+renderer.link = function(token) {
+  var safeUrl = markdownUrl(token.href, '#');
+  return '<a href="' + safeUrl + '" target="_blank" rel="noreferrer">' + token.text + '</a>';
+};
+
+// 代码块：HTML 转义
+renderer.code = function(token) {
+  return '<pre><code class="language-' + esc(token.lang) + '">' + esc(token.text) + '</code></pre>';
+};
+`
+
+#### 兼容性验证
+
+| 功能 | 测试结果 |
+|------|----------|
+| LaTeX 公式 | `\^2\$` / `\$\$\\int_0^1\$\$` | ✅ 保护正确 |
+| GFM 表格 | `\| a \| b \|` | ✅ 渲染正确 |
+| 任务列表 | `- [ ]` / `- [x]` | ✅ checkbox 正确 |
+| 嵌套列表 | 2+ 级 | ✅ 嵌套正确 |
+| 自定义语法 | 专题/真题/例句 | ✅ 样式正确 |
+| 安全链接 | `javascript:` 等 | ✅ 被过滤 |
+
+### 调用点
+
+| 文件 | 函数 | 说明 |
+|------|------|------|
+| `kr-documents.js:9` | `loadDoc()` | 文档编辑器加载 |
+| `kr-documents.js:87` | `handleEditorPaste()` | 粘贴 Markdown |
+| `kr-cards.js:16` | `noteMarkdownHtml()` | 笔记卡片渲染 |
+
+### 回滚方案
+
+如遇问题，可回滚此提交：
+1. 删除 `src/vendor/marked.js`
+2. 删除 `src/modules/markdown-renderer.js`
+3. 还原 `index.html` 中的 2 个 `<script>` 标签
+4. 还原 `kr-documents.js` 中的旧 `markdownToHtml` 函数
