@@ -40,11 +40,35 @@ const dateKey = (date) => {
 };
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const formatDate = (value) => new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
-const DEFAULT_MARKET_API_BASE = 'http://127.0.0.1:4000/api/v1';
+const DEFAULT_MARKET_API_BASE = 'http://127.0.0.1:4100/api/v1';
+const MARKET_SERVER_KEY_PREFIX = 'KR1.';
+function decodeMarketServerKey(value) {
+  const raw = String(value || '').trim();
+  if (!raw.startsWith(MARKET_SERVER_KEY_PREFIX)) return '';
+  try {
+    const encoded = raw.slice(MARKET_SERVER_KEY_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/');
+    const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
+    const json = decodeURIComponent(escape(atob(padded)));
+    const payload = JSON.parse(json);
+    return payload?.v === 1 && typeof payload.base === 'string' ? payload.base : '';
+  } catch {
+    return '';
+  }
+}
+function encodeMarketServerKey(value) {
+  const parsed = parseMarketApiBase(value);
+  if (!parsed) return '';
+  if (String(value || '').trim().startsWith(MARKET_SERVER_KEY_PREFIX)) return String(value).trim();
+  const json = JSON.stringify({ v: 1, base: parsed });
+  const encoded = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return `${MARKET_SERVER_KEY_PREFIX}${encoded}`;
+}
 function parseMarketApiBase(value) {
   const raw = String(value || '').trim();
   if (!raw) return DEFAULT_MARKET_API_BASE;
-  const withProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  const decoded = decodeMarketServerKey(raw);
+  const source = decoded || raw;
+  const withProtocol = /^[a-z][a-z\d+.-]*:\/\//i.test(source) ? source : `http://${source}`;
   try {
     const url = new URL(withProtocol);
     if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) return null;
@@ -57,7 +81,18 @@ function parseMarketApiBase(value) {
     return null;
   }
 }
-function normalizeMarketApiBase(value) { return parseMarketApiBase(value) || DEFAULT_MARKET_API_BASE; }
+function normalizeMarketApiBase(value) {
+  var parsed = parseMarketApiBase(value);
+  if (!parsed) return DEFAULT_MARKET_API_BASE;
+  try {
+    var url = new URL(parsed);
+    if (url.port === "4000" && (url.hostname === "127.0.0.1" || url.hostname === "localhost")) {
+      console.warn("[MARKET] Saved server URL still on port 4000, auto-upgrading to 4100");
+      return DEFAULT_MARKET_API_BASE;
+    }
+  } catch (e) {}
+  return parsed;
+}
 
 const sampleDocs = [
   { id: 'doc-fsrs-guide', folderId: 'folder-study', title: 'FSRS 复习算法更新说明与使用指南', updatedAt: '2026-07-17T09:00:00.000Z', createdAt: '2026-07-17T09:00:00.000Z', html: '<h1>FSRS 复习算法更新说明与使用指南</h1><p>本次版本将原有的简化间隔公式升级为 FSRS（Free Spaced Repetition Scheduler），根据每次复习评分估算记忆稳定性和难度，并安排更适合你的下一次复习时间。</p><h2>一、本次更新</h2><ul><li>使用成熟的 FSRS 调度算法替代旧的 ease 和 interval 计算。</li><li>保留已有卡片、标签、复习次数和打卡记录，首次启动时自动迁移卡片状态。</li><li>复习记录增加评分、记忆状态、稳定性、难度和下次复习时间。</li><li>新增每日新卡上限和目标记忆保持率设置。</li></ul><h2>二、如何复习</h2><h3>选择题</h3><ol><li>选择一个答案，系统立即显示对错和解析。</li><li>答题后选择本次回忆质量：Again、Hard、Good 或 Easy。</li><li>完成评分后点击“下一题”，FSRS 会保存新的复习计划。</li></ol><h3>速记词条</h3><ol><li>阅读词条和 Markdown 格式的内容。</li><li>根据实际回忆程度选择“没印象、模糊、熟悉”。</li><li>系统会在卡片上盖上对应熟练度印章，并进入下一条。</li></ol><h2>三、评分含义</h2><ul><li><strong>Again</strong>：没有回忆起来，需要尽快重新学习。</li><li><strong>Hard</strong>：想起来了，但过程比较困难或不稳定。</li><li><strong>Good</strong>：正常回忆，答案基本准确。</li><li><strong>Easy</strong>：非常熟练，几乎不需要思考。</li></ul><p>选择题答错后系统只提供 Again；答对后建议根据真实回忆难度选择 Hard、Good 或 Easy，不要因为“猜对”就选择 Easy。</p><h2>四、FSRS 设置</h2><h3>目标记忆保持率</h3><p>表示希望在计划复习时仍能回忆起来的概率，默认值为 90%。数值越高，复习间隔越短、复习频率越高；数值越低，间隔会更长。建议先使用 90%，连续使用一段时间后再调整。</p><h3>每日复习上限</h3><p>限制当天最多完成的复习操作次数。同一张卡片当天因 Again 再次出现时，每次复习都会计入上限。</p><h3>每日新卡上限</h3><p>限制当天首次进入学习流程的新卡数量。建议从 5 到 10 张开始，避免一次引入过多新内容。</p><h2>五、间隔预览</h2><p>设置页面会展示新卡在 Again、Hard、Good、Easy 四种评分下的首次安排时间。实际间隔还会受到卡片历史、上次复习时间和记忆状态影响。</p><h2>六、数据与迁移</h2><p>卡片和复习数据仍保存在应用本地存储中。升级到 FSRS 时不会清空数据；旧卡片会根据原有复习次数和间隔生成兼容的 FSRS 初始状态。建议在设置页面先导出一份完整数据备份。</p><h2>七、使用建议</h2><ul><li>根据真实回忆情况评分，不要为了延长间隔而高估熟练度。</li><li>每天保持稳定复习，优先完成到期卡片。</li><li>速记词条内容支持标题、列表、引用、代码、链接和图片等 Markdown 展示。</li><li>观察一到两周后再调整目标记忆保持率。</li></ul>' },
@@ -96,7 +131,7 @@ const base = {
   reviewEvents: [],
   schemaVersion: 3,
   algorithm: 'fsrs',
-  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, reviewPriority: 'mixed', showStamps: true, marketServerUrl: '' },
+  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, reviewPriority: 'mixed', showStamps: true, marketServerKey: '' },
   reviewPlan: { group: 'all', order: 'ordered' },
   selectedCardId: sampleCards[0].id,
   extractedText: '',
@@ -135,6 +170,7 @@ let tooltipTimer = null;
 let cardPage = 1;
 let cardPageSize = 50;
 let cardSortDirection = 'asc';
+let cardPositionCache = new Map();
 
 
 let cardBatchTotal = 1;
@@ -148,6 +184,8 @@ let marketSort = 'latest';
 let marketSelectedDeck = null;
 const marketUpdateCache = new Map();
 let marketUnlocked = false;
+let appAuthLocked = true;
+let marketAuthBootstrapping = true;
 let marketSurface = 'decks';
 let marketToken = '';
 let marketApiBase = '';
@@ -161,19 +199,12 @@ let marketPageSize = 20;
 let marketTotal = 0;
 let marketTotalPages = 1;
 let adminActiveTab = 'overview';
-let adminPage = { users: 1, decks: 1, audit: 1 };
-let adminTotalPages = { users: 1, decks: 1, audit: 1 };
+let adminPage = { users: 1, decks: 1, audit: 1, invitations: 1 };
+let adminTotalPages = { users: 1, decks: 1, audit: 1, invitations: 1 };
 const adminPageSize = 8;
 let adminRenderToken = 0;
 let profileEditingDeckId = '';
-let marketDecks = [
-  { id: 'deck-js-core', title: 'JavaScript 核心概念', author: 'Knowledge Lab', category: '编程开发', cards: 128, downloads: 842, updated: '2026-07-18', color: '#e7f3ed', accent: '#2f7d64', tags: ['JavaScript', '前端', '基础'], description: '覆盖作用域、异步、原型、模块化和常见面试概念，适合系统复习前端基础。' },
-  { id: 'deck-english-c1', title: '英语 C1 高频词汇', author: 'Mira', category: '语言学习', cards: 560, downloads: 1260, updated: '2026-07-16', color: '#eef0ff', accent: '#625bd7', tags: ['英语', '词汇', 'C1'], description: '按主题整理的高频词汇牌组，包含例句和易混淆词辨析。' },
-  { id: 'deck-product-design', title: '产品设计方法论', author: 'Design Notes', category: '通识知识', cards: 96, downloads: 417, updated: '2026-07-12', color: '#fff2df', accent: '#c97824', tags: ['产品', '设计', '方法论'], description: '从用户研究到迭代验证，帮助建立完整的产品设计思维框架。' },
-  { id: 'deck-computer-networks', title: '计算机网络重点', author: 'Study Room', category: '考试备考', cards: 214, downloads: 693, updated: '2026-07-09', color: '#eaf3fb', accent: '#3479aa', tags: ['网络', '408', '考试'], description: '整理 TCP/IP、HTTP、路由与传输层重点，适合考前集中巩固。' },
-  { id: 'deck-react-patterns', title: 'React 实战模式', author: 'Frontend Club', category: '编程开发', cards: 76, downloads: 318, updated: '2026-07-05', color: '#e9f7f7', accent: '#258b8d', tags: ['React', 'Hooks', '工程化'], description: '围绕组件设计、Hooks、状态管理和性能优化的实战型牌组。' },
-  { id: 'deck-general-science', title: '日常科学小知识', author: 'Open Decks', category: '通识知识', cards: 180, downloads: 521, updated: '2026-06-28', color: '#f5edfb', accent: '#8a5cab', tags: ['科学', '常识', '百科'], description: '用简短卡片解释身边的物理、化学、生物和天文现象。' }
-];
+let marketDecks = [];
 
 function normCard(card) {
   const rawType = String(card.type || '').toLowerCase();
@@ -227,19 +258,32 @@ function ensureCardOrder(cards = []) {
   });
 }
 function groupCards(folder) { return state.cards.filter((card) => (card.folder || '未分组') === folder).sort((a, b) => Number(a.order || 0) - Number(b.order || 0)); }
-function cardPosition(card) { const list = groupCards(card.folder || '未分组'); return Math.max(1, list.findIndex((item) => item.id === card.id) + 1); }
+function cardPosition(card) {
+  if (cardPositionCache.has(card.id)) return cardPositionCache.get(card.id);
+  const list = groupCards(card.folder || '未分组');
+  return Math.max(1, list.findIndex((item) => item.id === card.id) + 1);
+}
 function reviewCount(card) { return Math.max(0, Number(card?.reviews ?? card?.fsrs?.reps ?? 0)); }
 function reviewCountLabel(card) { return `复习 ${reviewCount(card)} 次`; }
 function sortCardsForDisplay(cards) {
   const groupOrder = new Map((state.groups || []).map((group, index) => [group, index]));
+  const positions = new Map();
+  const grouped = new Map();
+  state.cards.forEach((card) => {
+    const group = card.folder || '未分组';
+    if (!grouped.has(group)) grouped.set(group, []);
+    grouped.get(group).push(card);
+  });
+  grouped.forEach((items) => items.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0)).forEach((card, index) => positions.set(card.id, index + 1)));
+  cardPositionCache = positions;
   const reviewSort = cardSortDirection === 'reviews-asc' || cardSortDirection === 'reviews-desc';
   const direction = cardSortDirection === 'desc' || cardSortDirection === 'reviews-desc' ? -1 : 1;
   return cards.sort((a, b) => {
     if (reviewSort) return direction * (reviewCount(a) - reviewCount(b))
       || (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999)
-      || cardPosition(a) - cardPosition(b);
+      || (positions.get(a.id) || 0) - (positions.get(b.id) || 0);
     return (groupOrder.get(a.folder) ?? 9999) - (groupOrder.get(b.folder) ?? 9999)
-      || direction * (cardPosition(a) - cardPosition(b));
+      || direction * ((positions.get(a.id) || 0) - (positions.get(b.id) || 0));
   });
 }
 function normDoc(doc) {
@@ -254,4 +298,4 @@ function reviewEventMatchesGroup(event, group) {
   if (group === 'all') return true;
   if (event.folder === group) return true;
   return state.cards.find((card) => card.id === event.cardId)?.folder === group;
-}
+}

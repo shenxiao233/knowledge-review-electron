@@ -7,7 +7,7 @@
  *           restoreLatexForStorage, formatBytes
  */
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketCategoryFilter', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadCategorySelect', 'marketUploadNewCategory', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
   els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
   els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
@@ -21,6 +21,10 @@ function ensureFSRSSettingsPanel() {
   panel.innerHTML = '<h2>FSRS 复习算法</h2><p class="setting-description">根据目标记忆保持率自动安排复习间隔。评分越准确，计划越贴合你的实际记忆状态。</p><label>目标记忆保持率 <input type="range" id="desiredRetention" min="0.8" max="0.99" step="0.01" /><span id="desiredRetentionValue"></span></label><label>每日复习上限 <input type="number" id="dailyLimit" min="1" max="500" /></label><label>每日新卡上限 <input type="number" id="dailyNewLimit" min="0" max="100" /></label><div class="interval-preview-label">不同评分的首次安排</div><div id="intervalPreview" class="interval-preview"></div><div class="review-priority-settings"><div class="comic-radio-group" role="radiogroup" aria-label="复习优先模式"><input type="radio" id="priority-new" name="reviewPriority" value="new" /><label for="priority-new">新词</label><input type="radio" id="priority-review" name="reviewPriority" value="review" /><label for="priority-review">复习</label><input type="radio" id="priority-mixed" name="reviewPriority" value="mixed" checked /><label for="priority-mixed">混合</label><div class="comic-glider" aria-hidden="true"></div></div><p class="review-priority-description" id="reviewPriorityDescription"></p></div>';
 }
 async function init() {
+
+  // The market login is the application session gate. Keep every local view
+  // locked until authentication succeeds, including when local data loads.
+  try { setAppAuthLock(true); } catch (e) {}
 
   // === Phase 1: Load data from all sources ===
   let idbRecord = null;
@@ -120,7 +124,7 @@ async function init() {
     try { fn(); } catch (e) { console.error('[INIT] ' + name + ' failed:', e.message); }
   };
 
-  try { marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl); } catch (e) {}
+  try { marketApiBase = normalizeMarketApiBase(state.settings?.marketServerKey || state.settings?.marketServerUrl); } catch (e) {}
 
   safeCall('removeEditButton', () => document.querySelector('.profile-hero > #editProfileButton')?.remove());
   safeCall('cache1', () => cache());
@@ -141,6 +145,7 @@ async function init() {
   safeCall('bindUpdateEvents', bindUpdateEvents);
 
   try { await loadWebDavConfig(); } catch (e) {}
+  try { ensureMarketRegistrationField(); } catch (e) {}
   try { await loadSavedMarketCredentials(); } catch (e) {}
 
   cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc';
@@ -148,7 +153,7 @@ async function init() {
   safeCall('loadDoc', loadDoc);
   safeCall('syncSettings', syncSettings);
   safeCall('refresh', refresh);
-  safeCall('view', () => view('library'));
+  safeCall('view', () => view('market'));
 
 }
 function ensureStampSetting() {
@@ -164,8 +169,68 @@ function ensureStampSetting() {
     refresh();
   });
 }function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
- function view(name) { const canOpenAdmin = marketUnlocked && marketUser?.role === 'ADMIN'; const target = name === 'admin' && !canOpenAdmin ? 'market' : name; if (target === 'admin' && canOpenAdmin) { marketSurface = 'admin'; name = 'market'; } $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`)); $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === target)); if (name === 'library') openKnowledgeHome(); if (name === 'cards') renderCards(); if (name === 'market') renderMarket(); if (name === 'profile') renderProfile(); if (name === 'review') { exitReviewStudy(); renderReviewPlanControls(); renderReviewHome(); renderReviewHistory(); } if (name === 'trash') renderTrash(); }
- function refresh() { renderTree(); renderKnowledgeHome(); outline(); renderHeatmaps(); renderReviewPlanControls(); renderDock(); renderStandalone(); renderReviewHome(); renderReviewPlan(); renderReviewHistory(); renderCards(); renderMarket(); renderProfile(); renderTrash(); badges(); }
+/**
+ * Defensive safe-call helper: runs fn() and logs errors without throwing.
+ * Prevents cascade failures where one broken render call kills the entire UI.
+ */
+function safeRender(label, fn) {
+  try { fn(); } catch (err) { console.error('[RENDER] ' + label + ' failed:', err); }
+}
+
+
+ function view(name) {
+  try {
+    const requested = name;
+    const canOpenAdmin = marketUnlocked && marketUser?.role === 'ADMIN';
+    if (appAuthLocked && requested !== 'market') {
+      marketSurface = 'decks';
+      name = 'market';
+    } else if (requested === 'admin' && canOpenAdmin) {
+      mountAdminWorkspace();
+      marketSurface = 'admin';
+      name = 'admin';
+    } else if (requested === 'admin') {
+      marketSurface = 'decks';
+      name = 'market';
+    } else if (requested === 'market') {
+      marketSurface = 'decks';
+    }
+    const target = name;
+    $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`));
+    $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === target));
+    if (name === 'library') safeRender('openKnowledgeHome', openKnowledgeHome);
+    if (name === 'cards') safeRender('renderCards', renderCards);
+    if (name === 'market') safeRender('renderMarket', renderMarket);
+    if (name === 'profile') safeRender('renderProfile', renderProfile);
+    if (name === 'review') {
+      safeRender('exitReviewStudy', exitReviewStudy);
+      safeRender('renderReviewPlanControls', renderReviewPlanControls);
+      safeRender('renderReviewHome', renderReviewHome);
+      safeRender('renderReviewHistory', renderReviewHistory);
+    }
+    if (name === 'trash') safeRender('renderTrash', renderTrash);
+    if (name === 'admin') safeRender('renderAdminWorkspace', renderAdminWorkspace);
+  } catch (err) {
+    console.error('[VIEW] view() failed for "' + name + '":', err);
+  }
+}
+ function refresh() {
+  safeRender('renderTree', renderTree);
+  safeRender('renderKnowledgeHome', renderKnowledgeHome);
+  safeRender('outline', outline);
+  safeRender('renderHeatmaps', renderHeatmaps);
+  safeRender('renderReviewPlanControls', renderReviewPlanControls);
+  safeRender('renderDock', renderDock);
+  safeRender('renderStandalone', renderStandalone);
+  safeRender('renderReviewHome', renderReviewHome);
+  safeRender('renderReviewPlan', renderReviewPlan);
+  safeRender('renderReviewHistory', renderReviewHistory);
+  safeRender('renderCards', renderCards);
+  safeRender('renderMarket', renderMarket);
+  safeRender('renderProfile', renderProfile);
+  safeRender('renderTrash', renderTrash);
+  safeRender('badges', badges);
+}
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
 function formatBytes(value) {
   const bytes = Number(value || 0);
@@ -217,21 +282,21 @@ function handleUpdateEvent(payload = {}) {
   if (payload.event === 'downloaded') toast(`新版本 v${payload.version} 已下载完成。`);
 }
 function bindUpdateEvents() {
-  window.reviewBridge.updates?.onEvent(handleUpdateEvent);
+  window.reviewBridge?.updates?.onEvent?.(handleUpdateEvent);
   els.updateCheckButton?.addEventListener('click', async () => {
     updateState = { ...updateState, status: 'checking', message: '' };
     renderUpdateState();
-    const result = await window.reviewBridge.updates.check();
+    const result = await window.reviewBridge?.updates?.check?.();
     if (!result?.ok && !result?.skipped) handleUpdateEvent({ event: 'error', message: result.error });
     if (result?.skipped) handleUpdateEvent({ event: 'error', message: result.error });
   });
   els.updateInstallButton?.addEventListener('click', async () => {
     updateState = { ...updateState, installing: true };
     renderUpdateState();
-    const result = await window.reviewBridge.updates.install();
+    const result = await window.reviewBridge?.updates?.install?.();
     if (!result?.ok) { updateState = { ...updateState, installing: false }; handleUpdateEvent({ event: 'error', message: result.error }); }
   });
-  window.reviewBridge.app?.getInfo().then((info) => {
+  window.reviewBridge?.app?.getInfo?.().then((info) => {
     if (els.appVersion) els.appVersion.textContent = `当前版本 v${info.version}`;
     if (els.dataPath) els.dataPath.textContent = info.dataPath;
     if (!info.isPackaged) renderUpdateState();
@@ -264,4 +329,4 @@ function renderLatexInHtml(html) {
     node.replaceWith(...holder.childNodes);
   });
   return wrapper.innerHTML;
-}
+}

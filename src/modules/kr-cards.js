@@ -315,11 +315,13 @@ function addMasonryCards(items, reset = false, startIndex = 0) {
   }
   const temp = document.createElement('div');
   temp.innerHTML = items.map((card, index) => cardMarkup(card, Math.floor((startIndex + index) / cardPageSize) + 1)).join('');
+  const fragment = document.createDocumentFragment();
   [...temp.children].forEach((card, index) => {
     card.dataset.cardBatch = String(Math.floor((startIndex + index) / cardPageSize) + 1);
-    const target = columns.reduce((shortest, column) => column.offsetHeight < shortest.offsetHeight ? column : shortest, columns[0]);
-    target.appendChild(card);
+    fragment.appendChild(card);
   });
+  const cards = [...fragment.children];
+  cards.forEach((card, index) => columns[index % columns.length].appendChild(card));
 }
 function renderCards(resetPage = false, append = false, jump = false) {
   if (resetPage) { cardPage = 1; cardLoadedThrough = 1; }

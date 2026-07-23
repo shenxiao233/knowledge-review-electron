@@ -2534,6 +2534,39 @@ select option { color: #34413b; background: #fff; }
 .market-admin-account-slot { display: flex; justify-content: flex-end; }
 @media (max-width: 800px) { .admin-sidebar { width: 180px; flex-basis: 180px; } .admin-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-overview-card { align-items: flex-start; flex-direction: column; } .admin-create-form { grid-template-columns: 1fr; } .admin-deck-review-card-head { flex-direction: column; } .admin-deck-review-category { width: 100%; flex-basis: auto; } .admin-deck-review-meta { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 560px) { .market-admin-surface { overflow: auto; flex-direction: column; } .admin-sidebar { width: 100%; flex-basis: auto; padding: 16px; } .admin-sidebar-brand { padding-bottom: 14px; } .admin-nav { display: flex; margin-top: 14px; } .admin-nav button { flex: 1; } .admin-back-market { margin-top: 12px; } .admin-main { padding: 25px 16px 40px; } .admin-main-header { flex-direction: column; } .admin-header-actions { width: 100%; justify-content: space-between; } .admin-stat-grid { grid-template-columns: 1fr 1fr; } }
+
+/* Admin workspace: compact operational layout with clear status hierarchy. */
+.market-admin-surface { background: #eef2f0; }
+.app-auth-locked .page-shell > .view:not(#marketView) { display: none !important; }
+.admin-view { min-width: 0; min-height: 0; overflow: hidden; background: #eef2f0; }
+.admin-view.active { display: flex; }
+.admin-view #adminWorkspaceHost { display: flex; min-width: 0; min-height: 100%; width: 100%; }
+.admin-rail-btn { margin-top: 10px; }
+.admin-rail-btn[hidden] { display: none; }
+.admin-sidebar { width: 248px; flex-basis: 248px; padding: 30px 18px 20px; background: #17231f; border-right: 0; }
+.admin-sidebar-brand { border-color: rgba(255,255,255,.1); }
+.admin-sidebar-brand strong { color: #f4faf6; }
+.admin-sidebar-brand small { color: #8ca398; }
+.admin-sidebar-logo { border-radius: 9px; background: #5ac391; color: #10221a; box-shadow: none; }
+.admin-nav button { border-radius: 8px; color: #9eb0a7; }
+.admin-nav button small { color: #6f8279; }
+.admin-nav button:hover { background: rgba(255,255,255,.07); color: #d8f4e4; }
+.admin-nav button.active { background: #2d493d; color: #d9f6e5; box-shadow: inset 3px 0 #67d39e; }
+.admin-nav button.active small { color: #8de2b5; }
+.admin-back-market { border-color: #3c5b4d; background: transparent; color: #b7d6c5; }
+.admin-back-market:hover { background: #5ac391; color: #10221a; }
+.admin-main { padding-top: 34px; }
+.admin-main-header h1 { color: #1f332a; letter-spacing: -.02em; }
+.admin-session-badge { border-color: #d4dfd9; background: #fff; }
+.admin-stat-grid article { min-height: 116px; border-radius: 10px; box-shadow: 0 8px 20px rgba(22,52,39,.05); }
+.admin-stat-grid strong { color: #236f50; }
+.admin-overview-card, .admin-section-card { border-radius: 10px; box-shadow: 0 8px 20px rgba(22,52,39,.045); }
+.admin-overview-card h2, .admin-section-card h2 { color: #203a2d; }
+.admin-quick-actions button, .admin-create-form button { border-radius: 7px; }
+.admin-review-count { border-radius: 7px; }
+.admin-deck-review-card { border-radius: 10px; background: #fff; }
+.admin-deck-review-actions { background: #f8fbf9; }
+@media (max-width: 800px) { .admin-sidebar { width: 208px; flex-basis: 208px; } }
 @media (max-width: 1100px) {
   .market-login-screen { grid-template-columns: minmax(0, .92fr) minmax(360px, 1.08fr); }
   .market-login-left { padding-inline: 28px; }
@@ -3008,3 +3041,33 @@ select option { color: #34413b; background: #fff; }
 .market-deck-card-v2 .market-fav-button { position: static; width: 30px; height: 30px; border: 1px solid #e5e0d9; border-radius: 8px; background: #f8f8f6; backdrop-filter: none; }
 .market-deck-card-v2 .market-fav-button:hover { background: #fff3ef; border-color: #e6c4b8; }
 .market-deck-card-v2 .market-fav-button.is-fav { border-color: #f0c4b8; background: #fff7f4; }
+
+/* Session chrome is intentionally quiet. Account actions live in Settings. */
+.market-heading-actions,
+.admin-session-badge,
+.market-admin-account-slot,
+.admin-back-market { display: none !important; }
+.admin-main-header { justify-content: flex-start; }
+
+.user-rail-avatar { position: relative; overflow: hidden; padding: 0; border: 0; cursor: pointer; }
+.user-rail-avatar img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.user-rail-avatar span { display: grid; place-items: center; width: 100%; height: 100%; }
+.user-rail-avatar:focus-visible { outline: 2px solid #67c99a; outline-offset: 2px; }
+.admin-rail-btn svg { width: 18px; height: 18px; }
+
+.market-auth-bootstrap { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: 10px; background: #f7faf8; color: #2d5443; }
+.market-auth-bootstrap[hidden] { display: none; }
+.market-auth-bootstrap strong { font-size: 16px; }
+.market-auth-bootstrap small { color: #91a49a; font-size: 11px; }
+.market-auth-spinner { width: 24px; height: 24px; border: 2px solid #d9ebe1; border-top-color: #2f8067; border-radius: 50%; animation: market-auth-spin .8s linear infinite; }
+@keyframes market-auth-spin { to { transform: rotate(360deg); } }
+
+.settings-account-section { margin-top: 24px; padding: 22px; border: 1px solid #dce8e1; border-radius: 12px; background: #fbfdfc; }
+.settings-account-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.settings-account-heading h3 { margin: 7px 0 5px; color: #30463b; font-size: 18px; }
+.settings-account-heading p { margin: 0; color: #8a9890; font-size: 12px; }
+.settings-account-avatar { width: 42px; height: 42px; overflow: hidden; flex: 0 0 42px; display: grid; place-items: center; border-radius: 50%; background: #2f8067; color: #fff; font-weight: 800; }
+.settings-account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.settings-account-meta { display: flex; align-items: center; gap: 9px; margin-top: 16px; color: #82a091; font-size: 11px; }
+.settings-account-meta strong { color: #385647; font-size: 13px; }
+.settings-logout-button { margin-top: 16px; }

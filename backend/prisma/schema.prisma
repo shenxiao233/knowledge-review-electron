@@ -12,6 +12,13 @@ enum UserRole {
   ADMIN
 }
 
+enum UserStatus {
+  INCOMPLETE  // Just registered, needs to fill profile
+  ACTIVE      // Profile complete, can use all features
+  SUSPENDED   // Temporarily suspended
+  BANNED      // Permanently banned
+}
+
 enum DeckStatus {
   DRAFT
   PENDING
@@ -31,20 +38,76 @@ enum CategoryStatus {
   REJECTED
 }
 
+enum InvitationCodeStatus {
+  ACTIVE
+  USED
+  EXPIRED
+  REVOKED
+}
+
+enum SyncObjectType {
+  DECK
+  DOCUMENT
+  CARD
+  SETTINGS
+}
+
+enum SyncConflictResolution {
+  SERVER_WINS
+  CLIENT_WINS
+  MANUAL
+}
+
+enum PullRequestStatus {
+  OPEN
+  MERGED
+  CLOSED
+  REJECTED
+}
+
+enum PullRequestReviewDecision {
+  APPROVED
+  CHANGES_REQUESTED
+  COMMENTED
+}
+
 model User {
-  id           String        @id @default(uuid()) @db.Uuid
-  username     String        @unique @db.VarChar(80)
-  passwordHash String
-  role         UserRole      @default(USER)
-  enabled      Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  lastLoginAt  DateTime?
-  decks        Deck[]
-  downloads    DeckDownload[]
-  auditLogs    AuditLog[]
-  categoryRequests MarketCategory[] @relation("CategoryCreator")
-  favorites      DeckFavorite[]
-  reviews        DeckReview[]
+  id                String        @id @default(uuid()) @db.Uuid
+  username          String        @unique @db.VarChar(80)
+  passwordHash      String
+  role              UserRole      @default(USER)
+  enabled           Boolean       @default(true)
+  status            UserStatus    @default(INCOMPLETE)
+  uid               String?       @unique @db.VarChar(20)  // Format: KR2607-A3X9
+  nickname          String?       @db.VarChar(100)
+  avatar            String?       @db.VarChar(500)  // URL or path
+  bio               String?       @db.VarChar(1000)
+  email             String?       @db.VarChar(255)
+  passwordChangedAt DateTime?
+  createdAt         DateTime      @default(now())
+  lastLoginAt       DateTime?
+  updatedAt         DateTime      @updatedAt
+
+  decks             Deck[]
+  downloads         DeckDownload[]
+  auditLogs         AuditLog[]
+  categoryRequests  MarketCategory[] @relation("CategoryCreator")
+  favorites         DeckFavorite[]
+  reviews           DeckReview[]
+  devices           Device[]
+  refreshTokens     RefreshToken[]
+  syncObjects       SyncObject[]
+  invitationCodesUsed InvitationCode[] @relation("InvitationCodeUsedBy")
+  invitationCodesCreated InvitationCode[] @relation("InvitationCodeCreatedBy")
+  deckForks         DeckFork[]
+  deckCommits       DeckCommit[]
+  pullRequestsCreated DeckPullRequest[] @relation("PRCreator")
+  pullRequestReviews DeckPRReview[]
+  pullRequestComments DeckPRComment[]
+  collaboratorOf    DeckCollaborator[]
+
+  @@index([status, createdAt])
+  @@index([uid])
 }
 
 model MarketCategory {
@@ -60,24 +123,36 @@ model MarketCategory {
 }
 
 model Deck {
-  id             String        @id @default(uuid()) @db.Uuid
-  ownerId        String        @db.Uuid
-  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Restrict)
-  title          String        @db.VarChar(160)
-  description    String        @db.VarChar(2000)
-  category       String        @db.VarChar(80)
-  status         DeckStatus    @default(PENDING)
-  currentVersion Int           @default(0)
+  id               String        @id @default(uuid()) @db.Uuid
+  ownerId          String        @db.Uuid
+  owner            User          @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  title            String        @db.VarChar(160)
+  description      String        @db.VarChar(2000)
+  category         String        @db.VarChar(80)
+  status           DeckStatus    @default(PENDING)
+  currentVersion   Int           @default(0)
   publishedVersion Int?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  isForkable       Boolean       @default(false)
+  forkedFromId     String?       @db.Uuid
+  forkedFrom       Deck?         @relation("DeckForks", fields: [forkedFromId], references: [id], onDelete: SetNull)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
   versions       DeckVersion[]
   downloads      DeckDownload[]
+  favorites      DeckFavorite[]
+  reviews        DeckReview[]
+  forks          Deck[]          @relation("DeckForks")
+  forkSources    DeckFork[]      @relation("ForkSource")
+  forkTargets    DeckFork[]      @relation("ForkTarget")
+  collaborators  DeckCollaborator[]
+  commits        DeckCommit[]
+  prSources      DeckPullRequest[] @relation("PRSourceDeck")
+  prTargets      DeckPullRequest[] @relation("PRTargetDeck")
 
   @@index([status, updatedAt])
   @@index([ownerId, updatedAt])
-  favorites    DeckFavorite[]
-  reviews      DeckReview[]
+  @@index([forkedFromId])
 }
 
 model DeckVersion {
@@ -149,4 +224,183 @@ model DeckReview {
   @@unique([deckId, userId])
   @@index([deckId, createdAt])
   @@index([userId])
+}
+
+// ─── V2 Models ───
+
+model Device {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deviceType   String   @db.VarChar(50)  // 'windows', 'android', 'ios', 'web'
+  deviceName   String   @db.VarChar(100)
+  deviceModel  String?  @db.VarChar(100)
+  osVersion    String?  @db.VarChar(50)
+  appVersion   String?  @db.VarChar(50)
+  lastSyncAt   DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @db.VarChar(64)
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([tokenHash])
+}
+
+model InvitationCode {
+  id          String               @id @default(uuid()) @db.Uuid
+  code        String               @unique @db.VarChar(50)
+  status      InvitationCodeStatus @default(ACTIVE)
+  maxUses     Int                  @default(1)
+  currentUses Int                  @default(0)
+  expiresAt   DateTime?
+  createdById String               @db.Uuid
+  createdBy   User                 @relation("InvitationCodeCreatedBy", fields: [createdById], references: [id], onDelete: Cascade)
+  usedById    String?              @db.Uuid
+  usedBy      User?                @relation("InvitationCodeUsedBy", fields: [usedById], references: [id], onDelete: SetNull)
+  usedAt      DateTime?
+  createdAt   DateTime             @default(now())
+
+  @@index([status, expiresAt])
+  @@index([code])
+}
+
+model SyncObject {
+  id              String   @id @default(uuid()) @db.Uuid
+  userId          String   @db.Uuid
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  objectType      SyncObjectType
+  objectId        String   @db.VarChar(100)  // Client-side ID
+  objectVersion   Int      @default(1)
+  data            Json?
+  metadata        Json?
+  lastModifiedBy  String   @db.VarChar(50)  // Device ID
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  history         SyncObjectHistory[]
+
+  @@unique([userId, objectType, objectId])
+  @@index([userId, objectType, updatedAt])
+  @@index([userId, updatedAt])
+}
+
+model SyncObjectHistory {
+  id           String   @id @default(uuid()) @db.Uuid
+  syncObjectId String   @db.Uuid
+  syncObject   SyncObject @relation(fields: [syncObjectId], references: [id], onDelete: Cascade)
+  version      Int
+  data         Json
+  modifiedBy   String   @db.VarChar(50)
+  createdAt    DateTime @default(now())
+
+  @@unique([syncObjectId, version])
+  @@index([syncObjectId, version])
+}
+
+model DeckCollaborator {
+  id        String   @id @default(uuid()) @db.Uuid
+  deckId    String   @db.Uuid
+  deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String   @db.VarChar(50)  // 'editor', 'viewer'
+  invitedAt DateTime @default(now())
+  acceptedAt DateTime?
+
+  @@unique([deckId, userId])
+  @@index([userId, invitedAt])
+}
+
+model DeckFork {
+  id          String   @id @default(uuid()) @db.Uuid
+  sourceDeckId String  @db.Uuid
+  sourceDeck  Deck     @relation("ForkSource", fields: [sourceDeckId], references: [id], onDelete: Cascade)
+  forkedDeckId String  @db.Uuid
+  forkedDeck  Deck     @relation("ForkTarget", fields: [forkedDeckId], references: [id], onDelete: Cascade)
+  forkedById  String   @db.Uuid
+  forkedBy    User     @relation(fields: [forkedById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+
+  @@unique([sourceDeckId, forkedDeckId])
+  @@index([sourceDeckId, createdAt])
+  @@index([forkedById, createdAt])
+}
+
+model DeckCommit {
+  id          String   @id @default(uuid()) @db.Uuid
+  deckId      String   @db.Uuid
+  deck        Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  authorId    String   @db.Uuid
+  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  message     String   @db.VarChar(500)
+  changes     Json     // Diff data
+  parentCommitId String? @db.Uuid
+  createdAt   DateTime @default(now())
+
+  @@index([deckId, createdAt])
+  @@index([authorId, createdAt])
+}
+
+model DeckPullRequest {
+  id            String            @id @default(uuid()) @db.Uuid
+  sourceDeckId  String            @db.Uuid
+  sourceDeck    Deck              @relation("PRSourceDeck", fields: [sourceDeckId], references: [id], onDelete: Cascade)
+  targetDeckId  String            @db.Uuid
+  targetDeck    Deck              @relation("PRTargetDeck", fields: [targetDeckId], references: [id], onDelete: Cascade)
+  title         String            @db.VarChar(200)
+  description   String            @db.VarChar(2000)
+  status        PullRequestStatus @default(OPEN)
+  createdById   String            @db.Uuid
+  createdBy     User              @relation("PRCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  mergedById    String?           @db.Uuid
+  mergedAt      DateTime?
+  closedAt      DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  reviews       DeckPRReview[]
+  comments      DeckPRComment[]
+
+  @@index([sourceDeckId, status, createdAt])
+  @@index([targetDeckId, status, createdAt])
+  @@index([createdById, createdAt])
+}
+
+model DeckPRReview {
+  id            String                    @id @default(uuid()) @db.Uuid
+  pullRequestId String                    @db.Uuid
+  pullRequest   DeckPullRequest           @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  reviewerId    String                    @db.Uuid
+  reviewer      User                      @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
+  decision      PullRequestReviewDecision
+  comment       String?                   @db.VarChar(2000)
+  createdAt     DateTime                  @default(now())
+
+  @@unique([pullRequestId, reviewerId])
+  @@index([reviewerId, createdAt])
+}
+
+model DeckPRComment {
+  id            String          @id @default(uuid()) @db.Uuid
+  pullRequestId String          @db.Uuid
+  pullRequest   DeckPullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+  authorId      String          @db.Uuid
+  author        User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  content       String          @db.VarChar(2000)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([pullRequestId, createdAt])
+  @@index([authorId, createdAt])
 }

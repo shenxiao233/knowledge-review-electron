@@ -25,7 +25,7 @@ function hydrate(raw) {
       reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
       schemaVersion: 3,
       algorithm: 'fsrs',
-      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerUrl: typeof saved.settings?.marketServerUrl === 'string' ? saved.settings.marketServerUrl.trim() : '' },
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerKey: typeof saved.settings?.marketServerKey === 'string' ? saved.settings.marketServerKey.trim() : encodeMarketServerKey(saved.settings?.marketServerUrl || '') },
       reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
       trash: { ...base.trash, ...(saved.trash || {}) },
       profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {} },
@@ -54,7 +54,7 @@ ensureCardOrder(state.cards);
 cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection)
   ? state.settings.cardSortDirection
   : 'asc';
-marketApiBase = normalizeMarketApiBase(state.settings?.marketServerUrl);
+marketApiBase = normalizeMarketApiBase(state.settings?.marketServerKey || state.settings?.marketServerUrl);
 let webdavConfig = { url: '', remoteFolder: '', username: '', enabled: false, autoBackup: true, hasPassword: false, backupHistory: [] };
 let webdavPushPromise = Promise.resolve();
 let updateState = { status: 'idle', version: '', percent: 0, message: '' };

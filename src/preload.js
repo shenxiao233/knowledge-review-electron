@@ -69,7 +69,8 @@ contextBridge.exposeInMainWorld('reviewBridge', {
     uploadDeck: (payload) => ipcRenderer.invoke('market:uploadDeck', payload),
     getCredentials: () => ipcRenderer.invoke('market:getCredentials'),
     saveCredentials: (payload) => ipcRenderer.invoke('market:saveCredentials', payload),
-    clearCredentials: () => ipcRenderer.invoke('market:clearCredentials')
+    clearCredentials: () => ipcRenderer.invoke('market:clearCredentials'),
+    fetch: (payload) => ipcRenderer.invoke('market:fetch', payload)
   },
   data: {
     load: () => ipcRenderer.invoke('data:load'),

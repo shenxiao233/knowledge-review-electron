@@ -330,7 +330,7 @@ async function downloadMarketDeck(payload) {
 }
 
 function createDeckPackage(payload) {
-  const manifest = { format: 'knowledge-review-deck', title: String(payload.title || '未命名牌组'), description: String(payload.description || ''), category: String(payload.category || '未分类'), version: Number(payload.version || 1), cardCount: Array.isArray(payload.cards) ? payload.cards.length : 0, tags: Array.isArray(payload.tags) ? payload.tags : [], changelog: String(payload.changelog || '') };
+  const manifest = { format: 'knowledge-review-deck', title: String(payload.title || '未命名牌组'), description: String(payload.description || ''), category: '', version: Number(payload.version || 1), cardCount: Array.isArray(payload.cards) ? payload.cards.length : 0, tags: Array.isArray(payload.tags) ? payload.tags : [], changelog: String(payload.changelog || '') };
   const zip = new AdmZip();
   zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf8'));
   zip.addFile('cards.json', Buffer.from(JSON.stringify(Array.isArray(payload.cards) ? payload.cards : [], null, 2), 'utf8'));
@@ -340,7 +340,7 @@ function createDeckPackage(payload) {
 async function uploadMarketDeck(payload) {
   const zip = createDeckPackage(payload);
   const form = new FormData();
-  form.append('metadata', JSON.stringify({ title: payload.title, description: payload.description, category: payload.category }));
+  form.append('metadata', JSON.stringify({ title: payload.title, description: payload.description }));
   form.append('package', new Blob([zip], { type: 'application/zip' }), 'deck.zip');
   const endpoint = payload.deckId ? `/my-decks/${encodeURIComponent(payload.deckId)}/versions` : '/my-decks';
   const response = await fetch(marketUrl(payload.baseUrl, endpoint), { method: 'POST', headers: { Authorization: `Bearer ${payload.token || ''}` }, body: form });
@@ -363,6 +363,24 @@ ipcMain.handle('market:saveCredentials', async (_event, payload) => {
   return writeMarketCredentials(payload);
 });
 ipcMain.handle('market:clearCredentials', async () => clearMarketCredentials());
+
+ipcMain.handle('market:fetch', async (_event, payload) => {
+  const { url, options = {} } = payload;
+  try {
+    const resp = await fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
+    const contentType = resp.headers.get('content-type') || '';
+    let body;
+    if (contentType.includes('application/json')) {
+      body = await resp.json();
+    } else {
+      body = await resp.text();
+    }
+    return { ok: resp.ok, status: resp.status, body };
+  } catch (error) {
+    return { ok: false, status: 0, error: error.message || 'IPC fetch failed' };
+  }
+});
+
 
 ipcMain.handle('data:load', async () => {
   const stored = await readLocalState();

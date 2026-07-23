@@ -1,4 +1,4 @@
-/**
+﻿/**
  * kr-market.js - Deck market, auth, admin workspace
  * Dependencies: kr-core.js, kr-state.js
  * Provides: marketApi, renderMarket, showMarketWorkspace, handleMarketLogin,
@@ -8,10 +8,9 @@
  */
 function marketDeckMatches(deck) {
   const query = marketQuery.toLowerCase();
-  return (marketCategory === 'all' || (marketCategory === 'favorites' ? isDeckFavorited(deck.id) : deck.category === marketCategory))
-    && (!query || [deck.title, deck.author, deck.category, ...deck.tags].join(' ').toLowerCase().includes(query));
+  return (marketCategory !== 'favorites' || isDeckFavorited(deck.id))
+    && (!query || [deck.title, deck.author, ...deck.tags].join(' ').toLowerCase().includes(query));
 }
-
 function isDeckFavorited(deckId) { return (state.favorites || []).includes(deckId); }
 async function toggleFavorite(deckId, event) {
   if (event) { event.stopPropagation(); event.preventDefault(); }
@@ -44,13 +43,45 @@ function marketDecksForDisplay() {
   return decks.sort((a, b) => marketSort === 'popular' ? b.downloads - a.downloads : marketSort === 'cards' ? b.cards - a.cards : b.updated.localeCompare(a.updated));
 }
 async function marketApi(path, options = {}) {
+  const isV2 = String(path).startsWith('/v2/');
+  const apiBase = isV2 ? marketApiBase.replace(/\/api\/v1$/, '/api/v2') : marketApiBase;
+  const apiPath = isV2 ? String(path).slice(3) : path;
   const headers = new Headers(options.headers || {});
   if (marketToken) headers.set('Authorization', `Bearer ${marketToken}`);
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const fullUrl = `${apiBase}${apiPath}`;
+  const fetchOptions = { cache: 'no-store', ...options, headers };
+
+  // Try IPC proxy through main process (bypasses renderer network restrictions)
+  let ipcResult = null;
+  try {
+    if (window.reviewBridge?.market?.fetch) {
+      const serializableOptions = {
+        method: fetchOptions.method,
+        headers: Object.fromEntries(headers.entries()),
+        body: fetchOptions.body || undefined
+      };
+      ipcResult = await window.reviewBridge.market.fetch({ url: fullUrl, options: serializableOptions });
+      if (ipcResult && ipcResult.status > 0) {
+        const body = ipcResult.body;
+        if (!ipcResult.ok) {
+          const errMsg = (body && typeof body === 'object' && body.error) ? body.error : `市场接口请求失败（${ipcResult.status}）`;
+          throw new Error(errMsg);
+        }
+        return body;
+      }
+    }
+  } catch (ipcError) {
+    // If IPC result was received and it was an error, re-throw immediately
+    if (ipcResult && ipcResult.status > 0) throw ipcError;
+    console.warn("[MARKET-API] IPC proxy failed, falling back to direct fetch:", ipcError.message);
+  }
+
+  // Fallback to direct fetch
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(`${marketApiBase}${path}`, { cache: 'no-store', ...options, headers, signal: controller.signal });
+    const response = await fetch(fullUrl, { ...fetchOptions, signal: controller.signal });
     const contentType = response.headers.get('content-type') || '';
     const body = contentType.includes('application/json') ? await response.json() : await response.blob();
     if (!response.ok) throw new Error(body?.error || `市场接口请求失败（${response.status}）`);
@@ -63,20 +94,20 @@ async function marketApi(path, options = {}) {
   }
 }
 function normalizeMarketDeck(deck) {
-  const manifest = deck.manifest || {};
+  const manifest = deck.manifest || deck.versions?.[0]?.manifest || {};
   return {
     id: deck.id,
     title: deck.title || manifest.title || '未命名牌组',
-    author: deck.author || '未知作者',
-    category: deck.category || manifest.category || '未分类',
+    author: deck.author || deck.owner?.username || '未知作者',
+    category: deck.category || manifest.category || '',
     cards: Number(manifest.cardCount || 0),
-    downloads: Number(deck.downloads || 0),
+    downloads: Number(deck.downloads ?? deck._count?.downloads ?? 0),
     updated: deck.updatedAt ? formatMarketDate(deck.updatedAt) : '刚刚更新',
     color: '#e7f3ed',
     accent: '#2f7d64',
     tags: Array.isArray(manifest.tags) ? manifest.tags : [],
     description: deck.description || manifest.description || '',
-    version: Number(deck.version || manifest.version || 1)
+    version: Number(deck.version || deck.publishedVersion || deck.currentVersion || manifest.version || 1)
   };
 }
 function formatMarketDate(value) {
@@ -86,11 +117,11 @@ function formatMarketDate(value) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 async function loadMarketDecks() {
-  const params = new URLSearchParams({ page: String(marketPage), pageSize: String(marketPageSize), sort: marketSort });
-  if (marketQuery) params.set('q', marketQuery);
-  if (marketCategory !== 'all' && marketCategory !== 'favorites') params.set('category', marketCategory);
+  const backendSort = marketSort === 'popular' ? 'popular' : 'newest';
+  const params = new URLSearchParams({ page: String(marketPage), pageSize: String(marketPageSize), sort: backendSort });
+  if (marketQuery) params.set('search', marketQuery);
   const result = await marketApi(`/decks?${params.toString()}`);
-  const decks = Array.isArray(result) ? result : result.items;
+  const decks = Array.isArray(result) ? result : (result.decks || result.items || []);
   marketTotal = Array.isArray(result) ? decks.length : Number(result.total || 0);
   marketTotalPages = Array.isArray(result) ? 1 : Math.max(1, Number(result.totalPages || 1));
   marketDecks = Array.isArray(decks) ? decks.map(normalizeMarketDeck) : [];
@@ -107,29 +138,23 @@ async function loadMarketFavorites() {
   }
 }
 async function loadMarketCategories() {
-  try {
-    const result = await marketApi('/categories');
-    marketCategories = Array.isArray(result) ? result : [];
-    const select = $('#marketCategoryFilter');
-    if (select) {
-      const current = marketCategory;
-      select.innerHTML = `<option value="all">全部分类</option><option value="favorites">★ 我的收藏</option>${marketCategories.map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('')}`;
-      select.value = (current === 'favorites' || marketCategories.includes(current)) ? current : 'all';
-      marketCategory = select.value;
-    }
-    const uploadSelect = $('#marketUploadCategorySelect');
-    if (uploadSelect) {
-      const current = uploadSelect.value;
-      uploadSelect.innerHTML = `<option value="">请选择分类</option>${marketCategories.map((category) => `<option value="${esc(category)}">${esc(category)}</option>`).join('')}<option value="__new__">＋ 新建分类</option>`;
-      uploadSelect.value = marketCategories.includes(current) || current === '__new__' ? current : '';
-    }
-  } catch {
-    marketCategories = [];
-  }
+  // Categories remain a backend compatibility endpoint, but are no longer a
+  // market concept in the client.
+  marketCategories = [];
 }
 async function loadMarketCapabilities() {
+  const healthUrl = `${marketApiBase.replace(/\/api\/v1$/, '')}/health`;
   try {
-    const health = await fetch(`${marketApiBase.replace(/\/api\/v1$/, '')}/health`, { cache: 'no-store' }).then((response) => response.json());
+    // Try IPC proxy first
+    if (window.reviewBridge?.market?.fetch) {
+      const result = await window.reviewBridge.market.fetch({ url: healthUrl, options: { method: 'GET' } });
+      if (result && result.ok && result.body) {
+        marketCapabilities = result.body.capabilities || {};
+        return result.body;
+      }
+    }
+    // Fallback to direct fetch
+    const health = await fetch(healthUrl, { cache: 'no-store' }).then((response) => response.json());
     marketCapabilities = health.capabilities || {};
     return health;
   } catch {
@@ -140,13 +165,15 @@ async function loadMarketCapabilities() {
 async function syncMyMarketDeckMetadata() {
   if (!marketToken) return;
   const result = await marketApi('/my-decks');
-  const remoteDecks = Array.isArray(result) ? result : result.items || [];
+  const remoteDecks = Array.isArray(result) ? result : result.decks || result.items || [];
   const profile = profileData();
   const localDecks = Array.isArray(profile.myDecks) ? profile.myDecks : [];
   const merged = [...localDecks];
   remoteDecks.forEach((remote) => {
     const latest = remote.versions?.[0];
-    const sameTitle = merged.filter((item) => item.group === remote.title || item.name === remote.title);
+    const remoteTitle = String(remote.title || '').trim().toLocaleLowerCase();
+    const sameTitle = merged.filter((item) => [item.group, item.name, item.title]
+      .some((value) => String(value || '').trim().toLocaleLowerCase() === remoteTitle));
     const index = merged.findIndex((item) => item.remoteId === remote.id) >= 0
       ? merged.findIndex((item) => item.remoteId === remote.id)
       : sameTitle.length === 1
@@ -187,6 +214,8 @@ async function checkMarketDeckUpdate(deckId, currentVersion = 0) {
 async function returnToMarketLogin() {
   marketSurface = 'decks';
   marketUnlocked = false;
+  marketAuthBootstrapping = false;
+  setAppAuthLock(true);
   marketToken = '';
   marketUser = null;
   marketCapabilities = {};
@@ -204,7 +233,10 @@ async function returnToMarketLogin() {
 async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
   let saved = null;
   try { saved = await window.reviewBridge?.market?.getCredentials?.(); } catch { saved = null; }
-  if (!saved?.remember) return;
+  if (!saved?.remember || !saved.accessKey || !saved.username || !saved.password || !autoLogin) {
+    marketAuthBootstrapping = false;
+    return;
+  }
   marketRememberCredentials = true;
   const key = $('#marketServerKey');
   const username = $('#marketUsername');
@@ -237,10 +269,45 @@ function showMarketWorkspace() {
   view('market');
   renderMarket();
 }
+function setAppAuthLock(locked) {
+  appAuthLocked = locked;
+  document.body.classList.toggle('app-auth-locked', locked);
+  $('#adminRailButton')?.toggleAttribute('hidden', locked || marketUser?.role !== 'ADMIN');
+  renderMarketSettingsAccount();
+}
+function mountAdminWorkspace() {
+  const surface = $('#marketAdminSurface');
+  const host = $('#adminWorkspaceHost');
+  if (surface && host && surface.parentElement !== host) host.appendChild(surface);
+  surface?.removeAttribute('hidden');
+  marketSurface = 'admin';
+}
 function openAdminWorkspace() {
   if (!marketUnlocked || marketUser?.role !== 'ADMIN') return;
-  marketSurface = 'admin';
+  mountAdminWorkspace();
   view('admin');
+}
+function renderMarketSettingsAccount() {
+  const section = $('#marketSettingsAccountSection');
+  if (!section) return;
+  const authenticated = Boolean(marketUnlocked && marketUser);
+  section.hidden = !authenticated;
+  if (!authenticated) return;
+  const profile = profileData();
+  const name = profile.name || marketUser.username || 'Knowledge Learner';
+  const image = $('#marketSettingsAccountImage');
+  const fallback = $('#marketSettingsAccountFallback');
+  $('#marketSettingsAccountName').textContent = name;
+  $('#marketSettingsAccountRole').textContent = marketUser.role === 'ADMIN' ? '管理员账户' : '许可账户';
+  if (profile.avatar) {
+    image.src = profile.avatar;
+    image.hidden = false;
+    fallback.hidden = true;
+  } else {
+    image.hidden = true;
+    fallback.hidden = false;
+    fallback.textContent = name.slice(0, 1).toUpperCase();
+  }
 }
 async function showMarketDecks() {
   marketSurface = 'decks';
@@ -264,8 +331,8 @@ function marketProfileSummary() {
   const profile = profileData();
   return { name: profile.name || marketUser?.username || 'Knowledge Learner', avatar: profile.avatar || '' };
 }
-function logoutMarket() {
-  returnToMarketLogin();
+async function logoutMarket() {
+  await returnToMarketLogin();
 }
 function openPasswordChangeDialog() {
   let dlg = document.getElementById('passwordChangeDialog');
@@ -331,12 +398,13 @@ function renderMarket() {
   $('#marketAdminSurface')?.toggleAttribute('hidden', marketSurface !== 'admin');
   if (marketSurface === 'admin') {
     renderAdminWorkspace();
-    renderMarketAccountMenu();
     return;
   }
   const grid = $('#marketGrid');
   $('#marketView')?.classList.toggle('is-locked', !marketUnlocked);
-  $('#marketLoginScreen')?.toggleAttribute('hidden', marketUnlocked);
+  const authBootstrapping = marketAuthBootstrapping && !marketUnlocked;
+  $('#marketLoginScreen')?.toggleAttribute('hidden', marketUnlocked || authBootstrapping);
+  $('#marketAuthBootstrap')?.toggleAttribute('hidden', !authBootstrapping);
   $('#marketUnlockedContent')?.toggleAttribute('hidden', !marketUnlocked);
   if (!grid) return;
   const decks = marketDecksForDisplay();
@@ -350,7 +418,6 @@ function renderMarket() {
     pager.hidden = marketTotalPages <= 1;
     pager.innerHTML = marketTotalPages <= 1 ? '' : `<span>第 ${marketPage} / ${marketTotalPages} 页 · 共 ${marketTotal} 个牌组</span><div><button type="button" data-market-page="${marketPage - 1}" ${marketPage <= 1 ? 'disabled' : ''}>上一页</button><button type="button" data-market-page="${marketPage + 1}" ${marketPage >= marketTotalPages ? 'disabled' : ''}>下一页</button></div>`;
   }
-  renderMarketAccountMenu();
 }
 
 function marketCardPayload(card, folder, remoteCardId = '') {
@@ -442,8 +509,8 @@ async function openMarketDetail(deckId) {
   if (!deck) return;
   marketSelectedDeck = deck;
   $('#marketDetailTitle').textContent = deck.title;
-  $('#marketDetailSubtitle').textContent = `${deck.category} · 作者 ${deck.author}`;
-  $('#marketDetailBody').innerHTML = `<div class="market-detail-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}"><span>${esc(deck.category)}</span><strong>${esc(deck.title)}</strong><small>${deck.cards} 张卡片</small></div><div class="market-detail-copy"><p>${esc(deck.description)}</p><div class="market-detail-tags">${deck.tags.map((tag) => `<span>${esc(tag)}</span>`).join('')}</div><dl><div><dt>卡片数量</dt><dd>${deck.cards}</dd></div><div><dt>下载次数</dt><dd>${deck.downloads}</dd></div><div><dt>最近更新</dt><dd>${esc(deck.updated)}</dd></div></dl><div class="market-sync-note" id="marketUpdateNote"><span>↻</span><span>正在检查版本信息…</span></div></div>`;
+  $('#marketDetailSubtitle').textContent = `作者 ${deck.author}`;
+  $('#marketDetailBody').innerHTML = `<div class="market-detail-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}"><span>公开牌组</span><strong>${esc(deck.title)}</strong><small>${deck.cards} 张卡片</small></div><div class="market-detail-copy"><p>${esc(deck.description)}</p><div class="market-detail-tags">${deck.tags.map((tag) => `<span>${esc(tag)}</span>`).join('')}</div><dl><div><dt>卡片数量</dt><dd>${deck.cards}</dd></div><div><dt>下载次数</dt><dd>${deck.downloads}</dd></div><div><dt>最近更新</dt><dd>${esc(deck.updated)}</dd></div></dl><div class="market-sync-note" id="marketUpdateNote"><span>↻</span><span>正在检查版本信息…</span></div></div>`;
   $('#marketDownloadButton').textContent = marketUnlocked ? (marketDeckHasUpdate(deck) ? '更新牌组' : '下载牌组') : '需要认证';
   $('#marketDetailModal').showModal();
   const localVersion = Number(state.market?.decks?.[deck.id]?.version || 0);
@@ -462,15 +529,30 @@ function handleMarketClick(event) {
   const button = event.target.closest('[data-market-detail]');
   if (button) openMarketDetail(button.dataset.marketDetail);
 }
+function ensureMarketRegistrationField() {
+  const form = $('#marketAuthForm');
+  if (!form || $('#marketInvitationCode')) return;
+  const field = document.createElement('div');
+  field.className = 'market-character-form-group market-registration-field';
+  field.hidden = true;
+  field.innerHTML = '<label for="marketInvitationCode">邀请码</label><input id="marketInvitationCode" type="text" placeholder="输入管理员提供的邀请码" autocomplete="one-time-code" spellcheck="false" /><small class="field-hint" id="marketInvitationHint">邀请码只在注册时使用一次。</small>';
+  const error = $('#marketLoginError');
+  if (error) form.insertBefore(field, error);
+  else form.appendChild(field);
+}
 async function submitMarketAuth(event) {
   event.preventDefault();
+  marketAuthBootstrapping = false;
+  ensureMarketRegistrationField();
   const form = $('#marketAuthForm');
   const isAutoLogin = form?.dataset.autoLogin === 'true';
   if (form) delete form.dataset.autoLogin;
   const serverKey = $('#marketServerKey')?.value.trim();
   const username = $('#marketUsername')?.value.trim();
   const password = $('#marketPassword')?.value || '';
-  if (!serverKey || !username || !password) {
+  const isRegister = form?.classList.contains('is-register-mode');
+  const invitationCode = $('#marketInvitationCode')?.value.trim() || '';
+  if (!serverKey || !username || !password || (isRegister && !invitationCode)) {
     window.marketLoginCharacters?.triggerError?.();
     return;
   }
@@ -479,26 +561,36 @@ async function submitMarketAuth(event) {
   if (submit) submit.disabled = true;
   if (status) status.textContent = '正在连接服务器验证…';
   try {
-    const result = await marketApi('/auth/login', { method: 'POST', body: JSON.stringify({ accessKey: serverKey, username, password }) });
+    if (isRegister) {
+      const validation = await marketApi('/v2/invitations/validate', { method: 'POST', body: JSON.stringify({ code: invitationCode }) });
+      if (!validation?.valid) throw new Error(validation?.reason || '邀请码无效或已失效。');
+    }
+    const result = await marketApi(isRegister ? '/v2/auth/register' : '/auth/login', { method: 'POST', body: JSON.stringify(isRegister ? { invitationCode, accessKey: serverKey, username, password } : { accessKey: serverKey, username, password }) });
     marketToken = result.token || '';
     marketUser = result.user || null;
     if (!marketToken) throw new Error('服务器没有返回有效登录令牌');
-    await loadMarketCapabilities();
-    await loadMarketCategories();
-    await syncMyMarketDeckMetadata();
-    await loadMarketDecks();
-    await loadMarketFavorites();
+    try { await loadMarketCapabilities(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketCapabilities failed (non-fatal):", e.message); }
+    try { await loadMarketCategories(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketCategories failed (non-fatal):", e.message); }
+    try { await syncMyMarketDeckMetadata(); } catch(e) { console.warn("[MARKET-AUTH] syncMyMarketDeckMetadata failed (non-fatal):", e.message); }
+    try { await loadMarketDecks(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketDecks failed (non-fatal):", e.message); }
+    try { await loadMarketFavorites(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketFavorites failed (non-fatal):", e.message); }
+    const wasAppAuthLocked = appAuthLocked;
     marketUnlocked = true;
+    setAppAuthLock(false);
     if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
     $('#marketAuthForm')?.classList.add('is-authenticated');
     await saveMarketLoginCredentials(serverKey, username, password);
     // Restoring a saved session must not hijack the page shown at startup.
-    if (!isAutoLogin || $('#marketView')?.classList.contains('active')) showMarketWorkspace();
+    if (isRegister) toggleMarketAuthMode();
+    if (wasAppAuthLocked || isAutoLogin) view('library');
+    else if (!isAutoLogin || $('#marketView')?.classList.contains('active')) showMarketWorkspace();
     else renderMarket();
-    toast('服务器认证成功，牌组市场已开启。');
+    toast(isRegister ? '注册成功，已登录应用。' : '服务器认证成功，应用已解锁。');
   } catch (error) {
+  console.error("[MARKET-AUTH] Login error:", error);
     marketToken = '';
     marketUnlocked = false;
+    setAppAuthLock(true);
     if (status) status.textContent = '服务器认证失败';
     const errorBox = $('#marketLoginError');
     if (errorBox) { errorBox.textContent = error instanceof Error ? error.message : '无法连接牌组市场服务器'; errorBox.classList.add('is-visible'); }
@@ -518,20 +610,20 @@ async function openMarketUpload(group, mode = 'create') {
   const cards = profileGroupCards(group);
   if (!cards.length) return toast('这个卡组没有可上传的卡片。');
   await loadMarketCategories();
-  const meta = profileDeckMeta(group);
+  let meta = profileDeckMeta(group);
+  if (mode === 'update') {
+    try {
+      await syncMyMarketDeckMetadata();
+      meta = profileDeckMeta(group);
+    } catch (error) {
+      console.warn('[MARKET-UPLOAD] Unable to refresh owned deck metadata:', error.message);
+    }
+  }
   const isUpdate = mode === 'update' && meta?.remoteId;
   $('#marketUploadTitle').textContent = isUpdate ? '更新牌组' : '上传牌组';
   $('#marketUploadDeckId').value = isUpdate ? meta.remoteId : '';
   $('#marketUploadGroup').value = group;
   $('#marketUploadName').value = group;
-  const categorySelect = $('#marketUploadCategorySelect');
-  const categoryInput = $('#marketUploadNewCategory');
-  const category = meta?.category || '';
-  if (categorySelect) {
-    categorySelect.value = marketCategories.includes(category) ? category : (category ? '__new__' : '');
-    categoryInput && (categoryInput.value = marketCategories.includes(category) ? '' : category);
-    categoryInput?.toggleAttribute('hidden', categorySelect.value !== '__new__');
-  }
   $('#marketUploadDescription').value = meta?.description || `由 ${profileData().name || 'Knowledge Learner'} 分享的学习牌组。`;
   $('#marketUploadChangelog').value = meta?.changelog || '';
   $('#marketUploadModal').showModal();
@@ -540,21 +632,47 @@ async function submitMarketUpload(event) {
   event.preventDefault();
   if (!marketUnlocked || !marketToken) return toast('请先登录牌组市场。');
   const name = $('#marketUploadName').value.trim();
-  const categorySelect = $('#marketUploadCategorySelect');
-  const category = categorySelect?.value === '__new__' ? $('#marketUploadNewCategory').value.trim() : (categorySelect?.value || '').trim();
   const group = $('#marketUploadGroup').value.trim();
   const cards = profileGroupCards(group);
-  if (!name || !category || !cards.length) return toast('请确认牌组名称、分类和卡片内容。');
-  const meta = profileDeckMeta(group);
-  const deckId = $('#marketUploadDeckId').value.trim();
-  const version = deckId ? Number(meta?.version || 0) + 1 : 1;
+  if (!name || !cards.length) return toast('请确认牌组名称和卡片内容。');
+  let meta = profileDeckMeta(group);
+  let deckId = $('#marketUploadDeckId').value.trim();
+  if (deckId) {
+    try {
+      await syncMyMarketDeckMetadata();
+      meta = profileDeckMeta(group);
+      // V2 may have reassigned an old local deck identifier. Always prefer the
+      // current server identifier before creating the multipart request.
+      if (meta?.remoteId) {
+        deckId = meta.remoteId;
+        $('#marketUploadDeckId').value = deckId;
+      }
+    } catch (error) {
+      console.warn('[MARKET-UPLOAD] Unable to refresh deck before update:', error.message);
+    }
+  }
+  let version = deckId ? Number(meta?.version || 0) + 1 : 1;
   const submit = $('#marketUploadForm button[type="submit"]');
   if (submit) { submit.disabled = true; submit.textContent = '正在上传…'; }
   try {
     const changelog = $('#marketUploadChangelog').value.trim();
-    const result = await window.reviewBridge.market.uploadDeck({ baseUrl: marketApiBase, token: marketToken, deckId, title: name, category, description: $('#marketUploadDescription').value.trim(), changelog, version, tags: [category], cards: cards.map((card) => marketCardPayload(card, group)) });
+    let result;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        result = await window.reviewBridge.market.uploadDeck({ baseUrl: marketApiBase, token: marketToken, deckId, title: name, description: $('#marketUploadDescription').value.trim(), changelog, version, tags: [], cards: cards.map((card) => marketCardPayload(card, group)) });
+        if (!result?.ok) throw new Error(result?.error || '上传牌组失败。');
+        break;
+      } catch (error) {
+        if (!deckId || attempt > 0 || !/deck not found|invalid.*uuid|牌组.*找不到|找不到 deck/i.test(error?.message || '')) throw error;
+        await syncMyMarketDeckMetadata();
+        const refreshed = profileDeckMeta(group);
+        deckId = refreshed?.remoteId || '';
+        if (!deckId) throw error;
+        version = Number(refreshed?.version || 0) + 1;
+      }
+    }
     if (!result?.ok) throw new Error(result?.error || '上传牌组失败。');
-    const next = { ...(meta || {}), group, name, remoteId: result.id || deckId, version: Number(result.version || version), category, description: $('#marketUploadDescription').value.trim(), changelog, status: 'pending', updatedAt: new Date().toISOString() };
+    const next = { ...(meta || {}), group, name, remoteId: result.id || deckId, version: Number(result.version || version), description: $('#marketUploadDescription').value.trim(), changelog, status: 'pending', updatedAt: new Date().toISOString() };
     const index = profileData().myDecks.findIndex((item) => item.group === group || item.name === group);
     if (index >= 0) profileData().myDecks[index] = next; else profileData().myDecks.push(next);
     save();
@@ -592,10 +710,7 @@ function adminCategoryOptions(current) {
 }
 function adminDeckReviewMarkup(deck) {
   const latest = deck.versions?.[0];
-  const pendingCategory = latest?.status === 'PENDING' ? latest.manifest?.category : '';
-  const category = deck.category || pendingCategory || '未分类';
-  const pendingLabel = pendingCategory && pendingCategory !== category ? `<span class="admin-pending-note">待审核版本：${esc(pendingCategory)}</span>` : '';
-  return `<article class="admin-deck-review-card"><header class="admin-deck-review-card-head"><div class="admin-deck-review-identity"><span class="admin-deck-kicker">DECK REVIEW</span><h3>${esc(deck.title)}</h3><p>作者 ${esc(deck.owner.username)} · 最近更新 ${esc(formatDate(deck.updatedAt))}</p></div><div class="admin-deck-review-category"><span>分类</span><div><select class="admin-deck-category-select" data-admin-deck-category-select="${deck.id}" aria-label="${esc(deck.title)}分类">${adminCategoryOptions(category)}</select><button type="button" class="table-action" data-admin-deck-category-save="${deck.id}">保存</button></div>${pendingLabel}</div></header><div class="admin-deck-review-meta"><div><span>牌组状态</span><strong class="admin-deck-status ${String(deck.status).toLowerCase()}">${deck.status}</strong></div><div><span>当前版本</span><strong>v${deck.currentVersion || latest?.version || 0}</strong></div><div><span>版本状态</span><strong class="admin-deck-status ${String(latest?.status || '').toLowerCase()}">${latest?.status || 'NONE'}</strong></div><div><span>文件大小</span><strong>${esc(latest?.packageSize || '0')} B</strong></div></div><footer class="admin-deck-review-actions">${adminDeckActionMarkup(deck)}</footer></article>`;
+  return `<article class="admin-deck-review-card"><header class="admin-deck-review-card-head"><div class="admin-deck-review-identity"><span class="admin-deck-kicker">DECK REVIEW</span><h3>${esc(deck.title)}</h3><p>作者 ${esc(deck.owner.username)} · 最近更新 ${esc(formatDate(deck.updatedAt))}</p></div><span class="admin-review-count">牌组版本</span></header><div class="admin-deck-review-meta"><div><span>牌组状态</span><strong class="admin-deck-status ${String(deck.status).toLowerCase()}">${deck.status}</strong></div><div><span>当前版本</span><strong>v${deck.currentVersion || latest?.version || 0}</strong></div><div><span>版本状态</span><strong class="admin-deck-status ${String(latest?.status || '').toLowerCase()}">${latest?.status || 'NONE'}</strong></div><div><span>文件大小</span><strong>${esc(latest?.packageSize || '0')} B</strong></div></div><footer class="admin-deck-review-actions">${adminDeckActionMarkup(deck)}</footer></article>`;
 }
 function adminCategoryRowMarkup(category) {
   const statusLabel = category.status === 'PUBLISHED' ? '已通过' : category.status === 'PENDING' ? '待审核' : '已拒绝';
@@ -608,9 +723,30 @@ function adminCategoryRowMarkup(category) {
   }
   return `<tr data-admin-category-row="${category.id || ''}"><td><strong>${esc(category.name)}</strong><input class="admin-category-edit-input" value="${esc(category.name)}" maxlength="80" hidden /></td><td><span class="admin-deck-status ${String(category.status).toLowerCase()}">${statusLabel}</span></td><td>${esc(category.createdBy?.username || (category.legacy ? '历史数据' : '用户提交'))}</td><td class="admin-action-cell">${actions.join('') || '<span class="muted-label">暂无操作</span>'}</td></tr>`;
 }
+function adminInvitationDate(value) {
+  if (!value) return '永不过期';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '未知' : date.toLocaleString('zh-CN');
+}
+function adminInvitationRowMarkup(invitation) {
+  const statusLabels = { ACTIVE: '可使用', USED: '已用尽', EXPIRED: '已过期', REVOKED: '已撤销' };
+  const status = String(invitation.status || 'ACTIVE').toUpperCase();
+  const action = `<button type="button" class="table-action danger" data-admin-invitation-delete="${esc(invitation.id)}">删除</button>`;
+  return `<tr><td><code class="admin-invitation-code">${esc(invitation.code)}</code></td><td><span class="admin-deck-status ${status.toLowerCase()}">${statusLabels[status] || status}</span></td><td>${Number(invitation.currentUses || 0)} / ${Number(invitation.maxUses || 0)}</td><td>${esc(adminInvitationDate(invitation.expiresAt))}</td><td>${esc(invitation.usedBy?.username || '-')}</td><td class="admin-action-cell"><button type="button" class="table-action" data-admin-invitation-copy="${esc(invitation.code)}" title="复制邀请码">复制</button>${action}</td></tr>`;
+}
 async function renderAdminOverviewExtras(content, renderToken) {
   try {
     const [stats, audit] = await Promise.all([adminApi('/admin/stats'), adminApi('/admin/audit-logs?page=1&pageSize=8')]);
+    // Normalize stats from nested API response
+    if (stats && typeof stats === 'object') {
+      if (stats.versions && typeof stats.versions === 'object') {
+        stats.pendingVersions = stats.versions.pendingReview || 0;
+      }
+      if (stats.downloads && typeof stats.downloads === 'object') {
+        stats.dailyDownloads = stats.downloads.last7Days || [];
+        stats.downloads = stats.downloads.total || 0;
+      }
+    }
     if (renderToken !== adminRenderToken || adminActiveTab !== 'overview') return;
     const storage = stats.storage || {};
     const recentLogs = (audit.items || []).map((item) => `<tr><td>${esc(item.action)}</td><td>${esc(item.user?.username || 'system')}</td><td>${esc(formatDate(item.createdAt))}</td></tr>`).join('');
@@ -630,26 +766,14 @@ async function renderAdminWorkspace() {
     const requiredTabs = [
       ['audit', '操作日志', 'Audit log'],
       ['storage', '存储检查', 'Storage'],
-      ['categories', '分类管理', 'Categories']
+      ['invitations', '邀请码管理', 'Invitations']
     ];
     requiredTabs.forEach(([tab, label, subtitle]) => {
       if (!adminNav.querySelector(`[data-admin-tab="${tab}"]`)) adminNav.insertAdjacentHTML('beforeend', `<button type="button" data-admin-tab="${tab}"><span>${label}</span><small>${subtitle}</small></button>`);
     });
   }
-  const header = viewNode.querySelector('.admin-main-header');
-  if (header && !header.querySelector('.admin-header-actions')) {
-    const sessionBadge = header.querySelector('.admin-session-badge');
-    const headerActions = document.createElement('div');
-    headerActions.className = 'admin-header-actions';
-    if (sessionBadge) headerActions.appendChild(sessionBadge);
-    const accountSlot = document.createElement('div');
-    accountSlot.id = 'marketAdminAccountSlot';
-    accountSlot.className = 'market-admin-account-slot';
-    headerActions.appendChild(accountSlot);
-    header.appendChild(headerActions);
-  }
-  $('#adminSessionName').textContent = marketUser.username || '管理员';
-  const titleMap = { overview: ['市场总览', '查看市场状态和最近的管理活动。'], users: ['许可用户', '创建、启用或停用牌组市场许可账户。'], decks: ['牌组审核', '审核用户上传的牌组并控制公开状态。'], audit: ['操作日志', '查询管理员、用户和牌组市场的关键操作。'], storage: ['存储检查', '确认数据库记录与服务器牌组文件保持一致。'], categories: ['分类管理', '审核用户提交的分类，并调整牌组所属分类。'] };
+  viewNode.querySelector('#adminBackMarketButton')?.remove();
+  const titleMap = { overview: ['市场总览', '查看市场状态和最近的管理活动。'], users: ['许可用户', '创建、启用或停用牌组市场许可账户。'], decks: ['牌组审核', '审核用户上传的牌组并控制公开状态。'], audit: ['操作日志', '查询管理员、用户和牌组市场的关键操作。'], storage: ['存储检查', '确认数据库记录与服务器牌组文件保持一致。'], invitations: ['邀请码管理', '创建、复制和永久删除注册邀请码。'] };
   const [title, subtitle] = titleMap[adminActiveTab] || titleMap.overview;
   $('#adminPageTitle').textContent = title;
   $('#adminPageSubtitle').textContent = subtitle;
@@ -682,7 +806,11 @@ async function renderAdminWorkspace() {
       };
     }
     if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
-    content.innerHTML = `<div class="admin-stat-grid"><article><span>许可用户</span><strong>${stats.users}</strong><small>当前账户总数</small></article><article><span>全部牌组</span><strong>${stats.decks}</strong><small>包含待审核和已下架</small></article><article><span>已公开</span><strong>${stats.publishedDecks}</strong><small>用户可见牌组</small></article><article><span>待处理</span><strong>${stats.pendingVersions}</strong><small>等待版本审核</small></article></div><section class="admin-overview-card"><div><span class="market-eyebrow">QUICK ACTIONS</span><h2>快速管理</h2><p>从这里进入用户或牌组审核页面。</p></div><div class="admin-quick-actions"><button type="button" data-admin-go="users">管理许可用户</button><button type="button" data-admin-go="decks">审核牌组</button></div></section>`;
+    const sUsers = typeof stats.users === 'object' ? (stats.users.total || 0) : (stats.users || 0);
+    const sDecks = typeof stats.decks === 'object' ? (stats.decks.total || 0) : (stats.decks || 0);
+    const sPublished = typeof stats.decks === 'object' ? (stats.decks.published || 0) : (stats.publishedDecks || 0);
+    const sPending = typeof stats.versions === 'object' ? (stats.versions.pendingReview || 0) : (stats.pendingVersions || 0);
+    content.innerHTML = `<div class="admin-stat-grid"><article><span>许可用户</span><strong>${sUsers}</strong><small>已注册市场账户</small></article><article><span>牌组总数</span><strong>${sDecks}</strong><small>服务器中的全部牌组</small></article><article><span>已发布牌组</span><strong>${sPublished}</strong><small>当前对外可见</small></article><article><span>待审核版本</span><strong>${sPending}</strong><small>等待管理员处理</small></article></div><section class="admin-overview-card"><div><span class="market-eyebrow">QUICK ACTIONS</span><h2>快速处理</h2><p>从这里进入最常用的审核工作流。</p></div><div class="admin-quick-actions"><button type="button" data-admin-go="users">管理许可用户</button><button type="button" data-admin-go="decks">审核牌组版本</button></div></section>`;
   } else if (adminActiveTab === 'users') {
     let usersResult;
     try {
@@ -715,26 +843,37 @@ async function renderAdminWorkspace() {
     }
     if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
     content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">STORAGE HEALTH</span><h2>存储检查</h2><p>这里只清理服务器临时文件，不会删除用户本地数据。</p></div></div><div class="admin-stat-grid admin-stat-grid-compact"><article><span>数据库版本记录</span><strong>${result.referencedCount}</strong><small>应存在的牌组包</small></article><article><span>服务器文件</span><strong>${result.fileCount}</strong><small>扫描到的文件数</small></article><article><span>缺失文件</span><strong>${result.missing.length}</strong><small>${result.missing.length ? '需要修复' : '正常'}</small></article><article><span>孤立文件</span><strong>${result.orphanFiles.length}</strong><small>${result.orphanFiles.length ? '需要清理' : '正常'}</small></article></div><div class="admin-overview-actions"><button type="button" class="table-action" data-admin-storage-refresh="true">重新检查</button><button type="button" class="table-action danger" data-admin-storage-cleanup="true">清理临时文件</button></div><p class="admin-storage-detail">临时上传文件：${result.temporary.length} 个；删除隔离目录：${result.quarantine.length} 个。</p></section>`;
+  } else if (adminActiveTab === 'invitations') {
+    let result;
+    try { result = await adminApi(`/v2/invitations?page=${adminPage.invitations}&pageSize=${adminPageSize}`); } catch (error) {
+      content.innerHTML = `<section class="admin-section-card admin-load-error"><h2>邀请码暂时无法加载</h2><p>${esc(error.message || '请检查后端服务。')}</p><button type="button" class="table-action" data-admin-retry="true">重新加载</button></section>`;
+      bindAdminWorkspaceEvents();
+      return;
+    }
+    if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
+    const page = { items: Array.isArray(result?.codes) ? result.codes : [], page: Number(result?.page || adminPage.invitations), totalPages: Number(result?.totalPages || 1), total: Number(result?.total || result?.codes?.length || 0) };
+    adminTotalPages.invitations = page.totalPages;
+    content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">REGISTRATION INVITATIONS</span><h2>邀请码管理</h2><p>邀请码只用于注册新账户，可限制使用次数并设置过期时间。</p></div></div><form id="adminCreateInvitationForm" class="admin-create-form admin-invitation-form"><label>最大使用次数<input id="adminInvitationMaxUses" type="number" min="1" max="100000" value="1" required /></label><label>过期时间<input id="adminInvitationExpiresAt" type="datetime-local" /></label><button type="submit" class="primary">生成邀请码</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>邀请码</th><th>状态</th><th>使用次数</th><th>过期时间</th><th>使用账户</th><th>操作</th></tr></thead><tbody>${page.items.map(adminInvitationRowMarkup).join('') || '<tr><td colspan="6">暂无邀请码</td></tr>'}</tbody></table></div>${adminPaginationMarkup('invitations', page)}</section>`;
   } else if (adminActiveTab === 'categories') {
     let categories = [];
-    try { categories = await adminApi('/admin/categories'); } catch (error) {
+    try { const catResult = await adminApi('/admin/categories'); categories = Array.isArray(catResult) ? catResult : (catResult.categories || []); } catch (error) {
       content.innerHTML = `<section class="admin-section-card admin-load-error"><h2>分类管理暂时无法加载</h2><p>${esc(error.message || '请检查后端服务。')}</p><button type="button" class="table-action" data-admin-retry="true">重新加载</button></section>`;
       bindAdminWorkspaceEvents();
       return;
     }
     if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
     content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">CATEGORY REVIEW</span><h2>分类管理</h2><p>用户上传新分类后会先进入待审核状态，管理员创建的分类立即可用。删除前需要先迁移仍在使用中的牌组。</p></div></div><form id="adminCreateCategoryForm" class="admin-create-form"><input id="adminNewCategory" required maxlength="80" placeholder="新建公开分类" /><button type="submit" class="primary">创建分类</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>分类</th><th>状态</th><th>来源</th><th>操作</th></tr></thead><tbody>${categories.map(adminCategoryRowMarkup).join('') || '<tr><td colspan="4">暂无分类</td></tr>'}</tbody></table></div></section>`;
-  } else {
+  } else if (adminActiveTab === 'decks') {
   let decksResult;
-    try { decksResult = await adminApi(`/admin/decks?page=${adminPage.decks}&pageSize=${adminPageSize}`); } catch (error) {
+      try { const rawDecks = await adminApi(`/admin/decks?page=${adminPage.decks}&pageSize=${adminPageSize}`); decksResult = rawDecks.items ? rawDecks : { items: Array.isArray(rawDecks) ? rawDecks : (rawDecks.decks || []), page: rawDecks.page || 1, total: rawDecks.total || 0, totalPages: rawDecks.totalPages || 1 }; } catch (error) {
       content.innerHTML = `<section class="admin-section-card admin-load-error"><h2>牌组审核暂时无法加载</h2><p>${esc(error.message || '请检查后端服务。')}</p><button type="button" class="table-action" data-admin-retry="true">重新加载</button></section>`;
       bindAdminWorkspaceEvents();
       return;
     }
     if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
-    const page = decksResult.items ? decksResult : adminPaginate(decksResult, adminPage.decks);
+    const page = decksResult.items ? decksResult : adminPaginate(decksResult.decks || decksResult.items || [], adminPage.decks);
     adminTotalPages.decks = page.totalPages;
-    content.innerHTML = `<section class="admin-section-card admin-deck-review-section"><div class="admin-section-card-head"><div><span class="market-eyebrow">DECK MODERATION</span><h2>牌组审核</h2><p>审核牌组版本、公开状态和分类。待审核版本不会替换当前公开版本。</p></div><span class="admin-review-count">${page.total} 个牌组</span></div><div class="admin-deck-review-list">${page.items.map(adminDeckReviewMarkup).join('') || '<div class="admin-empty-state">暂无待处理牌组</div>'}</div>${adminPaginationMarkup('decks', page)}</section>`;
+    content.innerHTML = `<section class="admin-section-card admin-deck-review-section"><div class="admin-section-card-head"><div><span class="market-eyebrow">DECK MODERATION</span><h2>牌组审核</h2><p>审核牌组版本和公开状态。待审核版本不会替换当前公开版本。</p></div><span class="admin-review-count">${page.total} 个牌组</span></div><div class="admin-deck-review-list">${page.items.map(adminDeckReviewMarkup).join('') || '<div class="admin-empty-state">暂无待处理牌组</div>'}</div>${adminPaginationMarkup('decks', page)}</section>`;
   }
   if (adminActiveTab === 'overview') await renderAdminOverviewExtras(content, renderToken);
   // Rebind controls created by the current render (tables, quick actions and retry buttons).
@@ -747,6 +886,48 @@ function bindAdminWorkspaceEvents() {
   $$('[data-admin-retry]').forEach((button) => button.onclick = () => renderAdminWorkspace());
   $$('[data-admin-storage-refresh]').forEach((button) => button.onclick = async () => { button.disabled = true; try { const result = await adminApi('/admin/storage/health'); toast(result.healthy ? '存储检查通过。' : `发现 ${result.missing.length + result.orphanFiles.length} 个文件问题。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '存储检查失败。'); } finally { button.disabled = false; } });
   $$('[data-admin-storage-cleanup]').forEach((button) => button.onclick = async () => { if (!window.confirm('只清理超过 24 小时的临时上传文件，继续吗？')) return; button.disabled = true; try { const result = await adminApi('/admin/storage/cleanup', { method: 'POST', body: JSON.stringify({ olderThanHours: 24, removeOrphans: false, removeQuarantine: false }) }); toast(`已清理 ${result.removed.length} 个临时文件。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '清理失败。'); } finally { button.disabled = false; } });
+  const createInvitationForm = $('#adminCreateInvitationForm');
+  if (createInvitationForm) createInvitationForm.onsubmit = async (event) => {
+    event.preventDefault();
+    const submit = createInvitationForm.querySelector('button[type="submit"]');
+    if (submit?.disabled) return;
+    const maxUses = Number($('#adminInvitationMaxUses')?.value || 1);
+    const expiresValue = $('#adminInvitationExpiresAt')?.value || '';
+    if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 100000) return toast('使用次数必须是 1 到 100000 之间的整数。');
+    if (submit) submit.disabled = true;
+    try {
+      const body = { maxUses };
+      if (expiresValue) body.expiresAt = new Date(expiresValue).toISOString();
+      await adminApi('/v2/invitations', { method: 'POST', body: JSON.stringify(body) });
+      toast('邀请码已生成。');
+      await renderAdminWorkspace();
+    } catch (error) {
+      toast(error.message || '生成邀请码失败。');
+    } finally {
+      if (submit) submit.disabled = false;
+    }
+  };
+  $$('[data-admin-invitation-copy]').forEach((button) => button.onclick = async () => {
+    const code = button.dataset.adminInvitationCopy || '';
+    try {
+      await navigator.clipboard.writeText(code);
+      toast('邀请码已复制。');
+    } catch {
+      window.prompt('复制邀请码', code);
+    }
+  });
+  $$('[data-admin-invitation-delete]').forEach((button) => button.onclick = async () => {
+    if (button.disabled || !window.confirm('删除后该邀请码及其记录将无法恢复，确定继续吗？')) return;
+    button.disabled = true;
+    try {
+      await adminApi(`/v2/invitations/${encodeURIComponent(button.dataset.adminInvitationDelete)}`, { method: 'DELETE' });
+      toast('邀请码已删除。');
+      await renderAdminWorkspace();
+    } catch (error) {
+      toast(error.message || '撤销邀请码失败。');
+      button.disabled = false;
+    }
+  });
   const createUserForm = $('#adminCreateUserForm');
   if (createUserForm) createUserForm.onsubmit = async (event) => {
     event.preventDefault();
@@ -927,23 +1108,27 @@ function ensureServerSettingsPanel() {
   const panel = $('#serverPanel');
   if (!panel || panel.dataset.ready === 'true') return;
   panel.dataset.ready = 'true';
-  panel.innerHTML = `<div class="sync-panel-heading"><div><span class="modal-eyebrow">MARKET SERVER</span><h2>牌组市场服务器</h2><p class="setting-description">填写服务器域名或 IP 后，牌组市场会使用远程服务。留空时默认连接本机服务。</p></div></div><div class="market-server-form"><label>服务器地址<input id="marketServerUrl" type="url" autocomplete="url" spellcheck="false" placeholder="留空使用 http://127.0.0.1:4000" /></label><p class="field-hint">例如 https://market.example.com 或 192.168.1.20:4000。程序会自动补充 /api/v1。</p></div><div class="storage-actions market-server-actions"><button class="secondary-button" id="marketServerTestButton" type="button">测试连接</button><button class="primary" id="marketServerSaveButton" type="button">保存服务器地址</button><button class="secondary-button" id="marketServerResetButton" type="button">恢复本机</button></div><div class="storage-status" id="marketServerStatus">当前使用本机服务器</div>`;
-  const input = $('#marketServerUrl');
+  panel.innerHTML = `<div class="sync-panel-heading"><div><span class="modal-eyebrow">MARKET SERVER</span><h2>牌组市场服务器</h2><p class="setting-description">使用服务器密钥连接市场。密钥只用于解析连接配置，界面不会显示服务器 IP 或端口。</p></div></div><div class="market-server-form"><label>服务器密钥<input id="marketServerSettingsKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴服务器密钥" /></label><p class="field-hint">输入服务器管理员提供的 KR1 密钥；留空使用默认服务器。更换服务器时直接替换密钥即可。</p></div><div class="storage-actions market-server-actions"><button class="secondary-button" id="marketServerTestButton" type="button">测试连接</button><button class="primary" id="marketServerSaveButton" type="button">保存服务器密钥</button><button class="secondary-button" id="marketServerResetButton" type="button">恢复默认</button></div><div class="storage-status" id="marketServerStatus">使用默认服务器</div>`;
+  const input = $('#marketServerSettingsKey');
+  panel.insertAdjacentHTML('beforeend', '<section class="settings-account-section" id="marketSettingsAccountSection" hidden><div class="settings-account-heading"><div><span class="market-eyebrow">CURRENT ACCOUNT</span><h3>当前账户</h3><p>退出登录后，下次启动需要重新验证市场账户。</p></div><div class="settings-account-avatar" id="marketSettingsAccountAvatar"><span id="marketSettingsAccountFallback">K</span><img id="marketSettingsAccountImage" alt="" hidden /></div></div><div class="settings-account-meta"><strong id="marketSettingsAccountName">未登录</strong><span id="marketSettingsAccountRole">许可账户</span></div><button type="button" class="danger-button settings-logout-button" id="marketSettingsLogoutButton">退出登录</button></section>');
+  $('#marketSettingsLogoutButton').addEventListener('click', logoutMarket);
+  renderMarketSettingsAccount();
   const status = $('#marketServerStatus');
-  input.value = state.settings?.marketServerUrl || '';
-  if (status) status.textContent = input.value ? `当前服务器：${normalizeMarketApiBase(input.value)}` : '当前使用本机服务器';
+  input.value = state.settings?.marketServerKey || '';
   const applyServer = (value) => {
     const raw = String(value || '').trim();
     if (raw && !parseMarketApiBase(raw)) {
-      toast('服务器地址格式不正确，请填写域名、IP 或完整 URL。');
+      toast('服务器密钥无效，请向管理员获取新的 KR1 密钥。');
       return false;
     }
     const nextBase = normalizeMarketApiBase(raw);
+    const nextKey = raw ? encodeMarketServerKey(raw) : '';
     if (nextBase !== marketApiBase) {
       marketRememberCredentials = false;
       void window.reviewBridge?.market?.clearCredentials?.();
     }
-    state.settings.marketServerUrl = raw;
+    state.settings.marketServerKey = nextKey;
+    delete state.settings.marketServerUrl;
     marketApiBase = nextBase;
     marketToken = '';
     marketUser = null;
@@ -951,34 +1136,52 @@ function ensureServerSettingsPanel() {
     marketCapabilities = {};
     marketAutoLoginTried = false;
     save();
-    if (status) status.textContent = raw ? `当前服务器：${marketApiBase}` : '当前使用本机服务器';
+    if (status) status.textContent = raw ? '服务器密钥已配置' : '使用默认服务器';
     return true;
   };
   $('#marketServerSaveButton').addEventListener('click', () => {
     if (applyServer(input.value)) {
       renderMarket();
-      toast('牌组市场服务器地址已保存。');
+      toast('牌组市场服务器密钥已保存。');
     }
   });
   $('#marketServerResetButton').addEventListener('click', () => {
     input.value = '';
     if (applyServer('')) {
       renderMarket();
-      toast('已恢复本机牌组市场服务器。');
+      toast('已恢复默认牌组市场服务器。');
     }
   });
   $('#marketServerTestButton').addEventListener('click', async () => {
     const raw = input.value.trim();
     const base = parseMarketApiBase(raw);
-    if (raw && !base) return toast('服务器地址格式不正确，请填写域名、IP 或完整 URL。');
+    if (raw && !base) return toast('服务器密钥无效，请向管理员获取新的 KR1 密钥。');
     const button = $('#marketServerTestButton');
     button.disabled = true;
     if (status) status.textContent = '正在测试服务器连接…';
     try {
-      const response = await fetch(`${(base || DEFAULT_MARKET_API_BASE).replace(/\/api\/v1$/, '')}/health`, { cache: 'no-store' });
-      const health = await response.json().catch(() => ({}));
-      if (!response.ok || !health.ok) throw new Error(`服务器返回 ${response.status}`);
-      if (status) status.textContent = `连接成功：${base || DEFAULT_MARKET_API_BASE} · API ${health.apiVersion || '未知版本'}`;
+      const testUrl = `${(base || DEFAULT_MARKET_API_BASE).replace(/\/api\/v1$/, '')}/health`;
+      let health = null;
+      let ok = false;
+      let statusText = '';
+      // Try IPC proxy first
+      if (window.reviewBridge?.market?.fetch) {
+        const result = await window.reviewBridge.market.fetch({ url: testUrl, options: { method: 'GET' } });
+        if (result && result.status > 0) {
+          ok = result.ok;
+          health = typeof result.body === 'object' ? result.body : {};
+          statusText = result.status;
+        }
+      }
+      // Fallback to direct fetch
+      if (!health) {
+        const response = await fetch(testUrl, { cache: 'no-store' });
+        health = await response.json().catch(() => ({}));
+        ok = response.ok;
+        statusText = response.status;
+      }
+      if (!ok || !health?.ok) throw new Error(`服务器返回 ${statusText}`);
+      if (status) status.textContent = `连接成功 · API ${health.apiVersion || '未知版本'}`;
       toast('牌组市场服务器连接成功。');
     } catch (error) {
       if (status) status.textContent = `连接失败：${error instanceof Error ? error.message : '无法连接服务器'}`;
@@ -993,6 +1196,15 @@ function toggleMarketAuthMode() {
   var form = document.getElementById("marketAuthForm");
   var btn = document.getElementById("marketRegisterToggle");
   if (!form || !btn) return;
+  ensureMarketRegistrationField();
   var isRegister = form.classList.toggle("is-register-mode");
-  btn.textContent = isRegister ? "Already have an account? Login" : "No account? Register";
+  var field = document.getElementById('marketInvitationCode')?.closest('.market-registration-field');
+  if (field) field.hidden = !isRegister;
+  var title = document.querySelector('#marketAuthForm')?.closest('.market-login-form-container')?.querySelector('h1');
+  var subtitle = document.querySelector('#marketAuthForm')?.closest('.market-login-form-container')?.querySelector('.market-form-header p');
+  if (title) title.textContent = isRegister ? '创建市场账户' : '进入牌组市场';
+  if (subtitle) subtitle.textContent = isRegister ? '使用管理员邀请码创建账户' : '请输入许可信息以浏览公开牌组';
+  btn.textContent = isRegister ? '已有账户？返回登录' : '还没有账户？注册';
+  document.querySelector('#marketAuthForm .market-character-submit span')?.replaceChildren(document.createTextNode(isRegister ? '注册并进入' : '验证并进入'));
+  document.getElementById('marketLoginError')?.classList.remove('is-visible');
 }
