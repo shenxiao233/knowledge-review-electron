@@ -106,12 +106,6 @@ const base = {
 };
 
 
-const TAG_PALETTE = ["#81b29a","#f2cc8f","#e07a5f","#3d405b","#6c9bcf","#d4a373","#a98467","#ddb892","#b5838d","#e5989b"];
-function getTagColor(tag) {
-  var hash = 0;
-  for (var i = 0; i < tag.length; i++) hash = ((hash << 5) - hash + tag.charCodeAt(i)) | 0;
-  return TAG_PALETTE[Math.abs(hash) % TAG_PALETTE.length];
-}
 let state;
 let els = {};
 let queue = [];
@@ -126,6 +120,7 @@ let reviewDisplayCard = null;
 let reviewSnapshot = null;
 let selectedCardIds = new Set();
 let lastNext = 0;
+let queueVersion = 0;
 let batchCardMode = false;
 let pendingCardOrder = null;
 let createMode = 'document';
@@ -213,7 +208,11 @@ function normCard(card) {
     resetAt: card.resetAt || '',
     fsrs: card.fsrs || null
   };
-  normalized.fsrs = window.knowledgeFSRS.migrate(normalized);
+  // BUG-05 fix: Skip FSRS migration for cards that already have valid FSRS state
+  const hasValidFsrs = normalized.fsrs && normalized.fsrs.due && normalized.fsrs.state && typeof normalized.fsrs.stability === 'number';
+  if (!hasValidFsrs) {
+    normalized.fsrs = window.knowledgeFSRS.migrate(normalized);
+  }
   normalized.dueAt = normalized.fsrs.due;
   normalized.interval = normalized.fsrs.scheduledDays;
   normalized.reviews = normalized.fsrs.reps;

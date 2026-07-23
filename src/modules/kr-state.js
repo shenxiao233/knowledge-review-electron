@@ -25,7 +25,7 @@ function hydrate(raw) {
       reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
       schemaVersion: 3,
       algorithm: 'fsrs',
-      settings: { ...base.settings, ...(saved.settings || {}), tagColors: saved.settings?.tagColors && typeof saved.settings.tagColors === 'object' ? saved.settings.tagColors : {}, desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerUrl: typeof saved.settings?.marketServerUrl === 'string' ? saved.settings.marketServerUrl.trim() : '' },
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerUrl: typeof saved.settings?.marketServerUrl === 'string' ? saved.settings.marketServerUrl.trim() : '' },
       reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
       trash: { ...base.trash, ...(saved.trash || {}) },
       profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {} },
@@ -60,11 +60,27 @@ let webdavPushPromise = Promise.resolve();
 let updateState = { status: 'idle', version: '', percent: 0, message: '' };
 let persistentSaveTimer = null;
 let persistentSaveQueue = Promise.resolve();
+let persistentSaveWarned = false;
 function schedulePersistentSave(immediate = false) {
   clearTimeout(persistentSaveTimer);
   const write = () => {
     const snapshot = structuredClone(state);
-    persistentSaveQueue = persistentSaveQueue.catch(() => {}).then(() => window.reviewBridge?.data?.save(snapshot));
+    persistentSaveQueue = persistentSaveQueue.catch(() => {}).then(async () => {
+      try {
+        const result = await window.reviewBridge?.data?.save(snapshot);
+        if (result && !result.ok && !persistentSaveWarned) {
+          persistentSaveWarned = true;
+          console.warn('[PersistentSave] Disk save failed:', result.error);
+          toast('磁盘保存失败，数据仍在内存中。请检查磁盘空间。');
+        }
+      } catch (err) {
+        if (!persistentSaveWarned) {
+          persistentSaveWarned = true;
+          console.warn('[PersistentSave] Disk save threw an error:', err.message);
+          toast('磁盘保存异常，数据仍在内存中。');
+        }
+      }
+    });
   };
   if (immediate) write();
   else persistentSaveTimer = setTimeout(write, 350);
@@ -80,12 +96,20 @@ function save() {
     syncReviewLog();
     const serialized = JSON.stringify(state);
     const savedAt = new Date().toISOString();
-    localStorage.setItem(KEY, serialized);
-    localStorage.setItem(STATE_META_KEY, savedAt);
+    // BUG-03 fix: Skip localStorage if it previously failed (quota exceeded)
+    if (!localStorageFull) {
+      try {
+        localStorage.setItem(KEY, serialized);
+        localStorage.setItem(STATE_META_KEY, savedAt);
+      } catch (lsErr) {
+        localStorageFull = true;
+        toast('本地空间不足，数据已保存到磁盘和数据库。建议导出备份。');
+      }
+    }
     schedulePersistentSave();
     scheduleIDBSave();
   } catch {
-    toast('本地空间不足，请先导出备份。');
+    toast('数据序列化失败，请导出备份。');
   }
 }
 function syncReviewLog() {
@@ -96,6 +120,17 @@ function syncReviewLog() {
     if (key) next[key] = (next[key] || 0) + 1;
   });
   state.reviewLog = next;
+
+  // BUG-08 fix: Archive events older than 90 days to prevent unbounded growth.
+  // The heatmap data is already captured in state.reviewLog above.
+  const ARCHIVE_THRESHOLD = 90 * 86400000; // 90 days in ms
+  const cutoff = Date.now() - ARCHIVE_THRESHOLD;
+  if (state.reviewEvents.length > 500) {
+    state.reviewEvents = state.reviewEvents.filter((event) => {
+      if (!event.reviewedAt) return true;
+      return new Date(event.reviewedAt).getTime() > cutoff;
+    });
+  }
 }
 function activeDoc() { return state.documents.find((doc) => doc.id === state.activeDocId) || state.documents[0]; }
 function debounce(callback, delay = 250) {
@@ -107,6 +142,7 @@ function debounce(callback, delay = 250) {
 
 let idbReady = false;
 let idbSaveTimer = null;
+let localStorageFull = false;
 
 async function idbSaveState() {
   try {

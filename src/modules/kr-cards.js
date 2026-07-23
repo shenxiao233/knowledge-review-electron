@@ -4,12 +4,6 @@
  * Note: Contains updated versions that override earlier compressed defs.
  */
 function renderTagSpan(text) {
-  var tagColors = state.settings.tagColors || {};
-  var plain = text.replace(/<[^>]*>/g, '');
-  var color = tagColors[plain];
-  if (color) {
-    return '<span class="tag tag-colored" style="--tag-color:' + color + '">' + text + '</span>';
-  }
   return '<span class="tag">' + text + '</span>';
 }
 function quickCard() { const text = state.extractedText.trim(); if (!text) return toast('请先在编辑器中选中文本。'); openCard(); $('#questionInput').value = `解释：${text.slice(0, 40)}`; $('#explanationInput').value = text; }

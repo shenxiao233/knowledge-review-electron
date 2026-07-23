@@ -2958,15 +2958,6 @@ select option { color: #34413b; background: #fff; }
 .market-deck-heading { position: relative; }
 
 /* Tag color system (Phase 1-6) */
-.tag.tag-colored { background: color-mix(in srgb, var(--tag-color) 18%, #fff); color: var(--tag-color); border: 1px solid color-mix(in srgb, var(--tag-color) 30%, transparent); font-weight: 500; }
-.tag-manager-section { margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e0d9; }
-.tag-manager-list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-.tag-color-chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border: 1px solid #e5e0d9; border-radius: 8px; background: #fff; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; font-size: 13px; }
-.tag-color-chip:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.06); }
-.tag-chip-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--chip-color); flex-shrink: 0; }
-.tag-chip-name { font-weight: 500; color: #444; }
-.tag-chip-hex { font-size: 11px; color: #aaa; font-family: Consolas, monospace; }
-.tag-manager-empty { color: #aaa; font-size: 13px; font-style: italic; }
 
 /* Global search modal (Phase 1-7) */
 .global-search-modal { width: min(640px, 92vw); max-height: 75vh; border: 0; border-radius: 16px; padding: 0; background: #fff; box-shadow: 0 24px 80px rgba(0,0,0,.18); overflow: hidden; }
@@ -3012,3 +3003,8 @@ select option { color: #34413b; background: #fff; }
 .market-review-stars { color: #f2cc8f; letter-spacing: 1px; }
 .market-review-item p { font-size: 13px; color: #555; margin: 0; line-height: 1.5; }
 .market-reviews-empty { text-align: center; color: #aaa; font-size: 13px; font-style: italic; padding: 16px 0; }
+
+/* Market Card V2: favorite button inline override */
+.market-deck-card-v2 .market-fav-button { position: static; width: 30px; height: 30px; border: 1px solid #e5e0d9; border-radius: 8px; background: #f8f8f6; backdrop-filter: none; }
+.market-deck-card-v2 .market-fav-button:hover { background: #fff3ef; border-color: #e6c4b8; }
+.market-deck-card-v2 .market-fav-button.is-fav { border-color: #f0c4b8; background: #fff7f4; }
