@@ -147,7 +147,7 @@ function performGlobalSearch(query) {
     const tagMatch = (card.tags || []).some(t => t.toLowerCase().includes(q));
     const folderMatch = (card.folder || '').toLowerCase().includes(q);
     if (qMatch || tagMatch || folderMatch) {
-      const preview = card.type === 'note' ? (card.noteContent || '').substring(0, 80) : (card.options || []).join(', ').substring(0, 80);
+      const preview = card.type === 'note' ? (card.noteContent || '').substring(0, 80) : Object.values(card.options || {}).filter(Boolean).join(', ').substring(0, 80);
       results.push({ type: 'card', id: card.id, title: (card.question || '').replace(/<[^>]*>/g, '').substring(0, 60), subtitle: card.folder + (tagMatch ? ' · ' + card.tags.join(', ') : ''), preview, score: qMatch ? 3 : tagMatch ? 2 : 1 });
     }
   });

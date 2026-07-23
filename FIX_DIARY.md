@@ -225,6 +225,191 @@ fix: resolve critical UI bugs causing unresponsive interface
 5. 简化 `setting()` 函数，移除 `account` 条件分支
 
 
+
+
+---
+
+### Bug #7：全局搜索中 card.options 被当数组处理（中等）
+
+**文件：** `src/modules/kr-ui.js`
+**严重度：** 🟡 中等
+
+**问题现象：**
+全局搜索（Ctrl+K）结果中，选择题卡片的选项预览始终为空。
+
+**根因分析：**
+`card.options` 是 `{ A: '文本', B: '文本', C: '文本', D: '文本' }` 对象，但搜索代码中使用了 `(card.options || []).join(', ')`，对对象调用 `.join()` 会抛出 TypeError（被静默捕获）。
+
+**修复后：**
+```javascript
+// 修复前
+(card.options || []).join(', ').substring(0, 80)
+
+// 修复后
+Object.values(card.options || {}).filter(Boolean).join(', ').substring(0, 80)
+```
+
+---
+
+### Bug #8：Markdown 渲染器不支持嵌套列表（中等）
+
+**文件：** `src/modules/kr-documents.js`
+**严重度：** 🟡 中等
+
+**问题现象：**
+文档中的嵌套列表（缩进子列表）被扁平化为单层列表。
+
+**根因分析：**
+`markdownToHtml()` 只维护单个 `list` 变量跟踪当前列表类型，不支持基于缩进的嵌套。
+
+**修复方案：**
+将单变量 `list` 替换为栈结构 `listStack`，每项记录 `{ type, indent }`。根据缩进级别开闭嵌套层。
+
+
+
+
+---
+
+### Bug #9：WebDAV 测试连接触发不必要的配置保存（严重）
+
+**文件：** `src/main.js`
+**严重度：** 🔴 高
+
+**问题现象：**
+WebDAV 设置面板中点击"测试连接"后，即使用户只是在测试而未打算修改配置，凭证和配置也会被自动写入。
+
+**根因分析：**
+`webdav:test` IPC 处理器在测试连接成功后，会自动调用 `writeWebDavCredentials()` 和 `writeAppConfig()`。
+
+**修复后：**
+移除测试处理器中的写入逻辑，使其成为纯粹的只读连接验证。保存配置需通过 `webdav:saveConfig` 显式操作。
+
+---
+
+### Bug #10：数据源选择策略导致已删除卡片复活（严重）
+
+**文件：** `src/modules/kr-settings.js`
+**严重度：** 🔴 高
+
+**问题现象：**
+用户删除部分卡片后重启应用，被删除的卡片可能"复活"。
+
+**根因分析：**
+`init()` 在三个数据源（IndexedDB / state.json / localStorage）之间选择"卡片数量最多"的作为权威来源。删除卡片后，旧快照因卡片更多而被选中，覆盖新数据。
+
+**修复后：**
+将选择策略从"卡片数量最多"改为"`savedAt` 时间戳最新"。同时增加冲突检测：数据源之间卡片数量差异超过 20% 时自动创建安全备份。
+
+---
+
+### Bug #11：localStorage 超限后持续弹 toast（严重）
+
+**文件：** `src/modules/kr-state.js`
+**严重度：** 🔴 高
+
+**问题现象：**
+localStorage 达到 5MB 上限后，每次 `save()` 都会弹出 toast 提示，严重干扰用户操作。
+
+**修复后：**
+增加 `localStorageFull` 标记。首次失败时弹出一次 toast 并设置标记，后续 `save()` 调用直接跳过 localStorage 写入，仅依赖磁盘文件和 IndexedDB。
+
+---
+
+### Bug #12：PDF 导出 data URL 大小限制（严重）
+
+**文件：** `src/main.js`
+**严重度：** 🔴 高
+
+**问题现象：**
+包含大量 base64 图片的 PDF 导出会失败或截断。
+
+**根因分析：**
+PDF 导出通过 `data:text/html` URL 加载 HTML 到隐藏窗口，该方式有约 2MB 大小限制。
+
+**修复后：**
+改为将 HTML 写入 `os.tmpdir()` 临时文件，使用 `loadFile()` 替代 `loadURL()` 加载，`finally` 块中清理临时文件。
+
+---
+
+### Bug #13：normCard 每次调用都执行 FSRS 迁移（严重）
+
+**文件：** `src/modules/kr-core.js`
+**严重度：** 🔴 高
+
+**问题现象：**
+加载 1200+ 张卡片时性能下降，每次 `normCard()` 都调用 `knowledgeFSRS.migrate()`。
+
+**修复后：**
+在调用 migrate 前检查卡片是否已拥有有效的 FSRS 状态（包含 `due`、`state`、`stability` 字段）。已有有效状态的卡片直接复用，仅对遗留卡片执行迁移。
+
+---
+
+### Bug #14：复习队列缓存导致过期队列（中等）
+
+**文件：** `src/modules/kr-core.js`, `src/modules/kr-review.js`
+**严重度：** 🟡 中
+
+**问题现象：**
+编辑卡片或导入牌组后，复习队列可能不会更新。
+
+**修复后：**
+引入 `queueVersion` 全局计数器，在 `recordReview()` 等关键操作后递增，并纳入 `queueKey` 计算。任何卡片状态变更都会使缓存 key 失效。
+
+---
+
+### Bug #15：reviewEvents 无限增长（中等）
+
+**文件：** `src/modules/kr-state.js`
+**严重度：** 🟡 中
+
+**问题现象：**
+长期使用后 `state.reviewEvents` 可能累积数万条记录，拖慢序列化性能。
+
+**修复后：**
+`syncReviewLog()` 中增加归档逻辑：超过 500 条时自动清除 90 天之前的旧事件。热力图数据通过 `state.reviewLog` 独立保存，不受影响。
+
+---
+
+### Bug #16：连续打卡天数（streak）逻辑缺陷（中等）
+
+**文件：** `src/modules/kr-review.js`
+**严重度：** 🟡 中
+
+**问题现象：**
+当天还没有复习记录时，streak 显示为 0（断连），而不是延续昨天的连续天数。
+
+**修复后：**
+当今天有复习记录时从 `i=0`（今天）开始计数；当今天尚无记录时从 `i=1`（昨天）开始计数，将"尚未复习"视为连续天数的延续。
+
+---
+
+### Bug #17：磁盘保存失败无用户通知（中等）
+
+**文件：** `src/modules/kr-state.js`
+**严重度：** 🟡 中
+
+**问题现象：**
+`schedulePersistentSave` 的磁盘写入失败被静默吞掉，用户完全不知情。
+
+**修复后：**
+增加 `persistentSaveWarned` 标记。首次失败时弹出 toast 警告并在 console 记录错误详情，后续不再重复弹 toast。
+
+---
+
+### Bug #18：文档树新建文件夹默认折叠（中等）
+
+**文件：** `src/modules/kr-documents.js`
+**严重度：** 🟡 中
+
+**问题现象：**
+新建文件夹在文档树中默认折叠，用户需要手动展开。
+
+**根因分析：**
+`renderTree.opened` 集合仅在首次调用时初始化，新建的文件夹 ID 不会自动加入。
+
+**修复后：**
+每次 `renderTree()` 调用时遍历所有文件夹并将缺失的 ID 补充到 `opened` 集合中。
+
 ## 二、已知限制与注意事项
 
 ### IndexedDB 超时
