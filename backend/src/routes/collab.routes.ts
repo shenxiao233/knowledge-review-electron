@@ -2,18 +2,27 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CollabService } from '../services/collab.service.js';
 import { requireAuth, auth } from '../middleware/auth.js';
+import { RateLimiter } from '../plugins/rate-limit.js';
+import { config } from '../config.js';
+import { requestRateLimitKey } from '../utils/helpers.js';
 
 export default async function collabRoutes(
   app: FastifyInstance,
-  opts: { collabService: CollabService }
+  opts: { collabService: CollabService; rateLimiter?: RateLimiter }
 ) {
-  const { collabService } = opts;
+  const { collabService, rateLimiter } = opts;
 
   // POST /api/v2/decks/:id/card-contributions - Push a card to a published deck
   app.post('/api/v2/decks/:id/card-contributions', { preHandler: requireAuth }, async (request, reply) => {
+    if (rateLimiter && !await rateLimiter.consume(
+      reply,
+      requestRateLimitKey(request, 'collab-push', auth(request).id),
+      config.collabPushRateLimitMax,
+      config.collabPushRateLimitWindowSeconds * 1000
+    )) return;
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({
-      action: z.enum(['ADD', 'MODIFY']),
+      action: z.enum(['ADD', 'MODIFY', 'DELETE']),
       cardId: z.string().min(1).max(100),
       cardData: z.record(z.string(), z.any()),
     }).parse(request.body);

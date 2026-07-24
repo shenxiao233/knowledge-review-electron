@@ -45,7 +45,7 @@ function finalizeMultiple(card) { if (!answer.length) return toast('请至少选
 function answerNoteCardLegacy(card, rating) { if (answered) return; recordReviewLegacy(card, rating); }
 function recordReviewLegacy(card, rating) { recordReview(card, rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : 'Again'); }
 function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisposition = 'pending'; reviewDisplayCard = null; index = 0; buildQueue(); renderDock(); renderStandalone(); renderReviewPlan(); }
-function retryCurrentReview() { if (!reviewDisplayCard) return; answered = false; answer = []; pendingCorrect = false; reviewDisposition = 'pending'; pendingReviewCardId = ''; reviewSnapshot = null; renderDock(); renderStandalone(); }
+function retryCurrentReview() { if (!reviewDisplayCard) return; answered = false; answer = []; pendingCorrect = false; reviewDisposition = 'pending'; pendingReviewCardId = ''; renderDock(); renderStandalone(); }
 function reviewActionButtons(card) { return `<div class="review-space-actions"><button type="button" class="review-action-button retry-review-action" data-review-action="retry">再选一次</button><button type="button" class="review-action-button primary-review-action" data-review-action="next">${card.type === 'note' ? '下一条' : '下一题'}</button></div>`; }
 function reviewDispositionActions(card) {
   if (!answered || pendingReviewCardId !== card.id) return '';
@@ -162,6 +162,7 @@ function syncSettings() {
 
   // Enhanced interval preview with dates
   const now = new Date();
+  if (!window.knowledgeFSRS) return;
   const preview = window.knowledgeFSRS.preview({ dueAt: now.toISOString(), reviews: 0 }, state.settings);
   if (els.intervalPreview) {
     els.intervalPreview.innerHTML = preview.map((item) => {
@@ -281,7 +282,7 @@ function renderQuestionOriginal(box, card, standalone) {
     box.querySelectorAll('[data-rating]').forEach((button) => button.addEventListener('click', () => answerNoteCard(card, button.dataset.rating)));
     els.nextButton.textContent = '下一条';
   } else {
-    box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}${answered && pendingReviewCardId === card.id ? reviewGradeActions(card) : ''}`;
+    box.innerHTML = `${head}<div class="options-block"></div>${answered && card.explanation ? `<div class="explanation"><strong>解析</strong>${cardHtml(card.explanation)}</div>` : ''}`;
     if (answered && pendingReviewCardId === card.id) {
       box.insertAdjacentHTML('beforeend', reviewDispositionActions(card));
     }
@@ -313,10 +314,6 @@ function renderQuestionOriginal(box, card, standalone) {
   box.querySelectorAll('[data-review-action]').forEach((button) => button.addEventListener('click', () => button.dataset.reviewAction === 'retry' ? retryCurrentReview() : next()));
   box.querySelectorAll('[data-review-disposition]').forEach((button) => button.addEventListener('click', () => handleReviewDisposition(card, button.dataset.reviewDisposition)));
   box.querySelectorAll('[data-fsrs-grade]').forEach((button) => button.addEventListener('click', () => recordReview(card, button.dataset.fsrsGrade)));
-}
-
-function reviewGradeActions(card) {
-  return '';
 }
 
 function answerNoteCard(card, rating) {
@@ -351,6 +348,16 @@ function recordReview(card, rating, suspendAfter = false, forceTomorrow = false)
   const grade = rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : rating === 'tooEasy' ? 'Easy' : rating === 'forgot' || rating === 'wrong' ? 'Again' : rating;
   const mastery = grade === 'Easy' ? 'tooEasy' : grade === 'Good' ? 'familiar' : grade === 'Hard' ? 'fuzzy' : 'forgot';
   card.mastery = mastery;
+  if (!window.knowledgeFSRS) {
+    // Fallback: simple tomorrow scheduling without FSRS
+    const tomorrow = new Date(Date.now() + DAY).toISOString();
+    card.fsrs = null;
+    card.dueAt = tomorrow;
+    card.interval = 1;
+    card.reviews = (card.reviews || 0) + 1;
+    card.updatedAt = new Date().toISOString();
+    return;
+  }
   const previous = window.knowledgeFSRS.normalize(card);
   const result = window.knowledgeFSRS.next(card, grade, state.settings);
   card.fsrs = result.fsrs;

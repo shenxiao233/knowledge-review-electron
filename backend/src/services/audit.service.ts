@@ -29,7 +29,7 @@ export class AuditService {
     try {
       const result = await prisma.auditLog.deleteMany({ where: { createdAt: { lt: cutoff } } });
       if (result.count > 0) {
-        console.log(`[AuditService] Archived ${result.count} old audit logs (cutoff: ${cutoff.toISOString()})`);
+        console.debug(`[AuditService] Archived ${result.count} old audit logs (cutoff: ${cutoff.toISOString()})`);
       }
     } catch (err) {
       console.error('[AuditService] Failed to archive audit logs:', err);

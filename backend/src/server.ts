@@ -29,7 +29,7 @@ import invitationRoutes from './routes/invitation.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import collabRoutes from './routes/collab.routes.js';
 
-const app = Fastify({ logger: true, bodyLimit: 300 * 1024 * 1024, trustProxy: config.trustProxy });
+const app = Fastify({ logger: true, bodyLimit: 2 * 1024 * 1024, trustProxy: config.trustProxy });
 
 await fsp.mkdir(config.storageDir, { recursive: true });
 
@@ -76,7 +76,7 @@ await app.register(socialRoutes);
 await app.register(userRoutes, { userService });
 await app.register(invitationRoutes, { invitationService, rateLimiter });
 await app.register(syncRoutes, { syncService });
-await app.register(collabRoutes, { collabService });
+await app.register(collabRoutes, { collabService, rateLimiter });
 
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);

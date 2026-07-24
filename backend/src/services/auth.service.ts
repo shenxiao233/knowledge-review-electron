@@ -24,7 +24,7 @@ export class AuthService {
     }
     
     const body = z.object({
-      invitationCode: z.string().min(1),
+      invitationCode: z.string().min(1).max(200),
       accessKey: z.string().optional(),
       username: z.string().min(3).max(80).regex(/^[a-zA-Z0-9_-]+$/, 'Username may only contain letters, numbers, hyphens and underscores'),
       password: z.string().min(8).max(200)
@@ -46,25 +46,33 @@ export class AuthService {
     }
     
     const username = body.data.username.trim().toLowerCase();
-    const existing = await prisma.user.findUnique({ where: { username } });
-    if (existing) return fail(reply, 409, 'Username already taken');
-    
     const passwordHash = await argon2.hash(body.data.password);
-    const user = await prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          username,
-          passwordHash,
-          role: 'USER',
-          status: 'INCOMPLETE'
-        }
+    
+    let user;
+    try {
+      user = await prisma.$transaction(async (tx) => {
+        const existing = await tx.user.findUnique({ where: { username } });
+        if (existing) throw new Error('USERNAME_TAKEN');
+        const created = await tx.user.create({
+          data: {
+            username,
+            passwordHash,
+            role: 'USER',
+            status: 'INCOMPLETE'
+          }
+        });
+        await this.invitationService.useCode(body.data.invitationCode, created.id, tx);
+        await tx.auditLog.create({
+          data: { userId: created.id, action: 'auth.register.v2' }
+        });
+        return created;
       });
-      await this.invitationService.useCode(body.data.invitationCode, created.id, tx);
-      await tx.auditLog.create({
-        data: { userId: created.id, action: 'auth.register.v2' }
-      });
-      return created;
-    });
+    } catch (error: any) {
+      if (error?.message === 'USERNAME_TAKEN') {
+        return fail(reply, 409, 'Username already taken');
+      }
+      throw error;
+    }
     
     const token = await this.app.jwt.sign(
       { id: user.id, username: user.username, role: user.role, status: user.status }, 
@@ -84,54 +92,26 @@ export class AuthService {
   }
 
   /**
-   * V1 Registration (legacy, without invitation code)
+   * V1 Registration (legacy — now delegates to V2 to enforce invitation code requirement)
    */
   async register(request: FastifyRequest, reply: FastifyReply) {
-    if (!config.allowSelfRegister) {
-      return fail(reply, 403, 'Self-registration is disabled');
-    }
-    
-    const body = z.object({
-      accessKey: z.string().optional(),
-      username: z.string().min(3).max(80).regex(/^[a-zA-Z0-9_-]+$/, 'Username may only contain letters, numbers, hyphens and underscores'),
-      password: z.string().min(8).max(200)
-    }).safeParse(request.body);
-
-    if (!body.success) return fail(reply, 400, 'Invalid registration data');
-    
-    if (!await this.rateLimiter.consume(
-      reply, 
-      requestRateLimitKey(request, 'register-ip'), 
-      config.registerRateLimitMax, 
-      config.registerRateLimitWindowSeconds * 1000
-    )) return;
-    
-    const username = body.data.username.trim().toLowerCase();
-    const existing = await prisma.user.findUnique({ where: { username } });
-    if (existing) return fail(reply, 409, 'Username already taken');
-    
-    const passwordHash = await argon2.hash(body.data.password);
-    const user = await prisma.user.create({ 
-      data: { username, passwordHash, role: 'USER' } 
-    });
-    
-    await prisma.auditLog.create({ 
-      data: { userId: user.id, action: 'auth.register' } 
-    });
-    
-    const token = await this.app.jwt.sign(
-      { id: user.id, username: user.username, role: user.role }, 
-      { expiresIn: '12h' }
-    );
-    
-    return { token, user: { id: user.id, username: user.username, role: user.role } };
+    return this.registerV2(request, reply);
   }
   
+  private dummyHash: string | null = null;
+
+  private async getDummyHash(): Promise<string> {
+    if (!this.dummyHash) {
+      this.dummyHash = await argon2.hash('dummy-password-never-matches-any-real-user');
+    }
+    return this.dummyHash;
+  }
+
   async login(request: FastifyRequest, reply: FastifyReply) {
     const body = z.object({
       accessKey: z.string().optional(),
-      username: z.string().min(1),
-      password: z.string().min(1)
+      username: z.string().min(1).max(80),
+      password: z.string().min(1).max(200)
     }).safeParse(request.body);
 
     const username = body.success ? body.data.username.trim().toLowerCase() : '';
@@ -155,7 +135,12 @@ export class AuthService {
     }
     
     const user = await prisma.user.findUnique({ where: { username } });
-    if (!user || !user.enabled || user.status === 'SUSPENDED' || user.status === 'BANNED' || !(await argon2.verify(user.passwordHash, body.data.password))) {
+    if (!user) {
+      // Dummy verify to prevent timing-based username enumeration
+      await argon2.verify(await this.getDummyHash(), body.data.password);
+      return fail(reply, 401, 'Invalid market credentials');
+    }
+    if (!user.enabled || user.status === 'SUSPENDED' || user.status === 'BANNED' || !(await argon2.verify(user.passwordHash, body.data.password))) {
       return fail(reply, 401, 'Invalid market credentials');
     }
     
@@ -195,8 +180,15 @@ export class AuthService {
   }
   
   async changePassword(request: FastifyRequest, reply: FastifyReply, userId: string) {
+    if (!await this.rateLimiter.consume(
+      reply,
+      requestRateLimitKey(request, 'password-change', userId),
+      config.passwordChangeRateLimitMax,
+      config.passwordChangeRateLimitWindowSeconds * 1000
+    )) return;
+
     const data = z.object({ 
-      currentPassword: z.string().min(1), 
+      currentPassword: z.string().min(1).max(200), 
       newPassword: z.string().min(8).max(200) 
     }).parse(request.body);
     

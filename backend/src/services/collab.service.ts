@@ -13,6 +13,7 @@ export class CollabService {
   /**
    * Push a card contribution to a published deck.
    * Any authenticated user can push — the deck owner reviews the card.
+   * Deck owner's contributions bypass review and are auto-approved.
    */
   async pushCard(userId: string, deckId: string, data: {
     action: string;
@@ -20,7 +21,7 @@ export class CollabService {
     cardData: unknown;
   }) {
     const validated = z.object({
-      action: z.enum(['ADD', 'MODIFY']),
+      action: z.enum(['ADD', 'MODIFY', 'DELETE']),
       cardId: z.string().min(1).max(100),
       cardData: z.record(z.string(), z.any()),
     }).parse(data);
@@ -32,8 +33,8 @@ export class CollabService {
     if (!deck) throw new ClientInputError('Deck not found');
     if (deck.status !== 'PUBLISHED') throw new ClientInputError('Only published decks accept card contributions');
 
-    // For MODIFY, verify the card exists in the current published version.
-    if (validated.action === 'MODIFY') {
+    // For MODIFY and DELETE, verify the card exists in the current published version.
+    if (validated.action === 'MODIFY' || validated.action === 'DELETE') {
       const version = await prisma.deckVersion.findFirst({
         where: { deckId, status: 'PUBLISHED' },
         orderBy: { version: 'desc' },
@@ -42,17 +43,75 @@ export class CollabService {
       if (!version) throw new ClientInputError('Deck has no published version');
       const cards = await this.readCardsFromPackage(storedPackagePath(version.packagePath));
       if (!cards.some((c: any) => String(c.id ?? c.cardId ?? '') === validated.cardId)) {
-        throw new ClientInputError(`Card "${validated.cardId}" not found in this deck — use ADD instead`);
+        throw new ClientInputError(`Card "${validated.cardId}" not found in this deck`);
       }
     }
 
     // Prevent duplicate pending contributions for the same card by the same user.
+    // For the deck owner, stale PENDING contributions from failed merges are
+    // auto-deleted so the owner can retry without being permanently blocked.
+    const isOwner = deck.ownerId === userId;
     const existing = await prisma.cardContribution.findFirst({
       where: { deckId, contributorId: userId, cardId: validated.cardId, status: 'PENDING' },
       select: { id: true },
     });
-    if (existing) throw new ClientInputError('You already have a pending contribution for this card');
+    if (existing) {
+      if (isOwner) {
+        await prisma.cardContribution.delete({ where: { id: existing.id } });
+      } else {
+        throw new ClientInputError('You already have a pending contribution for this card');
+      }
+    }
 
+    // Deck owner's contributions bypass review — auto-approve and merge immediately.
+    if (isOwner) {
+      // Create as PENDING first, merge, then update to APPROVED.
+      const contribution = await prisma.cardContribution.create({
+        data: {
+          deckId,
+          contributorId: userId,
+          action: validated.action,
+          cardId: validated.cardId,
+          cardData: validated.cardData,
+          status: 'PENDING',
+        },
+      });
+
+      try {
+        await this.mergeCardIntoDeck({
+          deckId,
+          action: validated.action,
+          cardId: validated.cardId,
+          cardData: validated.cardData,
+        });
+      } catch (mergeError) {
+        // Merge failed — delete the contribution so it doesn't block future pushes.
+        await prisma.cardContribution.delete({ where: { id: contribution.id } });
+        throw mergeError;
+      }
+
+      const updated = await prisma.cardContribution.update({
+        where: { id: contribution.id },
+        data: {
+          status: 'APPROVED',
+          reviewerId: userId,
+          reviewedAt: new Date(),
+        },
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          userId,
+          action: 'card.push',
+          targetId: contribution.id,
+          metadata: { deckId, cardId: validated.cardId, action: validated.action, autoApproved: true },
+        },
+      });
+
+      return updated;
+    }
+
+    // Non-owner — create as PENDING for review.
     const contribution = await prisma.cardContribution.create({
       data: {
         deckId,
@@ -180,9 +239,12 @@ export class CollabService {
     }
 
     // If approved, merge the card into the ZIP in place.
-    // Use editedCardData if the owner modified the card during review.
+    // Use editedCardData if the owner modified the card during review
+    // (not applicable to DELETE — you can't edit a deletion).
     if (validated.decision === 'APPROVED') {
-      const dataToMerge = validated.editedCardData || contribution.cardData;
+      const dataToMerge = contribution.action === 'DELETE'
+        ? contribution.cardData
+        : (validated.editedCardData || contribution.cardData);
       await this.mergeCardIntoDeck({
         ...contribution,
         cardData: dataToMerge,
@@ -271,11 +333,21 @@ export class CollabService {
       // Apply the contribution.
       let cardCountChanged = false;
       if (contribution.action === 'ADD') {
-        // Avoid duplicate card IDs.
-        if (cards.some((c) => String(c.id ?? c.cardId ?? '') === contribution.cardId)) {
-          throw new ClientInputError(`Card "${contribution.cardId}" already exists in this deck`);
+        // Upsert: if the card already exists (e.g. re-pushed after a previous
+        // approval), replace it in-place instead of throwing. Only increment
+        // the card count when a genuinely new card is added.
+        const idx = cards.findIndex((c) => String(c.id ?? c.cardId ?? '') === contribution.cardId);
+        if (idx === -1) {
+          cards.push(contribution.cardData);
+          cardCountChanged = true;
+        } else {
+          cards[idx] = contribution.cardData;
         }
-        cards.push(contribution.cardData);
+      } else if (contribution.action === 'DELETE') {
+        // DELETE — remove the matching card from the array.
+        const idx = cards.findIndex((c) => String(c.id ?? c.cardId ?? '') === contribution.cardId);
+        if (idx === -1) throw new ClientInputError(`Card "${contribution.cardId}" not found in the deck`);
+        cards.splice(idx, 1);
         cardCountChanged = true;
       } else {
         // MODIFY — replace the matching card.

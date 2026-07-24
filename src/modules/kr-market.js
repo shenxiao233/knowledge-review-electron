@@ -19,9 +19,9 @@ async function toggleFavorite(deckId, event) {
   if (marketToken) {
     try {
       if (isFav) {
-        await marketApi('/favorites/' + deckId, { method: 'DELETE' });
+        await marketApi('/favorites/' + encodeURIComponent(deckId), { method: 'DELETE' });
       } else {
-        await marketApi('/favorites/' + deckId, { method: 'POST' });
+        await marketApi('/favorites/' + encodeURIComponent(deckId), { method: 'POST' });
       }
     } catch (err) {
       toast('收藏操作失败：' + (err.message || '网络错误'));
@@ -65,7 +65,13 @@ async function marketApi(path, options = {}) {
       if (ipcResult && ipcResult.status > 0) {
         const body = ipcResult.body;
         if (!ipcResult.ok) {
-          const errMsg = (body && typeof body === 'object' && body.error) ? body.error : `市场接口请求失败（${ipcResult.status}）`;
+          let errMsg = '';
+          if (body && typeof body === 'object') {
+            errMsg = body.error || body.message || '';
+          } else if (typeof body === 'string') {
+            try { const parsed = JSON.parse(body); errMsg = parsed.error || parsed.message || ''; } catch { errMsg = body; }
+          }
+          if (!errMsg) errMsg = `市场接口请求失败（${ipcResult.status}）`;
           throw new Error(errMsg);
         }
         return body;
@@ -84,7 +90,14 @@ async function marketApi(path, options = {}) {
     const response = await fetch(fullUrl, { ...fetchOptions, signal: controller.signal });
     const contentType = response.headers.get('content-type') || '';
     const body = contentType.includes('application/json') ? await response.json() : await response.blob();
-    if (!response.ok) throw new Error(body?.error || `市场接口请求失败（${response.status}）`);
+    if (!response.ok) {
+      let errMsg = '';
+      if (body && typeof body === 'object' && !ArrayBuffer.isView(body)) {
+        errMsg = body.error || body.message || '';
+      }
+      if (!errMsg) errMsg = `市场接口请求失败（${response.status}）`;
+      throw new Error(errMsg);
+    }
     return body;
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('市场服务响应超时，请检查后端服务是否已重启。');
@@ -222,6 +235,16 @@ async function returnToMarketLogin() {
   marketUser = null;
   marketCapabilities = {};
   marketDecks = [];
+  marketQuery = '';
+  marketCategory = 'all';
+  marketSort = 'latest';
+  marketSelectedDeck = null;
+  marketPage = 1;
+  marketTotal = 0;
+  marketTotalPages = 0;
+  marketRememberCredentials = false;
+  marketAutoLoginTried = false;
+  state.favorites = [];
   $('#marketAuthForm')?.classList.remove('is-authenticated');
   const status = $('#marketAuthStatus');
   if (status) status.textContent = '服务器频道等待认证';
@@ -354,10 +377,10 @@ function openPasswordChangeDialog() {
   dlg.querySelector('#pwdSubmitBtn')?.addEventListener('click', async () => {
     const current = (dlg.querySelector('#pwdCurrentInput')?.value || '').trim();
     const newPwd = (dlg.querySelector('#pwdNewInput')?.value || '').trim();
-    const confirm = (dlg.querySelector('#pwdConfirmInput')?.value || '').trim();
+    const confirmPwd = (dlg.querySelector('#pwdConfirmInput')?.value || '').trim();
     if (!current) return toast('请输入当前密码。');
     if (!newPwd || newPwd.length < 8) return toast('新密码至少需要 8 个字符。');
-    if (newPwd !== confirm) return toast('两次输入的新密码不一致。');
+    if (newPwd !== confirmPwd) return toast('两次输入的新密码不一致。');
     const btn = dlg.querySelector('#pwdSubmitBtn');
     btn.disabled = true;
     btn.textContent = '修改中…';
@@ -396,6 +419,9 @@ function marketDeckHasUpdate(deck) {
   const localVersion = Number(state.market?.decks?.[deck.id]?.version || 0);
   return localVersion > 0 && Number(deck.version || 0) > localVersion;
 }
+function marketDeckIsSubscribed(deck) {
+  return Boolean(state.market?.decks?.[deck.id]?.version);
+}
 function marketDeckNewBadge(deck) { return marketDeckHasUpdate(deck) ? '<span class="market-new-badge"><b>NEW</b><small>可更新</small></span>' : ''; }
 function renderMarket() {
   const marketView = $('#marketView');
@@ -407,7 +433,7 @@ function renderMarket() {
     return;
   }
   const grid = $('#marketGrid');
-  $('#marketView')?.classList.toggle('is-locked', !marketUnlocked);
+  marketView?.classList.toggle('is-locked', !marketUnlocked);
   const authBootstrapping = marketAuthBootstrapping && !marketUnlocked;
   $('#marketLoginScreen')?.toggleAttribute('hidden', marketUnlocked || authBootstrapping);
   // Pre-fill server address field if empty
@@ -421,8 +447,11 @@ function renderMarket() {
   const decks = marketDecksForDisplay();
   grid.innerHTML = decks.length ? decks.map((deck) => {
     const hasUpdate = marketDeckHasUpdate(deck);
+    const isSubscribed = marketDeckIsSubscribed(deck);
     const isFav = isDeckFavorited(deck.id);
-    return `<article class="market-deck-card-v2${hasUpdate ? ' has-update' : ''}" data-market-deck="${esc(deck.id)}" style="--cat-color:${esc(deck.accent)}"><div class="mc2-header"><span class="mc2-category">${esc(deck.category)}</span><div style="display:flex;gap:6px;align-items:center">${hasUpdate ? '<span class="mc2-update-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>可更新</span>' : ''}<button type="button" class="market-fav-button${isFav ? ' is-fav' : ''}" data-market-fav="${esc(deck.id)}" aria-label="收藏牌组"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button></div></div><h3 class="mc2-title" data-market-detail="${esc(deck.id)}">${esc(deck.title)}</h3><p class="mc2-author">作者 ${esc(deck.author)}</p><p class="mc2-desc">${esc(deck.description || '由 ' + deck.author + ' 分享的学习牌组。')}</p><div class="mc2-meta"><span class="mc2-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>${deck.cards} 张卡片</span><span class="mc2-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${deck.downloads} 次下载</span><span class="mc2-meta-item mc2-date">${esc(deck.updated)}</span></div><button type="button" class="mc2-action-btn" data-market-detail="${esc(deck.id)}">${hasUpdate ? '更新牌组' : '查看牌组'}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button></article>`;
+    const subscribedBadge = isSubscribed && !hasUpdate ? '<span class="mc2-subscribed-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>已订阅</span>' : '';
+    const actionLabel = hasUpdate ? '更新牌组' : isSubscribed ? '已订阅' : '查看牌组';
+    return `<article class="market-deck-card-v2${hasUpdate ? ' has-update' : ''}${isSubscribed ? ' is-subscribed' : ''}" data-market-deck="${esc(deck.id)}" style="--cat-color:${esc(deck.accent)}"><div class="mc2-header"><span class="mc2-category">${esc(deck.category)}</span><div style="display:flex;gap:6px;align-items:center">${hasUpdate ? '<span class="mc2-update-pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>可更新</span>' : ''}${subscribedBadge}<button type="button" class="market-fav-button${isFav ? ' is-fav' : ''}" data-market-fav="${esc(deck.id)}" aria-label="收藏牌组"><svg viewBox="0 0 24 24"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg></button></div></div><h3 class="mc2-title" data-market-detail="${esc(deck.id)}">${esc(deck.title)}</h3><p class="mc2-author">作者 ${esc(deck.author)}</p><p class="mc2-desc">${esc(deck.description || '由 ' + deck.author + ' 分享的学习牌组。')}</p><div class="mc2-meta"><span class="mc2-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>${deck.cards} 张卡片</span><span class="mc2-meta-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>${deck.downloads} 次下载</span><span class="mc2-meta-item mc2-date">${esc(deck.updated)}</span></div><button type="button" class="mc2-action-btn" data-market-detail="${esc(deck.id)}">${actionLabel}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button></article>`;
   }).join('') : '<div class="market-empty"><strong>没有找到匹配牌组</strong><span>尝试更换关键词或筛选条件。</span></div>';
   const pager = ensureMarketPagination();
   if (pager) {
@@ -471,7 +500,7 @@ function findExistingCardByContent(folder, normalizedCard) {
 }
 
 function importMarketCards(deck, packageData, targetFolder) {
-  const folder = targetFolder || `市场 · ${deck.title}`;
+  const folder = targetFolder || `订阅 · ${deck.title}`;
   if (!state.groups.includes(folder)) state.groups.push(folder);
   const imported = [];
   const skipped = [];
@@ -505,18 +534,36 @@ async function downloadSelectedMarketDeck() {
   if (!marketSelectedDeck || !marketUnlocked || marketBusy) return;
   marketBusy = true;
   const button = $('#marketDownloadButton');
-  if (button) { button.disabled = true; button.textContent = '正在下载并校验…'; }
+  if (button) { button.disabled = true; button.textContent = '正在订阅…'; }
   try {
     const result = await window.reviewBridge.market.downloadDeck({ baseUrl: marketApiBase, token: marketToken, deckId: marketSelectedDeck.id, version: marketSelectedDeck.version });
-    if (!result?.ok) throw new Error(result?.error || '下载牌组失败。');
+    if (!result?.ok) throw new Error(result?.error || '订阅牌组失败。');
     const imported = importMarketCards(marketSelectedDeck, result);
+    // Store sha256 from the update-check endpoint for future content-change detection.
+    // The backend's mergeCardIntoDeck modifies the package in place without bumping
+    // the version, so we need the sha256 to detect in-place content changes.
+    try {
+      marketUpdateCache.clear();
+      const update = await checkMarketDeckUpdate(marketSelectedDeck.id, Number(result.version || marketSelectedDeck.version));
+      if (update?.sha256 && state.market?.decks?.[marketSelectedDeck.id]) {
+        state.market.decks[marketSelectedDeck.id].remoteSha256 = update.sha256;
+        save();
+      }
+    } catch { /* non-fatal — sha256 will be fetched on next sync */ }
     $('#marketDetailModal')?.close();
-    toast(imported.skipped ? `已新增 ${imported.count} 张卡片，${imported.skipped} 张已存在跳过。` : `已新增 ${imported.count} 张卡片。`);
+    toast(imported.skipped ? `已订阅，新增 ${imported.count} 张卡片，${imported.skipped} 张已存在。` : `已订阅，新增 ${imported.count} 张卡片。`);
+    renderMarket();
   } catch (error) {
-    toast(error instanceof Error ? error.message : '下载牌组失败。');
+    toast(error instanceof Error ? error.message : '订阅牌组失败。');
   } finally {
     marketBusy = false;
-    if (button) { button.disabled = false; button.textContent = '下载牌组'; }
+    if (button) {
+      const localVer = Number(state.market?.decks?.[marketSelectedDeck?.id]?.version || 0);
+      const stillHasUpdate = marketSelectedDeck && marketDeckHasUpdate(marketSelectedDeck);
+      if (localVer > 0 && !stillHasUpdate) { button.textContent = '已订阅'; button.disabled = true; }
+      else if (stillHasUpdate) { button.textContent = '更新卡组'; button.disabled = false; }
+      else { button.textContent = '订阅卡组'; button.disabled = false; }
+    }
   }
 }
 async function openMarketDetail(deckId) {
@@ -526,18 +573,35 @@ async function openMarketDetail(deckId) {
   $('#marketDetailTitle').textContent = deck.title;
   $('#marketDetailSubtitle').textContent = `作者 ${deck.author}`;
   $('#marketDetailBody').innerHTML = `<div class="market-detail-cover" style="--deck-color:${deck.color};--deck-accent:${deck.accent}"><span>公开牌组</span><strong>${esc(deck.title)}</strong><small>${deck.cards} 张卡片</small></div><div class="market-detail-copy"><p>${esc(deck.description)}</p><div class="market-detail-tags">${deck.tags.map((tag) => `<span>${esc(tag)}</span>`).join('')}</div><dl><div><dt>卡片数量</dt><dd>${deck.cards}</dd></div><div><dt>下载次数</dt><dd>${deck.downloads}</dd></div><div><dt>最近更新</dt><dd>${esc(deck.updated)}</dd></div><div class="market-deck-id-row"><dt>牌组 ID</dt><dd><code class="market-deck-id-code">${esc(deck.id)}</code><button type="button" class="market-copy-id-btn" data-copy-deck-id="${esc(deck.id)}" title="复制牌组 ID">复制</button></dd></div></dl><div class="market-sync-note" id="marketUpdateNote"><span>↻</span><span>正在检查版本信息…</span></div></div>`;
-  $('#marketDownloadButton').textContent = marketUnlocked ? (marketDeckHasUpdate(deck) ? '更新牌组' : '下载牌组') : '需要认证';
+  const localVersion = Number(state.market?.decks?.[deck.id]?.version || 0);
+  const isSubscribed = localVersion > 0;
+  const hasUpdate = marketDeckHasUpdate(deck);
+  const downloadButton = $('#marketDownloadButton');
+  if (downloadButton) {
+    if (!marketUnlocked) {
+      downloadButton.textContent = '需要认证';
+      downloadButton.disabled = true;
+    } else if (hasUpdate) {
+      downloadButton.textContent = '更新卡组';
+      downloadButton.disabled = false;
+    } else if (isSubscribed) {
+      downloadButton.textContent = '已订阅';
+      downloadButton.disabled = true;
+    } else {
+      downloadButton.textContent = '订阅卡组';
+      downloadButton.disabled = false;
+    }
+  }
   $('#marketDetailModal').showModal();
   $('#marketDetailBody').querySelector('[data-copy-deck-id]')?.addEventListener('click', async (e) => {
     const id = e.currentTarget.dataset.copyDeckId;
     try { await navigator.clipboard.writeText(id); toast('牌组 ID 已复制。'); } catch { copyToClipboardFallback(id); }
   });
-  const localVersion = Number(state.market?.decks?.[deck.id]?.version || 0);
   const note = $('#marketUpdateNote');
   if (note) note.textContent = localVersion ? '本地已下载，正在检查更新…' : '正在检查更新…';
   try {
     const update = await checkMarketDeckUpdate(deck.id, localVersion);
-    if (note) note.textContent = update.hasUpdate ? `发现更新。${update.changelog || '下载后将同步最新内容。'}` : (localVersion ? '当前已是最新版本。' : '当前为最新公开版本。');
+    if (note) note.textContent = update.hasUpdate ? `发现更新。${update.changelog || '下载后将同步最新内容。'}` : (localVersion ? '当前已是最新版本，已订阅。' : '当前为最新公开版本。');
   } catch {
     if (note) note.textContent = '暂时无法检查更新，仍可下载当前公开版本。';
   }
@@ -703,7 +767,7 @@ async function submitMarketUpload(event) {
   // If no known remoteId, check the market for this deck UID
   if (!deckId) {
     try {
-      const check = await marketApi(`/my-decks/check/${uid}`);
+      const check = await marketApi(`/my-decks/check/${encodeURIComponent(uid)}`);
       if (check.exists && !check.owned) {
         return toast('此牌组 ID 已被其他用户占用，无法上传。');
       }
@@ -1281,19 +1345,20 @@ function ensureServerSettingsPanel() {
 }
 
 function toggleMarketAuthMode() {
-  var form = document.getElementById("marketAuthForm");
-  var btn = document.getElementById("marketRegisterToggle");
+  const form = document.getElementById("marketAuthForm");
+  const btn = document.getElementById("marketRegisterToggle");
   if (!form || !btn) return;
   ensureMarketRegistrationField();
-  var isRegister = form.classList.toggle("is-register-mode");
-  var field = document.getElementById('marketInvitationCode')?.closest('.market-registration-field');
+  const isRegister = form.classList.toggle("is-register-mode");
+  const field = document.getElementById('marketInvitationCode')?.closest('.market-registration-field');
   if (field) field.hidden = !isRegister;
-  var title = document.querySelector('#marketAuthForm')?.closest('.market-login-form-container')?.querySelector('h1');
-  var subtitle = document.querySelector('#marketAuthForm')?.closest('.market-login-form-container')?.querySelector('.market-form-header p');
+  const container = form.closest('.market-login-form-container');
+  const title = container?.querySelector('h1');
+  const subtitle = container?.querySelector('.market-form-header p');
   if (title) title.textContent = isRegister ? '创建市场账户' : '进入牌组市场';
   if (subtitle) subtitle.textContent = isRegister ? '使用管理员邀请码创建账户' : '请输入许可信息以浏览公开牌组';
   btn.textContent = isRegister ? '已有账户？返回登录' : '还没有账户？注册';
-  document.querySelector('#marketAuthForm .market-character-submit span')?.replaceChildren(document.createTextNode(isRegister ? '注册并进入' : '验证并进入'));
+  form.querySelector('.market-character-submit span')?.replaceChildren(document.createTextNode(isRegister ? '注册并进入' : '验证并进入'));
   document.getElementById('marketLoginError')?.classList.remove('is-visible');
 }
 

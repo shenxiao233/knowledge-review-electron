@@ -75,9 +75,15 @@ export default async function adminRoutes(
       action: z.enum(['enable', 'disable']),
     }).parse(request.params);
 
-    const target = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true } });
+    const target = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true, enabled: true } });
     if (!target) return fail(reply, 404, 'User not found');
     if (target.id === auth(request).id) return fail(reply, 400, 'Cannot modify your own account');
+
+    // Prevent disabling the last enabled admin
+    if (action === 'disable' && target.role === 'ADMIN' && target.enabled) {
+      const enabledAdminCount = await prisma.user.count({ where: { role: 'ADMIN', enabled: true } });
+      if (enabledAdminCount <= 1) return fail(reply, 400, 'Cannot disable the last enabled admin account');
+    }
 
     const user = await prisma.user.update({
       where: { id },
@@ -106,6 +112,33 @@ export default async function adminRoutes(
       const adminCount = await prisma.user.count({ where: { role: 'ADMIN', enabled: true } });
       if (adminCount <= 1) return fail(reply, 400, 'Cannot delete the last admin account');
     }
+
+    // Check for related data that prevents deletion
+    const [ownedDecks, syncObjects, contributions, reviews, favorites] = await Promise.all([
+      prisma.deck.count({ where: { ownerId: id } }),
+      prisma.syncObject.count({ where: { userId: id } }),
+      prisma.cardContribution.count({ where: { contributorId: id } }),
+      prisma.deckReview.count({ where: { userId: id } }),
+      prisma.deckFavorite.count({ where: { userId: id } }),
+    ]);
+
+    if (ownedDecks > 0) {
+      return fail(reply, 409, `Cannot delete user with ${ownedDecks} owned deck(s); transfer or delete decks first`);
+    }
+
+    // Clean up related data before deletion
+    await prisma.$transaction([
+      prisma.deckFavorite.deleteMany({ where: { userId: id } }),
+      prisma.deckReview.deleteMany({ where: { userId: id } }),
+      prisma.syncObjectHistory.deleteMany({ where: { syncObject: { userId: id } } }),
+      prisma.syncObject.deleteMany({ where: { userId: id } }),
+      prisma.device.deleteMany({ where: { userId: id } }),
+      prisma.deckDownload.deleteMany({ where: { userId: id } }),
+      prisma.auditLog.deleteMany({ where: { userId: id } }),
+    ]);
+
+    // Delete contributions (card contributions to other decks)
+    await prisma.cardContribution.deleteMany({ where: { contributorId: id } });
 
     await prisma.user.delete({ where: { id } });
 

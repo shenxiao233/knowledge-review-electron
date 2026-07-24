@@ -80,6 +80,11 @@ export class DeckService {
         throw new ClientInputError(`ZIP entry exceeds the ${Math.floor(maxArchiveEntryBytes / 1024 / 1024)} MB limit`);
       }
       
+      const compressedSize = Number(entry.header.compressedSize || 0);
+      if (compressedSize > 0 && size / compressedSize > 100) {
+        throw new ClientInputError(`Entry ${entry.entryName} has suspicious compression ratio (>100:1), possible ZIP bomb`);
+      }
+      
       totalUncompressedBytes += size;
       if (!Number.isSafeInteger(totalUncompressedBytes) || totalUncompressedBytes > maxUncompressedBytes) {
         throw new ClientInputError(`ZIP package exceeds the ${Math.floor(maxUncompressedBytes / 1024 / 1024)} MB uncompressed limit`);
@@ -100,9 +105,18 @@ export class DeckService {
     let rawManifest: unknown;
     let cards: unknown;
     try {
-      rawManifest = JSON.parse(manifestEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
-      cards = JSON.parse(cardsEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
-    } catch {
+      const manifestBuffer = manifestEntry.getData();
+      if (manifestBuffer.length !== Number(manifestEntry.header.size)) {
+        throw new ClientInputError('manifest.json actual size does not match the reported size');
+      }
+      rawManifest = JSON.parse(manifestBuffer.toString('utf8').replace(/^\uFEFF/, ''));
+      const cardsBuffer = cardsEntry.getData();
+      if (cardsBuffer.length !== Number(cardsEntry.header.size)) {
+        throw new ClientInputError('cards.json actual size does not match the reported size');
+      }
+      cards = JSON.parse(cardsBuffer.toString('utf8').replace(/^\uFEFF/, ''));
+    } catch (error) {
+      if (error instanceof ClientInputError) throw error;
       throw new ClientInputError('manifest.json and cards.json must contain valid JSON');
     }
     
@@ -159,10 +173,16 @@ export class DeckService {
   async saveVersion(deckId: string, version: number, upload: { tempPath: string; size: number }, manifest: object) {
     const targetDir = path.join(config.storageDir, 'decks', deckId, `v${version}`);
     const target = path.join(targetDir, 'package.zip');
+    let fileCreated = false;
     try {
+      // Phase 1: File I/O — outside the DB transaction
+      await fsp.mkdir(targetDir, { recursive: true });
+      await fsp.copyFile(upload.tempPath, target, fs.constants.COPYFILE_EXCL);
+      fileCreated = true;
+      const hash = await sha256(target);
+
+      // Phase 2: DB operations only — inside the transaction
       const saved = await prisma.$transaction(async (tx) => {
-        // Serialize version allocation per deck. The lock also protects the
-        // deterministic package path from concurrent uploads of different versions.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${deckId}))`;
         const deck = await tx.deck.findUnique({
           where: { id: deckId },
@@ -178,25 +198,23 @@ export class DeckService {
         });
         if (existing) throw new ClientInputError(`Version ${version} already exists`);
 
-        await fsp.mkdir(targetDir, { recursive: true });
-        await fsp.copyFile(upload.tempPath, target, fs.constants.COPYFILE_EXCL);
-        const hash = await sha256(target);
-        const item = await tx.deckVersion.create({ 
-          data: { 
-            deckId, version, status: 'PENDING', 
-            packagePath: target, packageSize: BigInt(upload.size), 
-            sha256: hash, manifest 
-          } 
+        const item = await tx.deckVersion.create({
+          data: {
+            deckId, version, status: 'PENDING',
+            packagePath: target, packageSize: BigInt(upload.size),
+            sha256: hash, manifest
+          }
         });
-        await tx.deck.update({ 
-          where: { id: deckId }, 
-          data: { currentVersion: version } 
+        await tx.deck.update({
+          where: { id: deckId },
+          data: { currentVersion: version }
         });
         return item;
       });
       return { version: saved.version, sha256: saved.sha256 };
     } catch (error) {
-      await fsp.rm(target, { force: true });
+      // Only clean up the file if WE created it in this call
+      if (fileCreated) await fsp.rm(target, { force: true }).catch(() => {});
       throw error;
     }
   }

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { UserService } from '../services/user.service.js';
 import { requireAuth, auth } from '../middleware/auth.js';
 import { fail } from '../utils/response.js';
@@ -22,7 +23,8 @@ export default async function userRoutes(
       const profile = await userService.completeProfile(auth(request).id, request.body as any);
       return reply.code(201).send(profile);
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
@@ -32,7 +34,8 @@ export default async function userRoutes(
       const profile = await userService.updateProfile(auth(request).id, request.body as any);
       return profile;
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
@@ -42,7 +45,8 @@ export default async function userRoutes(
       const device = await userService.registerDevice(auth(request).id, request.body as any);
       return reply.code(201).send(device);
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
@@ -54,11 +58,14 @@ export default async function userRoutes(
   // PATCH /api/v2/me/devices/:id/sync - Update device sync time
   app.patch('/api/v2/me/devices/:id/sync', { preHandler: requireAuth }, async (request, reply) => {
     try {
-      const device = await userService.updateDeviceSync(auth(request).id, (request.params as any).id);
+      const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+      if (!params.success) return fail(reply, 400, '无效的 ID');
+      const device = await userService.updateDeviceSync(auth(request).id, params.data.id);
       if (!device) return fail(reply, 404, 'Device not found');
       return device;
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 }

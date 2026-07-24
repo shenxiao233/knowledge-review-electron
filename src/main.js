@@ -32,10 +32,10 @@
  *   - window:minimize / window:toggleMaximize / window:close - 窗口控制
  *
  * 依赖：electron, electron-updater, adm-zip
- * 版本：v0.1.9
+ * 版本：见 package.json（app.getVersion() 运行时获取）
  */
 
-const { app, BrowserWindow, dialog, ipcMain, Menu, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, shell, safeStorage, session } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const fs = require('fs/promises');
@@ -193,6 +193,20 @@ if (process.env.KR_DISABLE_GPU !== '0') {
 }
 
 const createWindow = () => {
+  // CSP: allow local file:// resources (Electron loads via loadFile), block external
+  // untrusted origins. 'unsafe-eval' is required by vendor libs (marked.js, katex).
+  // 'unsafe-inline' covers inline styles/handlers. object-src 'none' blocks plugins.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self' 'unsafe-inline' data: blob: file:; script-src 'self' 'unsafe-inline' 'unsafe-eval' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' data: blob: file: http: https:; font-src 'self' data: file:; connect-src 'self' https: http: file:; media-src 'self' data: blob: file: http: https:; object-src 'none'; base-uri 'self' file:"
+        ]
+      }
+    });
+  });
+
   const win = new BrowserWindow({
     width: 1600,
     height: 1000,
@@ -213,59 +227,92 @@ const createWindow = () => {
   });
 
   win.setMenuBarVisibility(false);
-  
-win.loadFile(path.join(__dirname, 'index.html'));
+
+  // Block window.open() — redirect to external browser instead
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  // Block navigation to external URLs — only allow local file://
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!url.startsWith('file://')) {
+      event.preventDefault();
+      if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    }
+  });
+
+  win.loadFile(path.join(__dirname, 'index.html'));
 };
 
-app.whenReady().then(() => {
-  return migrateLegacyRuntimeData();
-}).then(async (migration) => {
-  fsSync.mkdirSync(path.join(runtimeDataPath, 'session'), { recursive: true });
-  fsSync.mkdirSync(path.join(runtimeDataPath, 'logs'), { recursive: true });
-  Menu.setApplicationMenu(null);
-  configureAutoUpdater();
-  createWindow();
-
-  if (migration.migrated) {
-    setTimeout(() => sendUpdateEvent('data-migrated', { source: migration.source }), 300);
-  }
-  if (app.isPackaged) {
-    setTimeout(() => checkForUpdates().catch(() => {}), 2500);
-  }
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
   });
-});
+
+  app.whenReady().then(() => {
+    return migrateLegacyRuntimeData();
+  }).then(async (migration) => {
+    fsSync.mkdirSync(path.join(runtimeDataPath, 'session'), { recursive: true });
+    fsSync.mkdirSync(path.join(runtimeDataPath, 'logs'), { recursive: true });
+    Menu.setApplicationMenu(null);
+    configureAutoUpdater();
+    createWindow();
+
+    if (migration.migrated) {
+      setTimeout(() => sendUpdateEvent('data-migrated', { source: migration.source }), 300);
+    }
+    if (app.isPackaged) {
+      setTimeout(() => checkForUpdates().catch(() => {}), 2500);
+    }
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
 ipcMain.handle('dialog:openCards', async () => {
-  const result = await dialog.showOpenDialog({
-    title: '导入卡片',
-    properties: ['openFile'],
-    filters: [
-      { name: 'Card Files', extensions: ['json', 'md', 'markdown'] },
-      { name: 'All Files', extensions: ['*'] }
-    ]
-  });
+  try {
+    const result = await dialog.showOpenDialog({
+      title: '导入卡片',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Card Files', extensions: ['json', 'md', 'markdown'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    });
 
-  if (result.canceled || result.filePaths.length === 0) return null;
+    if (result.canceled || result.filePaths.length === 0) return null;
 
-  const filePath = result.filePaths[0];
-  const content = await fs.readFile(filePath, 'utf8');
-  return {
-    name: path.basename(filePath),
-    extension: path.extname(filePath).toLowerCase(),
-    content
-  };
+    const filePath = result.filePaths[0];
+    const content = await fs.readFile(filePath, 'utf8');
+    return {
+      name: path.basename(filePath),
+      extension: path.extname(filePath).toLowerCase(),
+      content
+    };
+  } catch (error) {
+    return { error: error.message || '无法读取文件。' };
+  }
 });
 
 function marketUrl(baseUrl, endpoint) {
   const base = String(baseUrl || '').replace(/\/+$/, '');
-  if (!/^https?:\/\//i.test(base)) throw new Error('牌组市场地址无效。');
+  const parsed = (() => { try { return new URL(base); } catch { return null; } })();
+  if (!parsed) throw new Error('牌组市场地址无效。');
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('牌组市场地址必须使用 http 或 https。');
   return `${base}${endpoint}`;
 }
 
@@ -366,16 +413,34 @@ ipcMain.handle('market:saveCredentials', async (_event, payload) => {
 });
 ipcMain.handle('market:clearCredentials', async () => clearMarketCredentials());
 
+function validateFetchUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { throw new Error('Invalid URL'); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Only HTTP and HTTPS are allowed');
+  return parsed.href;
+}
+
 ipcMain.handle('market:fetch', async (_event, payload) => {
   const { url, options = {} } = payload;
   try {
-    const resp = await fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
+    const safeUrl = validateFetchUrl(url);
+    const safeOptions = {
+      method: options.method || 'GET',
+      headers: options.headers || {},
+      body: options.body,
+      signal: AbortSignal.timeout(15000)
+    };
+    const resp = await fetch(safeUrl, safeOptions);
     const contentType = resp.headers.get('content-type') || '';
     let body;
     if (contentType.includes('application/json')) {
       body = await resp.json();
     } else {
       body = await resp.text();
+      // Try to parse text as JSON if it looks like a JSON object
+      if (typeof body === 'string' && body.trimStart().startsWith('{')) {
+        try { body = JSON.parse(body); } catch { /* keep as text */ }
+      }
     }
     return { ok: resp.ok, status: resp.status, body };
   } catch (error) {
@@ -385,8 +450,12 @@ ipcMain.handle('market:fetch', async (_event, payload) => {
 
 
 ipcMain.handle('data:load', async () => {
-  const stored = await readLocalState();
-  return stored ? { ok: true, ...stored } : { ok: false };
+  try {
+    const stored = await readLocalState();
+    return stored ? { ok: true, ...stored } : { ok: false };
+  } catch (error) {
+    return { ok: false, error: error.message || 'Unable to load local state' };
+  }
 });
 
 ipcMain.handle('data:save', async (_event, data) => {
@@ -398,36 +467,40 @@ ipcMain.handle('data:save', async (_event, data) => {
 });
 
 ipcMain.handle('dialog:saveExport', async (_event, payload) => {
-  const extension = payload.format === 'markdown' ? 'md' : payload.format === 'pdf' ? 'pdf' : 'json';
-  const defaultPath = `${payload.filename || 'knowledge-cards'}.${extension}`;
-  const result = await dialog.showSaveDialog({
-    title: '导出卡片',
-    defaultPath,
-    filters: [
-      payload.format === 'markdown'
-        ? { name: 'Markdown', extensions: ['md'] }
-        : payload.format === 'pdf'
-          ? { name: 'PDF', extensions: ['pdf'] }
-          : { name: 'JSON', extensions: ['json'] }
-    ]
-  });
+  try {
+    const extension = payload.format === 'markdown' ? 'md' : payload.format === 'pdf' ? 'pdf' : 'json';
+    const defaultPath = `${payload.filename || 'knowledge-cards'}.${extension}`;
+    const result = await dialog.showSaveDialog({
+      title: '导出卡片',
+      defaultPath,
+      filters: [
+        payload.format === 'markdown'
+          ? { name: 'Markdown', extensions: ['md'] }
+          : payload.format === 'pdf'
+            ? { name: 'PDF', extensions: ['pdf'] }
+            : { name: 'JSON', extensions: ['json'] }
+      ]
+    });
 
-  if (result.canceled || !result.filePath) return { canceled: true };
-  if (payload.format === 'pdf') {
-    const sourceWindow = BrowserWindow.fromWebContents(_event.sender);
-    const printWindow = new BrowserWindow({ show: false, width: 900, height: 1200, webPreferences: { sandbox: true } });
-    try {
-      await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(payload.content || '')}`);
-      const buffer = await printWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4', marginsType: 'default' });
-      await fs.writeFile(result.filePath, buffer);
-      return { canceled: false, filePath: result.filePath };
-    } finally {
-      if (!printWindow.isDestroyed()) printWindow.close();
-      if (sourceWindow && !sourceWindow.isDestroyed()) sourceWindow.focus();
+    if (result.canceled || !result.filePath) return { canceled: true };
+    if (payload.format === 'pdf') {
+      const sourceWindow = BrowserWindow.fromWebContents(_event.sender);
+      const printWindow = new BrowserWindow({ show: false, width: 900, height: 1200, webPreferences: { sandbox: true } });
+      try {
+        await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(payload.content || '')}`);
+        const buffer = await printWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4', marginsType: 'default' });
+        await fs.writeFile(result.filePath, buffer);
+        return { canceled: false, filePath: result.filePath };
+      } finally {
+        if (!printWindow.isDestroyed()) printWindow.close();
+        if (sourceWindow && !sourceWindow.isDestroyed()) sourceWindow.focus();
+      }
     }
+    await fs.writeFile(result.filePath, payload.content, 'utf8');
+    return { canceled: false, filePath: result.filePath };
+  } catch (error) {
+    return { canceled: true, error: error.message || '导出失败。' };
   }
-  await fs.writeFile(result.filePath, payload.content, 'utf8');
-  return { canceled: false, filePath: result.filePath };
 });
 
 const appConfigPath = path.join(runtimeDataPath, 'app-config.json');
@@ -649,8 +722,12 @@ async function recordWebDavBackup({ status, trigger, message, size = 0, at = new
 }
 
 ipcMain.handle('webdav:getConfig', async () => {
-  const config = await getWebDavConfig();
-  return { ok: true, ...config, url: normalizeWebDavUrl(config.url) };
+  try {
+    const config = await getWebDavConfig();
+    return { ok: true, ...config, url: normalizeWebDavUrl(config.url) };
+  } catch (error) {
+    return { ok: false, error: error.message || '无法读取 WebDAV 配置。' };
+  }
 });
 
 ipcMain.handle('webdav:saveConfig', async (_event, payload) => {

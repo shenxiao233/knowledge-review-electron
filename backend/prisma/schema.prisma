@@ -61,6 +61,7 @@ enum SyncConflictResolution {
 enum CardContributionAction {
   ADD
   MODIFY
+  DELETE
 }
 
 enum CardContributionStatus {

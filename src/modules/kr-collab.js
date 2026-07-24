@@ -80,7 +80,7 @@ async function renderCollabContributions(token) {
   if (!listNode) return;
   try {
     const statusParam = collabFilter !== 'ALL' ? `?status=${collabFilter}` : '';
-    const contributions = await collabApi(`decks/${collabActiveDeckId}/card-contributions${statusParam}`);
+    const contributions = await collabApi(`decks/${encodeURIComponent(collabActiveDeckId)}/card-contributions${statusParam}`);
     if (token !== collabRenderToken) return;
     const list = Array.isArray(contributions) ? contributions : (contributions && contributions.items) || [];
     const listHtml = list.length > 0 ? list.map(renderContributionCard).join('') : '<div class="collab-empty-state"><p>暂无卡片推送。</p></div>';
@@ -99,14 +99,14 @@ async function renderCollabContributions(token) {
 function renderContributionCard(cc) {
   const statusMap = { PENDING: 'pending', APPROVED: 'approved', REJECTED: 'rejected' };
   const statusLabel = { PENDING: '待审核', APPROVED: '已采纳', REJECTED: '已拒绝' };
-  const actionLabel = { ADD: '新增', MODIFY: '修改' };
+  const actionLabel = { ADD: '新增', MODIFY: '修改', DELETE: '删除' };
   const s = statusMap[cc.status] || 'pending';
   const contributor = cc.contributor?.nickname || cc.contributor?.username || 'unknown';
   const date = formatDate(cc.createdAt);
   const card = cc.cardData || {};
   const typeLabel = cardTypeLabel(card.type) || '未知';
   const questionText = card.type === 'note' ? (card.noteContent || '').replace(/[#*`>]/g, '').slice(0, 60) : (card.question || '').slice(0, 60);
-  return `<article class="collab-cc-card" data-collab-cc="${esc(cc.id)}"><div class="collab-cc-card-main"><span class="collab-cc-action ${cc.action === 'ADD' ? 'add' : 'modify'}">${actionLabel[cc.action] || cc.action}</span><div class="collab-cc-card-info"><div class="collab-cc-card-type">${typeLabel}</div><strong>${esc(questionText)}${questionText.length >= 60 ? '…' : ''}</strong><small>${esc(contributor)} · ${date}</small></div></div><span class="collab-cc-status ${s}">${statusLabel[cc.status] || cc.status}</span></article>`;
+  return `<article class="collab-cc-card" data-collab-cc="${esc(cc.id)}"><div class="collab-cc-card-main"><span class="collab-cc-action ${cc.action === 'ADD' ? 'add' : cc.action === 'DELETE' ? 'delete' : 'modify'}">${actionLabel[cc.action] || cc.action}</span><div class="collab-cc-card-info"><div class="collab-cc-card-type">${typeLabel}</div><strong>${esc(questionText)}${questionText.length >= 60 ? '…' : ''}</strong><small>${esc(contributor)} · ${date}</small></div></div><span class="collab-cc-status ${s}">${statusLabel[cc.status] || cc.status}</span></article>`;
 }
 
 // --- Card Preview Renderer ---
@@ -201,7 +201,7 @@ async function renderContributionDetail(ccId) {
   const token = ++collabRenderToken;
   collabEditMode = false;
   try {
-    const cc = await collabApi(`card-contributions/${ccId}`);
+    const cc = await collabApi(`card-contributions/${encodeURIComponent(ccId)}`);
     if (token !== collabRenderToken) return;
     collabActiveContribution = cc;
     renderContributionDetailContent(cc);
@@ -216,23 +216,33 @@ function renderContributionDetailContent(cc) {
   if (!content || !cc) return;
   const isOwner = marketUser && cc.deck?.ownerId === marketUser.id;
   const isPending = cc.status === 'PENDING';
+  const isDelete = cc.action === 'DELETE';
   const statusMap = { PENDING: 'pending', APPROVED: 'approved', REJECTED: 'rejected' };
   const statusLabel = { PENDING: '待审核', APPROVED: '已采纳', REJECTED: '已拒绝' };
-  const actionLabel = { ADD: '新增卡片', MODIFY: '修改卡片' };
+  const actionLabel = { ADD: '新增卡片', MODIFY: '修改卡片', DELETE: '删除卡片' };
   const s = statusMap[cc.status] || 'pending';
   const contributor = cc.contributor?.nickname || cc.contributor?.username || 'unknown';
   const card = cc.cardData || {};
 
   const reviewHtml = (cc.status !== 'PENDING' && cc.reviewedAt) ? `<div class="collab-review-info"><span class="collab-cc-status ${s}">${statusLabel[cc.status] || cc.status}</span><small>审核于 ${formatDate(cc.reviewedAt)}</small>${cc.reviewNote ? `<p>${esc(cc.reviewNote)}</p>` : ''}</div>` : '';
 
+  const deleteReasonHtml = (isDelete && card._deleteReason) ? `<p class="collab-delete-reason">删除理由：${esc(card._deleteReason)}</p>` : '';
+  const deleteWarningHtml = isDelete ? `<div class="collab-delete-warning"><p>此操作将从牌组中永久删除此卡片。</p>${deleteReasonHtml}</div>` : '';
+
   let actionsHtml = '';
   if (isPending && isOwner) {
-    actionsHtml = `<div class="collab-cc-actions"><button type="button" class="collab-action-btn approve" data-collab-action="approve">直接采纳</button><button type="button" class="collab-action-btn edit" data-collab-action="edit">编辑后采纳</button><button type="button" class="collab-action-btn reject" data-collab-action="show-reject">拒绝</button></div><div class="collab-reject-box" id="collabRejectBox" hidden><label class="cc-edit-field">拒绝理由（可选）<textarea id="collabRejectNote" rows="2" placeholder="请输入拒绝理由…"></textarea></label><div class="cc-edit-actions"><button type="button" class="collab-action-btn reject" data-collab-action="confirm-reject">确认拒绝</button><button type="button" class="collab-action-btn" data-collab-action="cancel-reject">取消</button></div></div>`;
+    if (isDelete) {
+      // For DELETE: show "确认删除" and "拒绝" only, no "编辑后采纳"
+      actionsHtml = `<div class="collab-cc-actions"><button type="button" class="collab-action-btn approve" data-collab-action="approve">确认删除</button><button type="button" class="collab-action-btn reject" data-collab-action="show-reject">拒绝</button></div><div class="collab-reject-box" id="collabRejectBox" hidden><label class="cc-edit-field">拒绝理由（可选）<textarea id="collabRejectNote" rows="2" placeholder="请输入拒绝理由…"></textarea></label><div class="cc-edit-actions"><button type="button" class="collab-action-btn reject" data-collab-action="confirm-reject">确认拒绝</button><button type="button" class="collab-action-btn" data-collab-action="cancel-reject">取消</button></div></div>`;
+    } else {
+      actionsHtml = `<div class="collab-cc-actions"><button type="button" class="collab-action-btn approve" data-collab-action="approve">直接采纳</button><button type="button" class="collab-action-btn edit" data-collab-action="edit">编辑后采纳</button><button type="button" class="collab-action-btn reject" data-collab-action="show-reject">拒绝</button></div><div class="collab-reject-box" id="collabRejectBox" hidden><label class="cc-edit-field">拒绝理由（可选）<textarea id="collabRejectNote" rows="2" placeholder="请输入拒绝理由…"></textarea></label><div class="cc-edit-actions"><button type="button" class="collab-action-btn reject" data-collab-action="confirm-reject">确认拒绝</button><button type="button" class="collab-action-btn" data-collab-action="cancel-reject">取消</button></div></div>`;
+    }
   }
 
-  const editorHtml = (isPending && isOwner && collabEditMode) ? `<section class="collab-pr-section cc-edit-section"><h3>编辑卡片</h3>${renderContributionEditor(card)}<div class="cc-edit-actions"><button type="button" class="collab-action-btn approve" data-collab-action="approve-edited">采纳编辑</button><button type="button" class="collab-action-btn" data-collab-action="cancel-edit">取消编辑</button></div></section>` : '';
+  // Don't show inline editor for DELETE — you can't edit a deletion.
+  const editorHtml = (isPending && isOwner && collabEditMode && !isDelete) ? `<section class="collab-pr-section cc-edit-section"><h3>编辑卡片</h3>${renderContributionEditor(card)}<div class="cc-edit-actions"><button type="button" class="collab-action-btn approve" data-collab-action="approve-edited">采纳编辑</button><button type="button" class="collab-action-btn" data-collab-action="cancel-edit">取消编辑</button></div></section>` : '';
 
-  content.innerHTML = `<div class="collab-cc-detail"><button type="button" class="collab-back-btn" data-collab-back="list">← 返回列表</button><div class="collab-cc-detail-header"><span class="collab-cc-action ${cc.action === 'ADD' ? 'add' : 'modify'}">${actionLabel[cc.action] || cc.action}</span><h2>${esc(card.question ? card.question.slice(0, 40) : cc.cardId)}</h2><div class="collab-cc-detail-meta"><span>推送者：${esc(contributor)}</span><span>卡片ID：${esc(cc.cardId)}</span><span>时间：${formatDate(cc.createdAt)}</span></div></div>${reviewHtml}${actionsHtml}<section class="collab-pr-section"><h3>卡片预览</h3>${renderContributionCardPreview(card)}</section>${editorHtml}</div>`;
+  content.innerHTML = `<div class="collab-cc-detail"><button type="button" class="collab-back-btn" data-collab-back="list">← 返回列表</button><div class="collab-cc-detail-header"><span class="collab-cc-action ${cc.action === 'ADD' ? 'add' : cc.action === 'DELETE' ? 'delete' : 'modify'}">${actionLabel[cc.action] || cc.action}</span><h2>${esc(card.question ? card.question.slice(0, 40) : cc.cardId)}</h2><div class="collab-cc-detail-meta"><span>推送者：${esc(contributor)}</span><span>卡片ID：${esc(cc.cardId)}</span><span>时间：${formatDate(cc.createdAt)}</span></div></div>${deleteWarningHtml}${reviewHtml}${actionsHtml}<section class="collab-pr-section"><h3>卡片预览</h3>${renderContributionCardPreview(card)}</section>${editorHtml}</div>`;
   bindContributionDetailEvents(content, cc);
 }
 
@@ -301,7 +311,7 @@ function bindContributionDetailEvents(container, cc) {
         const note = container.querySelector('#collabRejectNote')?.value.trim() || '';
         btn.disabled = true;
         try {
-          await collabApi(`card-contributions/${cc.id}/review`, { method: 'POST', body: JSON.stringify({ decision: 'REJECTED', note: note || undefined }) });
+          await collabApi(`card-contributions/${encodeURIComponent(cc.id)}/review`, { method: 'POST', body: JSON.stringify({ decision: 'REJECTED', note: note || undefined }) });
           toast('卡片已拒绝。');
           renderCollab();
         } catch (err) { toast('操作失败：' + (err.message || '未知错误')); btn.disabled = false; }
@@ -316,18 +326,20 @@ function bindContributionDetailEvents(container, cc) {
         if (edited.type === 'note' && !edited.noteContent) { toast('请填写速记内容。'); return; }
         btn.disabled = true;
         try {
-          await collabApi(`card-contributions/${cc.id}/review`, { method: 'POST', body: JSON.stringify({ decision: 'APPROVED', editedCardData: edited }) });
+          await collabApi(`card-contributions/${encodeURIComponent(cc.id)}/review`, { method: 'POST', body: JSON.stringify({ decision: 'APPROVED', editedCardData: edited }) });
           toast('卡片已采纳（含编辑）并合并到牌组。');
           renderCollab();
+          refreshMarketData();
         } catch (err) { toast('操作失败：' + (err.message || '未知错误')); btn.disabled = false; }
         return;
       }
       // direct approve
       btn.disabled = true;
       try {
-        await collabApi(`card-contributions/${cc.id}/review`, { method: 'POST', body: JSON.stringify({ decision: 'APPROVED' }) });
+        await collabApi(`card-contributions/${encodeURIComponent(cc.id)}/review`, { method: 'POST', body: JSON.stringify({ decision: 'APPROVED' }) });
         toast('卡片已采纳并合并到牌组。');
         renderCollab();
+        refreshMarketData();
       } catch (err) { toast('操作失败：' + (err.message || '未知错误')); btn.disabled = false; }
     });
   });

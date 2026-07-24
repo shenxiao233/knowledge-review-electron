@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { SyncService } from '../services/sync.service.js';
 import { requireAuth, auth } from '../middleware/auth.js';
 import { fail } from '../utils/response.js';
@@ -18,7 +19,8 @@ export default async function syncRoutes(
       );
       return response;
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
@@ -29,17 +31,22 @@ export default async function syncRoutes(
       if (!Array.isArray(body.requests)) {
         return fail(reply, 400, 'requests must be an array');
       }
+      if (body.requests.length > 100) {
+        return fail(reply, 400, 'Batch size exceeds the 100-item limit');
+      }
       const responses = await syncService.batchSync(auth(request).id, body.requests);
       return { responses };
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
   // GET /api/v2/sync/full - Full sync (get all objects)
-  app.get('/api/v2/sync/full', { preHandler: requireAuth }, async (request) => {
+  app.get('/api/v2/sync/full', { preHandler: requireAuth }, async (request, reply) => {
     const query = request.query as any;
     const lastSyncAt = query?.lastSyncAt ? new Date(query.lastSyncAt) : undefined;
+    if (lastSyncAt && isNaN(lastSyncAt.getTime())) return fail(reply, 400, 'lastSyncAt 不是有效的日期');
     return syncService.getFullSync(auth(request).id, lastSyncAt);
   });
 
@@ -60,11 +67,16 @@ export default async function syncRoutes(
   // DELETE /api/v2/sync/:objectType/:objectId - Delete a sync object
   app.delete('/api/v2/sync/:objectType/:objectId', { preHandler: requireAuth }, async (request, reply) => {
     try {
-      const { objectType, objectId } = request.params as any;
-      await syncService.deleteSyncObject(auth(request).id, objectType, objectId);
+      const params = z.object({
+        objectType: z.string().min(1).max(50),
+        objectId: z.string().min(1).max(100),
+      }).safeParse(request.params);
+      if (!params.success) return fail(reply, 400, '参数无效');
+      await syncService.deleteSyncObject(auth(request).id, params.data.objectType, params.data.objectId);
       return { deleted: true };
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
@@ -75,7 +87,8 @@ export default async function syncRoutes(
       if (!updated) return fail(reply, 404, 'Device not found');
       return { synced: true };
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 }

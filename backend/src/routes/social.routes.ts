@@ -9,8 +9,10 @@ export default async function socialRoutes(app: FastifyInstance) {
   // ─── Reviews ───
 
   // GET /api/v1/decks/:id/reviews
-  app.get('/api/v1/decks/:id/reviews', async (request) => {
-    const { id } = request.params as { id: string };
+  app.get('/api/v1/decks/:id/reviews', async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, 400, '无效的 ID');
+    const { id } = params.data;
     const reviews = await prisma.deckReview.findMany({
       where: { deckId: id },
       include: { user: { select: { username: true } } },
@@ -32,7 +34,9 @@ export default async function socialRoutes(app: FastifyInstance) {
   // POST /api/v1/decks/:id/reviews
   app.post('/api/v1/decks/:id/reviews', { preHandler: requireAuth }, async (request, reply) => {
     const userId = auth(request).id;
-    const { id: deckId } = request.params as { id: string };
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, 400, '无效的 ID');
+    const { id: deckId } = params.data;
     const body = z.object({
       rating: z.number().int().min(1).max(5),
       comment: z.string().max(2000).default(''),
@@ -62,9 +66,11 @@ export default async function socialRoutes(app: FastifyInstance) {
   });
 
   // DELETE /api/v1/decks/:id/reviews
-  app.delete('/api/v1/decks/:id/reviews', { preHandler: requireAuth }, async (request) => {
+  app.delete('/api/v1/decks/:id/reviews', { preHandler: requireAuth }, async (request, reply) => {
     const userId = auth(request).id;
-    const { id: deckId } = request.params as { id: string };
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, 400, '无效的 ID');
+    const { id: deckId } = params.data;
     const deleted = await prisma.deckReview.deleteMany({ where: { deckId, userId } });
     return { deleted: deleted.count > 0 };
   });
@@ -92,7 +98,9 @@ export default async function socialRoutes(app: FastifyInstance) {
   // POST /api/v1/favorites/:deckId
   app.post('/api/v1/favorites/:deckId', { preHandler: requireAuth }, async (request, reply) => {
     const userId = auth(request).id;
-    const { deckId } = request.params as { deckId: string };
+    const params = z.object({ deckId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, 400, '无效的 ID');
+    const { deckId } = params.data;
     const deck = await prisma.deck.findUnique({ where: { id: deckId } });
     if (!deck) return fail(reply, 404, 'Deck not found');
 
@@ -109,7 +117,9 @@ export default async function socialRoutes(app: FastifyInstance) {
   // DELETE /api/v1/favorites/:deckId
   app.delete('/api/v1/favorites/:deckId', { preHandler: requireAuth }, async (request, reply) => {
     const userId = auth(request).id;
-    const { deckId } = request.params as { deckId: string };
+    const params = z.object({ deckId: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, 400, '无效的 ID');
+    const { deckId } = params.data;
     const deleted = await prisma.deckFavorite.deleteMany({ where: { deckId, userId } });
     return { unfavorited: true, count: deleted.count };
   });

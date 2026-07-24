@@ -46,6 +46,10 @@ export const config = {
   uploadRateLimitWindowSeconds: num(process.env.UPLOAD_RATE_LIMIT_WINDOW_SECONDS, 3600, 'UPLOAD_RATE_LIMIT_WINDOW_SECONDS'),
   registerRateLimitMax: num(process.env.REGISTER_RATE_LIMIT_MAX, 20, 'REGISTER_RATE_LIMIT_MAX'),
   registerRateLimitWindowSeconds: num(process.env.REGISTER_RATE_LIMIT_WINDOW_SECONDS, 3600, 'REGISTER_RATE_LIMIT_WINDOW_SECONDS'),
+  passwordChangeRateLimitMax: num(process.env.PASSWORD_CHANGE_RATE_LIMIT_MAX, 10, 'PASSWORD_CHANGE_RATE_LIMIT_MAX'),
+  passwordChangeRateLimitWindowSeconds: num(process.env.PASSWORD_CHANGE_RATE_LIMIT_WINDOW_SECONDS, 3600, 'PASSWORD_CHANGE_RATE_LIMIT_WINDOW_SECONDS'),
+  collabPushRateLimitMax: num(process.env.COLLAB_PUSH_RATE_LIMIT_MAX, 30, 'COLLAB_PUSH_RATE_LIMIT_MAX'),
+  collabPushRateLimitWindowSeconds: num(process.env.COLLAB_PUSH_RATE_LIMIT_WINDOW_SECONDS, 300, 'COLLAB_PUSH_RATE_LIMIT_WINDOW_SECONDS'),
   
   // Redis
   redisUrl: process.env.REDIS_URL || '',

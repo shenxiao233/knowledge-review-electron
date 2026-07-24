@@ -25,7 +25,7 @@ function hydrate(raw) {
       reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
       schemaVersion: 3,
       algorithm: 'fsrs',
-      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerKey: typeof saved.settings?.marketServerKey === 'string' ? saved.settings.marketServerKey.trim() : encodeMarketServerKey(saved.settings?.marketServerUrl || '') },
+      settings: { ...base.settings, ...(saved.settings || {}), desiredRetention: Number(saved.settings?.desiredRetention || 0.9), reviewPriority: ['new', 'review', 'mixed'].includes(saved.settings?.reviewPriority) ? saved.settings.reviewPriority : 'mixed', showStamps: saved.settings?.showStamps !== false, marketServerKey: typeof saved.settings?.marketServerKey === 'string' ? saved.settings.marketServerKey.trim() : encodeMarketServerKey(saved.settings?.marketServerUrl || ''), localMode: saved.settings?.localMode === true },
       reviewPlan: { ...base.reviewPlan, ...(saved.reviewPlan || {}), order: saved.reviewPlan?.order === 'random' ? 'random' : 'ordered' },
       profile: { ...base.profile, ...(saved.profile || {}), myDecks: Array.isArray(saved.profile?.myDecks) ? saved.profile.myDecks : [], publishedGroups: saved.profile?.publishedGroups && typeof saved.profile.publishedGroups === 'object' ? saved.profile.publishedGroups : {}, deckIds: saved.profile?.deckIds && typeof saved.profile.deckIds === 'object' ? saved.profile.deckIds : {} },
       market: { ...(base.market || { conflicts: [], decks: {} }), ...(saved.market || {}), conflicts: Array.isArray(saved.market?.conflicts) ? saved.market.conflicts : [], decks: saved.market?.decks && typeof saved.market.decks === 'object' ? saved.market.decks : {} },
@@ -177,7 +177,6 @@ async function migrateLocalStorageToIDB() {
   if (!raw) return false;
   try {
     await idbSet('app-state', { data: raw, savedAt: localStorage.getItem(STATE_META_KEY) || new Date().toISOString() });
-    console.log('[IDB] migrated localStorage data to IndexedDB');
     return true;
   } catch (err) {
     console.warn('[IDB] migration failed:', err);

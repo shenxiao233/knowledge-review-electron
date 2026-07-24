@@ -142,33 +142,85 @@ function confirmDeleteTarget() {
   if (type === 'card-order') { modal.close(); confirmCardOrderChange(); return; }
   if (type === 'relearn-card-group') { modal.close(); confirmRelearnCardGroup(targetId); return; }
   modal.close();
+  let pushCount = 0;
+  let deleteCount = 0;
+  let customToast = '';
   if (type === 'document') {
     const at = state.documents.findIndex((doc) => doc.id === targetId);
     if (at < 0) return;
     state.documents.splice(at, 1);
     if (state.activeDocId === targetId) state.activeDocId = state.documents[0]?.id || '';
+    deleteCount = 1;
   } else if (type === 'folder') {
     const at = state.folders.findIndex((folder) => folder.id === targetId);
     if (at < 0) return;
     state.folders.splice(at, 1)[0];
     state.documents = state.documents.filter((doc) => doc.folderId !== targetId);
     if (!state.documents.some((doc) => doc.id === state.activeDocId)) state.activeDocId = state.documents[0]?.id || '';
+    deleteCount = 1;
   } else if (type === 'card') {
-    const at = state.cards.findIndex((card) => card.id === targetId);
-    if (at < 0) return;
-    state.cards.splice(at, 1);
-    if (state.selectedCardId === targetId) state.selectedCardId = state.cards[0]?.id || '';
+    const card = state.cards.find((c) => c.id === targetId);
+    if (!card) return;
+    const isMarket = card.source && typeof card.source === 'object' && card.source.type === 'market';
+    if (isMarket && !state.settings.localMode && !isCardFrozen(card)) {
+      autoPushCard(card, 'DELETE', structuredClone(card)).catch((err) => { console.error('[AUTOPUSH]', err); });
+      pushCount = 1;
+    } else {
+      const at = state.cards.findIndex((c) => c.id === targetId);
+      if (at >= 0) state.cards.splice(at, 1);
+      if (state.selectedCardId === targetId) state.selectedCardId = state.cards[0]?.id || '';
+      deleteCount = 1;
+    }
   } else if (type === 'cards') {
     const ids = new Set(targetId.split(','));
-    state.cards = state.cards.filter((card) => !ids.has(card.id));
+    const marketCards = [];
+    const normalIds = new Set();
+    ids.forEach((cardId) => {
+      const card = state.cards.find((c) => c.id === cardId);
+      const isMarket = card && card.source && typeof card.source === 'object' && card.source.type === 'market';
+      if (isMarket && !state.settings.localMode && !isCardFrozen(card)) {
+        marketCards.push(card);
+      } else {
+        normalIds.add(cardId);
+      }
+    });
+    if (normalIds.size) {
+      state.cards = state.cards.filter((card) => !normalIds.has(card.id));
+      deleteCount = normalIds.size;
+    }
     selectedCardIds.clear();
+    for (const card of marketCards) {
+      autoPushCard(card, 'DELETE', structuredClone(card)).catch((err) => { console.error('[AUTOPUSH]', err); });
+      pushCount++;
+    }
   } else if (type === 'card-group') {
-    state.cards = state.cards.filter((card) => card.folder !== targetId);
-    state.groups = state.groups.filter((item) => item !== targetId);
-    if (els.folderFilter.value === targetId) els.folderFilter.value = '全部文件夹';
+    const groupCards = state.cards.filter((card) => card.folder === targetId);
+    const isMarketGroup = isMarketDeckGroup(targetId);
+    if (isMarketGroup) {
+      // Unsubscribe: remove all local cards and the subscription entry.
+      // Do NOT push DELETE contributions — this is a local unsubscribe, not a server-side deletion.
+      state.cards = state.cards.filter((card) => card.folder !== targetId);
+      state.groups = state.groups.filter((item) => item !== targetId);
+      const decks = state.market?.decks || {};
+      for (const deckId of Object.keys(decks)) {
+        if (decks[deckId].folder === targetId) { delete decks[deckId]; break; }
+      }
+      state.market = { ...(state.market || {}), decks };
+      if (els.folderFilter.value === targetId) els.folderFilter.value = '全部文件夹';
+      deleteCount = groupCards.length;
+      customToast = deleteCount ? `已取消订阅，移除 ${deleteCount} 张本地卡片。` : '已取消订阅。';
+    } else {
+      state.cards = state.cards.filter((card) => card.folder !== targetId);
+      state.groups = state.groups.filter((item) => item !== targetId);
+      if (els.folderFilter.value === targetId) els.folderFilter.value = '全部文件夹';
+      deleteCount = groupCards.length;
+    }
   }
   save();
   loadDoc();
   refresh();
-  toast('内容已永久删除。');
+  if (customToast) toast(customToast);
+  else if (pushCount && !deleteCount) toast(`${pushCount} 张市场卡片已提交删除审核。`);
+  else if (pushCount && deleteCount) toast(`${deleteCount} 张已删除，${pushCount} 张市场卡片已提交删除审核。`);
+  else toast('内容已永久删除。');
 }

@@ -216,7 +216,8 @@ function activateGlobalSearchResult(result) {
 
 function bind() {
   $('#windowMinimizeButton')?.addEventListener('click', () => window.reviewBridge.windowControls.minimize());
-  $('#windowMaximizeButton')?.addEventListener('click', async () => { const maximized = await window.reviewBridge.windowControls.toggleMaximize(); $('#windowMaximizeButton').title = maximized ? '还原窗口' : '最大化'; });
+  const maxBtn = $('#windowMaximizeButton');
+  maxBtn?.addEventListener('click', async () => { const maximized = await window.reviewBridge.windowControls.toggleMaximize(); maxBtn.title = maximized ? '还原窗口' : '最大化'; });
   $('#windowCloseButton')?.addEventListener('click', () => window.reviewBridge.windowControls.close());
   $('#windowChrome')?.addEventListener('dblclick', (event) => { if (!event.target.closest('button')) window.reviewBridge.windowControls.toggleMaximize(); });
   $$('.rail-btn,[data-view]').forEach((button) => button.addEventListener('click', () => button.dataset.view && view(button.dataset.view)));
@@ -266,7 +267,8 @@ function bind() {
   $('#webdavSyncButton')?.addEventListener('click', syncWebDavNow);
   $('#webdavEditButton')?.addEventListener('click', () => setWebDavEditing(true));
   $('#webdavCancelEditButton')?.addEventListener('click', () => { webdavConfigEditing = false; syncWebDavForm(); });
-  $('#webdavEnabled')?.addEventListener('change', () => { if (!$('#webdavEnabled').checked) updateStorageStatus('坚果云备份已停用'); });
+  const webdavEnabledCb = $('#webdavEnabled');
+  webdavEnabledCb?.addEventListener('change', () => { if (!webdavEnabledCb.checked) updateStorageStatus('坚果云备份已停用'); });
   $('#closeExportButton')?.addEventListener('click', () => els.exportModal.close());
   $('#confirmExportButton')?.addEventListener('click', exportCards);
   $('#importButton')?.addEventListener('click', importCards);
@@ -284,8 +286,10 @@ function bind() {
   $('#pushSelectedButton')?.addEventListener('click', pushSelectedCards);
   $('#toggleCardGroupsButton')?.addEventListener('click', toggleCardGroups);
   els.cardGroupRail?.addEventListener('click', handleCardGroupRailClick);
-  $('#marketSearchInput')?.addEventListener('input', debounce(() => { marketQuery = $('#marketSearchInput').value.trim(); refreshMarketPage({ resetPage: true }); }, 300));
-  $('#marketSortSelect')?.addEventListener('change', () => { marketSort = $('#marketSortSelect').value; refreshMarketPage({ resetPage: true }); });
+  const searchInput = $('#marketSearchInput');
+  searchInput?.addEventListener('input', debounce(() => { marketQuery = searchInput.value.trim(); refreshMarketPage({ resetPage: true }); }, 300));
+  const sortSelect = $('#marketSortSelect');
+  sortSelect?.addEventListener('change', () => { marketSort = sortSelect.value; refreshMarketPage({ resetPage: true }); });
   $('#marketGrid')?.addEventListener('click', handleMarketClick);
   $('#marketCategoryBar')?.addEventListener('click', handleMarketClick);
   $('#marketPagination')?.addEventListener('click', (event) => { const button = event.target.closest('[data-market-page]'); if (!button || button.disabled) return; marketPage = Number(button.dataset.marketPage); refreshMarketPage(); });
@@ -357,7 +361,14 @@ function bind() {
 }
 
 // Replace the native confirmation with the themed dialog when the card-library code calls it.
-function deleteCardGroup(group) { const cards = state.cards.filter((card) => card.folder === group); openDeleteConfirm('card-group', group, `删除卡组“${group}”？`, cards.length ? `该卡组包含 ${cards.length} 张卡片，将随卡组永久删除，此操作无法撤销。` : '该卡组没有卡片，将被永久删除。'); }
+function deleteCardGroup(group) {
+  const cards = state.cards.filter((card) => card.folder === group);
+  if (isMarketDeckGroup(group)) {
+    openDeleteConfirm('card-group', group, `取消订阅"${group}"？`, cards.length ? `该订阅卡组包含 ${cards.length} 张卡片，取消订阅后将移除本地卡片。服务器端牌组不受影响。` : '该订阅卡组没有卡片，取消订阅后将移除卡组。', '确认取消订阅');
+  } else {
+    openDeleteConfirm('card-group', group, `删除卡组"${group}"？`, cards.length ? `该卡组包含 ${cards.length} 张卡片，将随卡组永久删除，此操作无法撤销。` : '该卡组没有卡片，将被永久删除。');
+  }
+}
 
 // Backup-only WebDAV mode: localStorage is the only data source and uploads are hourly.
 let webdavBackupTimer = null;

@@ -75,7 +75,9 @@ function decodeMarketServerKey(value) {
   try {
     const encoded = raw.slice(MARKET_SERVER_KEY_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/');
     const padded = encoded + '='.repeat((4 - encoded.length % 4) % 4);
-    const json = decodeURIComponent(escape(atob(padded)));
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    const json = new TextDecoder('utf-8').decode(bytes);
     const payload = JSON.parse(json);
     return payload?.v === 1 && typeof payload.base === 'string' ? payload.base : '';
   } catch {
@@ -87,7 +89,9 @@ function encodeMarketServerKey(value) {
   if (!parsed) return '';
   if (String(value || '').trim().startsWith(MARKET_SERVER_KEY_PREFIX)) return String(value).trim();
   const json = JSON.stringify({ v: 1, base: parsed });
-  const encoded = btoa(unescape(encodeURIComponent(json))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const bytes = new TextEncoder().encode(json);
+  const binary = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+  const encoded = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return `${MARKET_SERVER_KEY_PREFIX}${encoded}`;
 }
 function parseMarketApiBase(value) {
@@ -109,10 +113,10 @@ function parseMarketApiBase(value) {
   }
 }
 function normalizeMarketApiBase(value) {
-  var parsed = parseMarketApiBase(value);
+  const parsed = parseMarketApiBase(value);
   if (!parsed) return DEFAULT_MARKET_API_BASE;
   try {
-    var url = new URL(parsed);
+    const url = new URL(parsed);
     if (url.port === "4000" && (url.hostname === "127.0.0.1" || url.hostname === "localhost")) {
       console.warn("[MARKET] Saved server URL still on port 4000, auto-upgrading to 4100");
       return DEFAULT_MARKET_API_BASE;
@@ -158,7 +162,7 @@ const base = {
   reviewEvents: [],
   schemaVersion: 3,
   algorithm: 'fsrs',
-  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, reviewPriority: 'mixed', showStamps: true, marketServerKey: '' },
+  settings: { desiredRetention: 0.9, dailyLimit: 50, dailyNewLimit: 10, reviewPriority: 'mixed', showStamps: true, marketServerKey: '', localMode: false },
   reviewPlan: { group: 'all', order: 'ordered' },
   selectedCardId: sampleCards[0].id,
   extractedText: '',
@@ -178,7 +182,6 @@ let pendingReviewCardId = '';
 let pendingCorrect = false;
 let reviewDisposition = 'pending';
 let reviewDisplayCard = null;
-let reviewSnapshot = null;
 let selectedCardIds = new Set();
 let lastNext = 0;
 let queueVersion = 0;
@@ -260,9 +263,10 @@ function normCard(card) {
     mastery: ['tooEasy', 'familiar', 'fuzzy', 'forgot'].includes(card.mastery) ? card.mastery : (card.noteRating || ''),
     correctRate: Number.isFinite(rateValue) ? Math.min(100, Math.max(0, rateValue)) : null,
     knowledgePoint: String(card.knowledgePoint || '').trim(),
-    source: String(card.source || '').trim(),
+    source: card.source && typeof card.source === 'object' ? card.source : String(card.source || '').trim(),
     resetAt: card.resetAt || '',
-    fsrs: card.fsrs || null
+    fsrs: card.fsrs || null,
+    pushStatus: card.pushStatus || null
   };
   // BUG-05 fix: Skip FSRS migration for cards that already have valid FSRS state
   const hasValidFsrs = normalized.fsrs && normalized.fsrs.due && normalized.fsrs.state && typeof normalized.fsrs.stability === 'number';

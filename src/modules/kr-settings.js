@@ -100,7 +100,7 @@ async function init() {
       state = hydrate('');
     }
     try {
-      var _serialized = JSON.stringify(state);
+      const _serialized = JSON.stringify(state);
       if (_serialized.length > 4000000) { console.warn("[INIT] State too large for localStorage (" + _serialized.length + " chars), skipping"); }
       else { localStorage.setItem(KEY, _serialized); }
       localStorage.setItem(STATE_META_KEY, selected.savedAt || new Date().toISOString());
@@ -137,12 +137,14 @@ async function init() {
   safeCall('ensureUpdatePanel', ensureUpdatePanel);
   safeCall('cache5', () => cache());
   safeCall('ensureStampSetting', ensureStampSetting);
+  safeCall('ensureLocalModeSetting', ensureLocalModeSetting);
   safeCall('ensureCardEditorFields', ensureCardEditorFields);
   safeCall('enhanceSelectsPortal', enhanceSelectsPortal);
   safeCall('ensureToolbarPalettes', ensureToolbarPalettes);
   safeCall('bind', bind);
   safeCall('enableTooltips', enableTooltips);
   safeCall('bindUpdateEvents', bindUpdateEvents);
+  safeCall('startAutoPushTimers', startAutoPushTimers);
 
   try { await loadWebDavConfig(); } catch (e) {}
   try { ensureMarketRegistrationField(); } catch (e) {}
@@ -168,6 +170,22 @@ function ensureStampSetting() {
     save();
     refresh();
   });
+}
+function ensureLocalModeSetting() {
+  const toggle = $('#localModeToggle');
+  if (!toggle) return;
+  els.localModeToggle = toggle;
+  toggle.checked = state.settings.localMode === true;
+  if (toggle.dataset.bound === 'true') return;
+  toggle.dataset.bound = 'true';
+  toggle.addEventListener('change', () => {
+    state.settings.localMode = toggle.checked;
+    save();
+    document.body.classList.toggle('local-mode', state.settings.localMode);
+    toast(state.settings.localMode ? '已切换到本地模式，修改不会自动推送。' : '已切换到推送模式，修改将自动推送到市场牌组。');
+    if (!state.settings.localMode) retryFailedPushes();
+  });
+  document.body.classList.toggle('local-mode', state.settings.localMode);
 }function ensureBatchModeButton() { const header = els.cardModal?.querySelector('.modal-header'); const form = els.cardForm; if (!header || !form) return; if (!$('#batchModeButton')) { const button = document.createElement('button'); button.type = 'button'; button.id = 'batchModeButton'; button.className = 'modal-mode-toggle'; button.textContent = '批量制卡'; header.insertBefore(button, header.querySelector('.dialog-close')); button.addEventListener('click', toggleBatchCardMode); } if (!form.querySelector('.card-editor-scroll')) { const menu = form.querySelector(':scope > menu'); if (!menu) return; const body = document.createElement('div'); body.className = 'card-editor-scroll'; let node = header.nextElementSibling; while (node && node !== menu) { const next = node.nextElementSibling; body.appendChild(node); node = next; } form.insertBefore(body, menu); } }
 /**
  * Defensive safe-call helper: runs fn() and logs errors without throwing.
@@ -199,7 +217,14 @@ function safeRender(label, fn) {
     $$('.view').forEach((item) => item.classList.toggle('active', item.id === `${name}View`));
     $$('.rail-btn').forEach((button) => button.classList.toggle('active', button.dataset.view === target));
     if (name === 'library') safeRender('openKnowledgeHome', openKnowledgeHome);
-    if (name === 'cards') safeRender('renderCards', renderCards);
+    if (name === 'cards') {
+      safeRender('renderCards', renderCards);
+      if (marketUnlocked && marketToken && !view._cardsSynced) {
+        view._cardsSynced = true;
+        marketUpdateCache.clear();
+        syncSubscribedDecks().catch(() => {}).finally(() => { view._cardsSynced = false; });
+      }
+    }
     if (name === 'market') safeRender('renderMarket', renderMarket);
     if (name === 'collab') safeRender('renderCollab', renderCollab);
     if (name === 'profile') {

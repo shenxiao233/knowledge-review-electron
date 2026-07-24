@@ -5,7 +5,7 @@ import fsp from 'node:fs/promises';
 import { DeckService } from '../services/deck.service.js';
 import { RateLimiter } from '../plugins/rate-limit.js';
 import { requireAuth, auth } from '../middleware/auth.js';
-import { config } from '../config.js';
+import { config, maxUploadBytes } from '../config.js';
 import { normalizeCategoryName, sanitizeBigInt } from '../utils/helpers.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 import { fail } from '../utils/response.js';
@@ -47,7 +47,7 @@ export default async function myDecksRoutes(
   });
 
   // POST /api/v1/my-decks - Create a new deck (multipart upload)
-  app.post('/api/v1/my-decks', { preHandler: requireAuth }, async (request, reply) => {
+  app.post('/api/v1/my-decks', { preHandler: requireAuth, bodyLimit: maxUploadBytes + 1024 * 1024 }, async (request, reply) => {
     if (!await rateLimiter.consume(
       reply,
       requestRateLimitKey(request, 'upload', auth(request).id),
@@ -136,7 +136,7 @@ export default async function myDecksRoutes(
   });
 
   // POST /api/v1/my-decks/:id/versions - Upload a new version
-  app.post('/api/v1/my-decks/:id/versions', { preHandler: requireAuth }, async (request, reply) => {
+  app.post('/api/v1/my-decks/:id/versions', { preHandler: requireAuth, bodyLimit: maxUploadBytes + 1024 * 1024 }, async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const deck = await prisma.deck.findFirst({ where: { id, ownerId: auth(request).id } });
     if (!deck) return fail(reply, 404, 'Deck not found');

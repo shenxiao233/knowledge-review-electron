@@ -16,33 +16,45 @@ export default async function invitationRoutes(
   // POST /api/v2/invitations - Create invitation code (admin or authorized users)
   app.post('/api/v2/invitations', { preHandler: requireAdmin }, async (request, reply) => {
     try {
-      const body = request.body as any;
+      const body = z.object({
+        maxUses: z.number().int().min(1).max(1000).optional(),
+        expiresAt: z.string().datetime().optional(),
+      }).safeParse(request.body);
+      if (!body.success) return fail(reply, 400, '邀请码参数无效');
+      const { maxUses, expiresAt } = body.data;
       const invitation = await invitationService.generateCode(
         auth(request).id,
         {
-          maxUses: body?.maxUses,
-          expiresAt: body?.expiresAt ? new Date(body.expiresAt) : undefined,
+          maxUses,
+          expiresAt: expiresAt ? new Date(expiresAt) : undefined,
         }
       );
       return reply.code(201).send(invitation);
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 
   // GET /api/v2/invitations - List invitation codes
   app.get('/api/v2/invitations', { preHandler: requireAdmin }, async (request) => {
-    const query = request.query as any;
+    const query = z.object({
+      page: z.string().optional(),
+      pageSize: z.string().optional(),
+    }).safeParse(request.query);
+    const pageNum = Math.max(1, Number(query.success ? query.data.page : '1') || 1);
+    const pageSizeNum = Math.min(100, Number(query.success ? query.data.pageSize : '20') || 20);
     return invitationService.listCodes({
-      status: query?.status,
-      page: query?.page ? Number(query.page) : undefined,
-      pageSize: query?.pageSize ? Number(query.pageSize) : undefined,
+      page: pageNum,
+      pageSize: pageSizeNum,
     });
   });
 
   // GET /api/v2/invitations/:id - Get invitation details
   app.get('/api/v2/invitations/:id', { preHandler: requireAdmin }, async (request, reply) => {
-    const invitation = await invitationService.getCode((request.params as any).id);
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    if (!params.success) return fail(reply, 400, '无效的 ID');
+    const invitation = await invitationService.getCode(params.data.id);
     if (!invitation) return fail(reply, 404, 'Invitation not found');
     return invitation;
   });
@@ -69,9 +81,12 @@ export default async function invitationRoutes(
   // DELETE /api/v2/invitations/:id - Permanently delete invitation code
   app.delete('/api/v2/invitations/:id', { preHandler: requireAdmin }, async (request, reply) => {
     try {
-      return await invitationService.deleteCode((request.params as any).id, auth(request).id);
+      const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+      if (!params.success) return fail(reply, 400, '无效的 ID');
+      return await invitationService.deleteCode(params.data.id, auth(request).id);
     } catch (error: any) {
-      return fail(reply, 400, error.message);
+      const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
+      return fail(reply, 400, msg);
     }
   });
 }
