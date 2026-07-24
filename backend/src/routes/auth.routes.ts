@@ -1,10 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { AuthService } from '../services/auth.service.js';
 import { requireAuth, auth } from '../middleware/auth.js';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
-
-const prisma = new PrismaClient();
 
 export default async function authRoutes(app: FastifyInstance, opts: { authService: AuthService }) {
   const { authService } = opts;

@@ -58,17 +58,15 @@ enum SyncConflictResolution {
   MANUAL
 }
 
-enum PullRequestStatus {
-  OPEN
-  MERGED
-  CLOSED
-  REJECTED
+enum CardContributionAction {
+  ADD
+  MODIFY
 }
 
-enum PullRequestReviewDecision {
+enum CardContributionStatus {
+  PENDING
   APPROVED
-  CHANGES_REQUESTED
-  COMMENTED
+  REJECTED
 }
 
 model User {
@@ -80,7 +78,7 @@ model User {
   status            UserStatus    @default(INCOMPLETE)
   uid               String?       @unique @db.VarChar(20)  // Format: KR2607-A3X9
   nickname          String?       @db.VarChar(100)
-  avatar            String?       @db.VarChar(500)  // URL or path
+  avatar            String?       @db.Text  // Data URL or path
   bio               String?       @db.VarChar(1000)
   email             String?       @db.VarChar(255)
   passwordChangedAt DateTime?
@@ -99,12 +97,7 @@ model User {
   syncObjects       SyncObject[]
   invitationCodesUsed InvitationCode[] @relation("InvitationCodeUsedBy")
   invitationCodesCreated InvitationCode[] @relation("InvitationCodeCreatedBy")
-  deckForks         DeckFork[]
-  deckCommits       DeckCommit[]
-  pullRequestsCreated DeckPullRequest[] @relation("PRCreator")
-  pullRequestReviews DeckPRReview[]
-  pullRequestComments DeckPRComment[]
-  collaboratorOf    DeckCollaborator[]
+  cardContributions CardContribution[]
 
   @@index([status, createdAt])
   @@index([uid])
@@ -134,25 +127,17 @@ model Deck {
   publishedVersion Int?
   isForkable       Boolean       @default(false)
   forkedFromId     String?       @db.Uuid
-  forkedFrom       Deck?         @relation("DeckForks", fields: [forkedFromId], references: [id], onDelete: SetNull)
   createdAt        DateTime      @default(now())
   updatedAt        DateTime      @updatedAt
 
-  versions       DeckVersion[]
-  downloads      DeckDownload[]
-  favorites      DeckFavorite[]
-  reviews        DeckReview[]
-  forks          Deck[]          @relation("DeckForks")
-  forkSources    DeckFork[]      @relation("ForkSource")
-  forkTargets    DeckFork[]      @relation("ForkTarget")
-  collaborators  DeckCollaborator[]
-  commits        DeckCommit[]
-  prSources      DeckPullRequest[] @relation("PRSourceDeck")
-  prTargets      DeckPullRequest[] @relation("PRTargetDeck")
+  versions          DeckVersion[]
+  downloads         DeckDownload[]
+  favorites         DeckFavorite[]
+  reviews           DeckReview[]
+  cardContributions CardContribution[]
 
   @@index([status, updatedAt])
   @@index([ownerId, updatedAt])
-  @@index([forkedFromId])
 }
 
 model DeckVersion {
@@ -308,99 +293,22 @@ model SyncObjectHistory {
   @@index([syncObjectId, version])
 }
 
-model DeckCollaborator {
-  id        String   @id @default(uuid()) @db.Uuid
-  deckId    String   @db.Uuid
-  deck      Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
-  userId    String   @db.Uuid
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role      String   @db.VarChar(50)  // 'editor', 'viewer'
-  invitedAt DateTime @default(now())
-  acceptedAt DateTime?
+model CardContribution {
+  id            String                  @id @default(uuid()) @db.Uuid
+  deckId        String                  @db.Uuid
+  deck          Deck                    @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  contributorId String                  @db.Uuid
+  contributor   User                    @relation(fields: [contributorId], references: [id], onDelete: Cascade)
+  action        CardContributionAction
+  cardId        String                  @db.VarChar(100)  // Card identifier within cards.json
+  cardData      Json                     // Full card content
+  status        CardContributionStatus  @default(PENDING)
+  reviewerId    String?                 @db.Uuid
+  reviewedAt    DateTime?
+  reviewNote    String?                 @db.VarChar(2000)
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
 
-  @@unique([deckId, userId])
-  @@index([userId, invitedAt])
-}
-
-model DeckFork {
-  id          String   @id @default(uuid()) @db.Uuid
-  sourceDeckId String  @db.Uuid
-  sourceDeck  Deck     @relation("ForkSource", fields: [sourceDeckId], references: [id], onDelete: Cascade)
-  forkedDeckId String  @db.Uuid
-  forkedDeck  Deck     @relation("ForkTarget", fields: [forkedDeckId], references: [id], onDelete: Cascade)
-  forkedById  String   @db.Uuid
-  forkedBy    User     @relation(fields: [forkedById], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-
-  @@unique([sourceDeckId, forkedDeckId])
-  @@index([sourceDeckId, createdAt])
-  @@index([forkedById, createdAt])
-}
-
-model DeckCommit {
-  id          String   @id @default(uuid()) @db.Uuid
-  deckId      String   @db.Uuid
-  deck        Deck     @relation(fields: [deckId], references: [id], onDelete: Cascade)
-  authorId    String   @db.Uuid
-  author      User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  message     String   @db.VarChar(500)
-  changes     Json     // Diff data
-  parentCommitId String? @db.Uuid
-  createdAt   DateTime @default(now())
-
-  @@index([deckId, createdAt])
-  @@index([authorId, createdAt])
-}
-
-model DeckPullRequest {
-  id            String            @id @default(uuid()) @db.Uuid
-  sourceDeckId  String            @db.Uuid
-  sourceDeck    Deck              @relation("PRSourceDeck", fields: [sourceDeckId], references: [id], onDelete: Cascade)
-  targetDeckId  String            @db.Uuid
-  targetDeck    Deck              @relation("PRTargetDeck", fields: [targetDeckId], references: [id], onDelete: Cascade)
-  title         String            @db.VarChar(200)
-  description   String            @db.VarChar(2000)
-  status        PullRequestStatus @default(OPEN)
-  createdById   String            @db.Uuid
-  createdBy     User              @relation("PRCreator", fields: [createdById], references: [id], onDelete: Cascade)
-  mergedById    String?           @db.Uuid
-  mergedAt      DateTime?
-  closedAt      DateTime?
-  createdAt     DateTime          @default(now())
-  updatedAt     DateTime          @updatedAt
-
-  reviews       DeckPRReview[]
-  comments      DeckPRComment[]
-
-  @@index([sourceDeckId, status, createdAt])
-  @@index([targetDeckId, status, createdAt])
-  @@index([createdById, createdAt])
-}
-
-model DeckPRReview {
-  id            String                    @id @default(uuid()) @db.Uuid
-  pullRequestId String                    @db.Uuid
-  pullRequest   DeckPullRequest           @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
-  reviewerId    String                    @db.Uuid
-  reviewer      User                      @relation(fields: [reviewerId], references: [id], onDelete: Cascade)
-  decision      PullRequestReviewDecision
-  comment       String?                   @db.VarChar(2000)
-  createdAt     DateTime                  @default(now())
-
-  @@unique([pullRequestId, reviewerId])
-  @@index([reviewerId, createdAt])
-}
-
-model DeckPRComment {
-  id            String          @id @default(uuid()) @db.Uuid
-  pullRequestId String          @db.Uuid
-  pullRequest   DeckPullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
-  authorId      String          @db.Uuid
-  author        User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  content       String          @db.VarChar(2000)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-
-  @@index([pullRequestId, createdAt])
-  @@index([authorId, createdAt])
+  @@index([deckId, status, createdAt])
+  @@index([contributorId, createdAt])
 }

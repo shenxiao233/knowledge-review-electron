@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 import fsp from 'node:fs/promises';
 import { DeckService } from '../services/deck.service.js';
@@ -10,8 +10,6 @@ import { normalizeCategoryName, sanitizeBigInt } from '../utils/helpers.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 import { fail } from '../utils/response.js';
 import { ClientInputError } from '../utils/errors.js';
-
-const prisma = new PrismaClient();
 
 export default async function myDecksRoutes(
   app: FastifyInstance,
@@ -30,6 +28,22 @@ export default async function myDecksRoutes(
       orderBy: { updatedAt: 'desc' },
     });
     return sanitizeBigInt({ decks });
+  });
+
+  // GET /api/v1/my-decks/check/:deckId - Check if a deck ID exists and ownership
+  app.get('/api/v1/my-decks/check/:deckId', { preHandler: requireAuth }, async (request) => {
+    const { deckId } = z.object({ deckId: z.string().uuid() }).parse(request.params);
+    const deck = await prisma.deck.findUnique({
+      where: { id: deckId },
+      select: { id: true, ownerId: true, title: true, status: true, currentVersion: true },
+    });
+    if (!deck) return { exists: false, owned: false };
+    const owned = deck.ownerId === auth(request).id;
+    return {
+      exists: true,
+      owned,
+      ...(owned ? { deck: sanitizeBigInt(deck) } : {}),
+    };
   });
 
   // POST /api/v1/my-decks - Create a new deck (multipart upload)
@@ -63,6 +77,7 @@ export default async function myDecksRoutes(
     try {
       const checked = deckService.inspectPackage(upload.tempPath);
       const data = z.object({
+        id: z.string().uuid().optional(),
         title: z.string().min(1).max(160).optional(),
         description: z.string().max(2000).optional(),
         category: z.string().min(1).max(80).optional(),
@@ -72,20 +87,35 @@ export default async function myDecksRoutes(
       const description = data.description ?? checked.manifest.description;
       const manifest = { ...checked.manifest, title, description, category: '' };
 
-      const duplicate = await prisma.deck.findFirst({
-        where: { ownerId: auth(request).id, title },
-        select: { id: true, status: true },
-      });
-      if (duplicate) {
-        return fail(reply, 409,
-          duplicate.status === 'DISABLED'
-            ? 'A disabled deck with this title already exists; re-list it or permanently delete it before creating a new deck'
-            : 'A deck with this title already exists; upload a new version to that deck'
-        );
+      // If client provides a deck ID, check ownership before creating
+      if (data.id) {
+        const existing = await prisma.deck.findUnique({
+          where: { id: data.id },
+          select: { id: true, ownerId: true, status: true },
+        });
+        if (existing) {
+          if (existing.ownerId !== auth(request).id) {
+            return fail(reply, 403, 'This deck ID belongs to another user');
+          }
+          return fail(reply, 409, 'A deck with this ID already exists; upload a new version to that deck');
+        }
+      } else {
+        // Fallback: title-based duplicate check when no client ID
+        const duplicate = await prisma.deck.findFirst({
+          where: { ownerId: auth(request).id, title },
+          select: { id: true, status: true },
+        });
+        if (duplicate) {
+          return fail(reply, 409,
+            duplicate.status === 'DISABLED'
+              ? 'A disabled deck with this title already exists; re-list it or permanently delete it before creating a new deck'
+              : 'A deck with this title already exists; upload a new version to that deck'
+          );
+        }
       }
 
       const deck = await prisma.deck.create({
-        data: { ownerId: auth(request).id, title, description, category: '' },
+        data: { ...(data.id ? { id: data.id } : {}), ownerId: auth(request).id, title, description, category: '' },
       });
 
       try {
@@ -146,5 +176,18 @@ export default async function myDecksRoutes(
     } finally {
       await fsp.rm(upload!.tempPath, { force: true });
     }
+  });
+
+  // PATCH /api/v1/my-decks/:id/unpublish - Take down a published deck (owner only)
+  app.patch('/api/v1/my-decks/:id/unpublish', { preHandler: requireAuth }, async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const deck = await prisma.deck.findFirst({ where: { id, ownerId: auth(request).id } });
+    if (!deck) return fail(reply, 404, 'Deck not found');
+    if (deck.status !== 'PUBLISHED') return fail(reply, 409, 'Only published decks can be unpublished');
+    await prisma.deck.update({ where: { id }, data: { status: 'DRAFT' } });
+    await prisma.auditLog.create({
+      data: { userId: auth(request).id, action: 'deck.unpublish', targetId: id, metadata: { title: deck.title } },
+    });
+    return { id, status: 'DRAFT' };
   });
 }

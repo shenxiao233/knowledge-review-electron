@@ -340,7 +340,9 @@ function createDeckPackage(payload) {
 async function uploadMarketDeck(payload) {
   const zip = createDeckPackage(payload);
   const form = new FormData();
-  form.append('metadata', JSON.stringify({ title: payload.title, description: payload.description }));
+  const meta = { title: payload.title, description: payload.description };
+  if (!payload.deckId && payload.localDeckId) meta.id = payload.localDeckId;
+  form.append('metadata', JSON.stringify(meta));
   form.append('package', new Blob([zip], { type: 'application/zip' }), 'deck.zip');
   const endpoint = payload.deckId ? `/my-decks/${encodeURIComponent(payload.deckId)}/versions` : '/my-decks';
   const response = await fetch(marketUrl(payload.baseUrl, endpoint), { method: 'POST', headers: { Authorization: `Bearer ${payload.token || ''}` }, body: form });

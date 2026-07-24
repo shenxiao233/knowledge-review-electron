@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 import AdmZip from 'adm-zip';
 import crypto from 'node:crypto';
@@ -15,8 +15,6 @@ import { deckStoragePath, storedPackagePath, listFiles, storageRelative } from '
 import { fail } from '../utils/response.js';
 import { RateLimiter } from '../plugins/rate-limit.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
-
-const prisma = new PrismaClient();
 
 export class DeckService {
   constructor(private rateLimiter: RateLimiter) {}

@@ -33,13 +33,40 @@ const DAY = 86400000;
 const $ = (q) => document.querySelector(q);
 const $$ = (q) => [...document.querySelectorAll(q)];
 const id = (prefix) => `${prefix}-${crypto.randomUUID()}`;
+function getDeckUid(group) {
+  const ids = state.profile.deckIds || (state.profile.deckIds = {});
+  if (!ids[group]) { ids[group] = crypto.randomUUID(); schedulePersistentSave(); }
+  return ids[group];
+}
 const today = () => dateKey(new Date());
 const dateKey = (date) => {
   const d = new Date(date);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
-const formatDate = (value) => new Date(value).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+const formatDate = (value) => { const d = new Date(value); if (isNaN(d.getTime())) return '未知'; return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }); };
+const formatDateTime = (value) => { const d = new Date(value); if (isNaN(d.getTime())) return '未知'; const pad = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+// Reusable input dialog — replaces window.prompt which is disabled in Electron.
+function openInputDialog(title, label, defaultValue = '') {
+  return new Promise((resolve) => {
+    let dlg = document.getElementById('globalInputDialog');
+    if (dlg) dlg.remove();
+    dlg = document.createElement('dialog');
+    dlg.id = 'globalInputDialog';
+    dlg.className = 'modal password-change-modal';
+    dlg.innerHTML = `<form method="dialog" class="modal-card password-change-card" id="globalInputDialogForm"><div class="modal-header"><div><span class="modal-eyebrow">INPUT</span><h2>${esc(title)}</h2></div><button type="button" id="globalInputDialogClose" class="dialog-close" title="关闭"><svg><use href="#i-x"/></svg></button></div><div class="password-fields"><label>${esc(label)}<input id="globalInputDialogInput" type="text" value="${esc(defaultValue)}" placeholder="${esc(defaultValue || '')}" /></label></div><menu><button type="button" id="globalInputDialogCancel">取消</button><button type="button" class="primary" id="globalInputDialogOk">确定</button></menu></form>`;
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    const input = dlg.querySelector('#globalInputDialogInput');
+    if (input) { input.focus(); input.select(); }
+    const cleanup = () => { dlg.close(); dlg.remove(); };
+    dlg.querySelector('#globalInputDialogClose')?.addEventListener('click', () => { cleanup(); resolve(null); });
+    dlg.querySelector('#globalInputDialogCancel')?.addEventListener('click', () => { cleanup(); resolve(null); });
+    dlg.querySelector('#globalInputDialogOk')?.addEventListener('click', (e) => { e.preventDefault(); const val = (input?.value || '').trim(); cleanup(); resolve(val); });
+    dlg.querySelector('#globalInputDialogForm')?.addEventListener('submit', (e) => { e.preventDefault(); const val = (input?.value || '').trim(); cleanup(); resolve(val); });
+    dlg.addEventListener('close', () => { if (document.body.contains(dlg)) { dlg.remove(); } resolve(null); });
+  });
+}
 const DEFAULT_MARKET_API_BASE = 'http://127.0.0.1:4100/api/v1';
 const MARKET_SERVER_KEY_PREFIX = 'KR1.';
 function decodeMarketServerKey(value) {
@@ -136,8 +163,7 @@ const base = {
   selectedCardId: sampleCards[0].id,
   extractedText: '',
   groups: ['学习科学', '前端技术'],
-  trash: { documents: [], folders: [], cards: [] },
-  profile: { name: 'Knowledge Learner', bio: '正在整理和分享值得反复学习的知识。', avatar: '', myDecks: [], publishedGroups: {} }
+  profile: { name: 'Knowledge Learner', bio: '正在整理和分享值得反复学习的知识。', avatar: '', myDecks: [], publishedGroups: {}, deckIds: {} }
 };
 
 
@@ -161,7 +187,6 @@ let pendingCardOrder = null;
 let createMode = 'document';
 let renameTargetId = '';
 let actionTarget = null;
-let trashTab = 'documents';
 let heatmapMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
 let libraryMode = 'home';
 let documentQuery = '';
@@ -198,7 +223,7 @@ let marketPage = 1;
 let marketPageSize = 20;
 let marketTotal = 0;
 let marketTotalPages = 1;
-let adminActiveTab = 'overview';
+let adminActiveTab = 'users';
 let adminPage = { users: 1, decks: 1, audit: 1, invitations: 1 };
 let adminTotalPages = { users: 1, decks: 1, audit: 1, invitations: 1 };
 const adminPageSize = 8;
@@ -242,11 +267,15 @@ function normCard(card) {
   // BUG-05 fix: Skip FSRS migration for cards that already have valid FSRS state
   const hasValidFsrs = normalized.fsrs && normalized.fsrs.due && normalized.fsrs.state && typeof normalized.fsrs.stability === 'number';
   if (!hasValidFsrs) {
-    normalized.fsrs = window.knowledgeFSRS.migrate(normalized);
+    if (window.knowledgeFSRS) {
+      normalized.fsrs = window.knowledgeFSRS.migrate(normalized);
+    } else {
+      normalized.fsrs = normalized.fsrs || { due: normalized.dueAt, state: 0, stability: 0, difficulty: 0, reps: normalized.reviews || 0, scheduledDays: normalized.interval || 1 };
+    }
   }
-  normalized.dueAt = normalized.fsrs.due;
-  normalized.interval = normalized.fsrs.scheduledDays;
-  normalized.reviews = normalized.fsrs.reps;
+  normalized.dueAt = normalized.fsrs?.due || normalized.dueAt;
+  normalized.interval = normalized.fsrs?.scheduledDays ?? normalized.interval ?? 1;
+  normalized.reviews = normalized.fsrs?.reps ?? normalized.reviews ?? 0;
   return normalized;
 }
 function ensureCardOrder(cards = []) {
@@ -261,7 +290,9 @@ function groupCards(folder) { return state.cards.filter((card) => (card.folder |
 function cardPosition(card) {
   if (cardPositionCache.has(card.id)) return cardPositionCache.get(card.id);
   const list = groupCards(card.folder || '未分组');
-  return Math.max(1, list.findIndex((item) => item.id === card.id) + 1);
+  const pos = Math.max(1, list.findIndex((item) => item.id === card.id) + 1);
+  cardPositionCache.set(card.id, pos);
+  return pos;
 }
 function reviewCount(card) { return Math.max(0, Number(card?.reviews ?? card?.fsrs?.reps ?? 0)); }
 function reviewCountLabel(card) { return `复习 ${reviewCount(card)} 次`; }

@@ -1,10 +1,10 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { ClientInputError } from '../utils/errors.js';
 
-const prisma = new PrismaClient();
-type InvitationDb = PrismaClient | Prisma.TransactionClient;
+type InvitationDb = Prisma.TransactionClient;
 
 export class InvitationService {
   /**

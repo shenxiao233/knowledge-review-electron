@@ -1,7 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { config } from '../config.js';
-
-const prisma = new PrismaClient();
 
 export class AuditService {
   private timer: NodeJS.Timeout | null = null;

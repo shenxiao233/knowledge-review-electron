@@ -2,7 +2,7 @@
  * kr-ui.js - View switching, event binding, UI utilities, WebDAV, keydown
  * Dependencies: All other modules
  * Provides: bind, enhanceSelectsPortal, syncCustomSelect, ensureToolbarPalettes,
- *           confirmDeleteCardGroup, WebDAV backup functions,
+ *           deleteCardGroup, WebDAV backup functions,
  *           keydown handler, init
  */
 function toggleBatchCardMode() { batchCardMode = !batchCardMode; const button = $('#batchModeButton'); button?.classList.toggle('active', batchCardMode); button.textContent = batchCardMode ? '批量制卡中' : '批量制卡'; els.cardModal?.classList.toggle('batch-mode', batchCardMode); }
@@ -260,6 +260,7 @@ function bind() {
   $('#exportTopButton')?.addEventListener('click', () => openExport('all'));
   $('#exportSelectedButton')?.addEventListener('click', () => openExport('selected'));
   $('#exportFolderButton')?.addEventListener('click', () => openExport('folder'));
+  $('#dedupCardsButton')?.addEventListener('click', dedupCards);
   $('#webdavTestButton')?.addEventListener('click', testWebDav);
   $('#webdavSaveButton')?.addEventListener('click', saveWebDavConfig);
   $('#webdavSyncButton')?.addEventListener('click', syncWebDavNow);
@@ -280,11 +281,13 @@ function bind() {
   $('#selectAllCardsButton')?.addEventListener('click', toggleSelectAllCards);
   $('#clearCardSelectionButton')?.addEventListener('click', clearCardSelection);
   $('#bulkDeleteCardsButton')?.addEventListener('click', bulkDeleteCards);
+  $('#pushSelectedButton')?.addEventListener('click', pushSelectedCards);
   $('#toggleCardGroupsButton')?.addEventListener('click', toggleCardGroups);
   els.cardGroupRail?.addEventListener('click', handleCardGroupRailClick);
   $('#marketSearchInput')?.addEventListener('input', debounce(() => { marketQuery = $('#marketSearchInput').value.trim(); refreshMarketPage({ resetPage: true }); }, 300));
   $('#marketSortSelect')?.addEventListener('change', () => { marketSort = $('#marketSortSelect').value; refreshMarketPage({ resetPage: true }); });
   $('#marketGrid')?.addEventListener('click', handleMarketClick);
+  $('#marketCategoryBar')?.addEventListener('click', handleMarketClick);
   $('#marketPagination')?.addEventListener('click', (event) => { const button = event.target.closest('[data-market-page]'); if (!button || button.disabled) return; marketPage = Number(button.dataset.marketPage); refreshMarketPage(); });
   $('#marketAuthForm')?.addEventListener('submit', submitMarketAuth);
   $('#marketRegisterToggle')?.addEventListener('click', toggleMarketAuthMode);
@@ -309,7 +312,24 @@ function bind() {
   $('#closeProfileEditButton')?.addEventListener('click', () => $('#profileEditModal').close());
   $('#cancelProfileEditButton')?.addEventListener('click', () => $('#profileEditModal').close());
   $('#profileEditForm')?.addEventListener('submit', saveProfile);
+  $('#onboardingAvatarButton')?.addEventListener('click', () => $('#onboardingAvatarInput')?.click());
+  $('#onboardingAvatarInput')?.addEventListener('change', handleOnboardingAvatar);
+  $('#onboardingForm')?.addEventListener('submit', submitOnboarding);
   $('#profileDeckList')?.addEventListener('click', handleProfileDeckAction);
+  $('#profileDeckPagination')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-profile-deck-page]');
+    if (!button || button.disabled) return;
+    profileDeckPage = Number(button.dataset.profileDeckPage);
+    renderProfile();
+  });
+  $('#railUserAvatar')?.addEventListener('click', () => {
+    if (marketUnlocked) openMessages();
+    else view('profile');
+  });
+  $('#closeMessagesButton')?.addEventListener('click', () => $('#messagesModal').close());
+  document.querySelectorAll('.messages-tab').forEach((tab) => {
+    tab.addEventListener('click', () => switchMessagesTab(tab.dataset.messagesTab));
+  });
   $('#cancelDeleteGroupButton')?.addEventListener('click', () => { pendingCardOrder = null; $('#deleteGroupModal').close(); });
   $('#confirmDeleteGroupButton')?.addEventListener('click', confirmDeleteTarget);
   $('#closeGroupButton')?.addEventListener('click', () => $('#createGroupModal').close());
@@ -323,8 +343,6 @@ function bind() {
   $('#rootDropZone')?.addEventListener('dragover', (event) => { event.preventDefault(); event.currentTarget.classList.add('drag-over'); });
   $('#rootDropZone')?.addEventListener('dragleave', (event) => event.currentTarget.classList.remove('drag-over'));
   $('#rootDropZone')?.addEventListener('drop', rootDrop);
-  $('#emptyTrashButton')?.addEventListener('click', emptyTrash);
-  $$('.trash-tabs [data-trash-tab]').forEach((button) => button.addEventListener('click', () => { trashTab = button.dataset.trashTab; renderTrash(); }));
   $('#toggleOutlineButton')?.addEventListener('click', toggleOutline);
   $('#toggleReviewButton')?.addEventListener('click', toggleReview);
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => setting(button.dataset.setting)));
@@ -339,8 +357,7 @@ function bind() {
 }
 
 // Replace the native confirmation with the themed dialog when the card-library code calls it.
-function deleteCardGroup(group) { const cards = state.cards.filter((card) => card.folder === group); openDeleteConfirm('card-group', group, `删除卡组“${group}”？`, cards.length ? `该卡组包含 ${cards.length} 张卡片，删除后卡片会移入回收站。` : '该卡组没有卡片，删除后仍可在回收站中恢复。'); }
-function confirmDeleteCardGroup() { const modal = $('#deleteGroupModal'); const group = modal?.dataset.group; if (!group) return; const cards = state.cards.filter((card) => card.folder === group); state.trash.cards.push(...cards); state.cards = state.cards.filter((card) => card.folder !== group); state.groups = state.groups.filter((item) => item !== group); if (els.folderFilter.value === group) { els.folderFilter.value = '全部文件夹'; syncCustomSelect(els.folderFilter); } cards.forEach((card) => selectedCardIds.delete(card.id)); save(); modal.close(); refresh(); toast(`卡组“${group}”已移入回收站。`); }
+function deleteCardGroup(group) { const cards = state.cards.filter((card) => card.folder === group); openDeleteConfirm('card-group', group, `删除卡组“${group}”？`, cards.length ? `该卡组包含 ${cards.length} 张卡片，将随卡组永久删除，此操作无法撤销。` : '该卡组没有卡片，将被永久删除。'); }
 
 // Backup-only WebDAV mode: localStorage is the only data source and uploads are hourly.
 let webdavBackupTimer = null;

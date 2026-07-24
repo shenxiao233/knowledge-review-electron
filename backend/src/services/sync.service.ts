@@ -1,7 +1,6 @@
-import { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
-
-const prisma = new PrismaClient();
 
 export interface SyncRequest {
   objectType: string;
@@ -48,6 +47,7 @@ export class SyncService {
       });
 
       if (!existing) {
+        // CREATE: JsonNull is acceptable for a brand-new record (no prior data to wipe).
         const created = await tx.syncObject.create({
           data: {
             userId,
@@ -77,6 +77,7 @@ export class SyncService {
         };
       }
 
+      // Client is behind the server — return current server data so the client can merge.
       if (validated.objectVersion < existing.objectVersion) {
         return {
           objectType: validated.objectType,
@@ -88,33 +89,33 @@ export class SyncService {
         };
       }
 
-      if (validated.objectVersion > existing.objectVersion) {
-        return {
-          objectType: validated.objectType,
-          objectId: validated.objectId,
-          serverVersion: existing.objectVersion,
-          data: existing.data,
-          conflict: true,
-          resolution: 'CLIENT_AHEAD',
-        };
+      // Client version >= server version: accept the client's data and bump the version.
+      const newVersion = existing.objectVersion + 1;
+
+      // BUG-C3 fix: only overwrite `data` when the client actually provided it.
+      // A metadata-only update (data omitted) must NOT wipe the existing object data
+      // with Prisma.JsonNull.
+      const updateFields: any = {
+        objectVersion: newVersion,
+        metadata: validated.metadata,
+        lastModifiedBy: validated.deviceId,
+      };
+      if (validated.data !== undefined) {
+        updateFields.data = validated.data;
       }
 
-      const newVersion = existing.objectVersion + 1;
       await tx.syncObject.update({
         where: { id: existing.id },
-        data: {
-          objectVersion: newVersion,
-          data: syncData,
-          metadata: validated.metadata,
-          lastModifiedBy: validated.deviceId,
-        },
+        data: updateFields,
       });
 
+      // History record: preserve existing data when the client omitted `data`,
+      // so the version snapshot reflects the object's actual state.
       await tx.syncObjectHistory.create({
         data: {
           syncObjectId: existing.id,
           version: newVersion,
-          data: syncData,
+          data: validated.data !== undefined ? validated.data : existing.data,
           modifiedBy: validated.deviceId,
         },
       });

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -11,8 +11,6 @@ import { storedPackagePath } from '../utils/storage.js';
 import { fail } from '../utils/response.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 import { ClientInputError } from '../utils/errors.js';
-
-const prisma = new PrismaClient();
 
 export default async function deckRoutes(
   app: FastifyInstance,
@@ -60,7 +58,7 @@ export default async function deckRoutes(
         publishedVersion: true,
         createdAt: true,
         updatedAt: true,
-        owner: { select: { username: true } },
+        owner: { select: { username: true, nickname: true } },
         versions: {
           where: { status: 'PUBLISHED' },
           orderBy: { version: 'desc' },
@@ -91,7 +89,7 @@ export default async function deckRoutes(
     const deck = await prisma.deck.findFirst({
       where: { id, status: 'PUBLISHED' },
       include: {
-        owner: { select: { username: true } },
+        owner: { select: { username: true, nickname: true } },
         versions: {
           where: { status: 'PUBLISHED' },
           orderBy: { version: 'desc' },
@@ -106,7 +104,7 @@ export default async function deckRoutes(
       title: deck.title,
       description: deck.description,
       category: deck.category,
-      author: deck.owner.username,
+      author: deck.owner.nickname || deck.owner.username,
       version: deck.versions[0]?.version ?? 0,
       manifest: deck.versions[0]?.manifest,
       downloadCount: deck._count.downloads,

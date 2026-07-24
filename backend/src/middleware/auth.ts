@@ -1,9 +1,7 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { UserRole } from '@prisma/client';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { fail } from '../utils/response.js';
-
-const prisma = new PrismaClient();
 
 export type AuthRequest = FastifyRequest & { 
   user: { id: string; username: string; role: UserRole; iat?: number }

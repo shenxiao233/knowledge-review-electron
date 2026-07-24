@@ -29,7 +29,7 @@ import invitationRoutes from './routes/invitation.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import collabRoutes from './routes/collab.routes.js';
 
-const app = Fastify({ logger: true, bodyLimit: 300 * 1024 * 1024 });
+const app = Fastify({ logger: true, bodyLimit: 300 * 1024 * 1024, trustProxy: config.trustProxy });
 
 await fsp.mkdir(config.storageDir, { recursive: true });
 
@@ -74,7 +74,7 @@ await app.register(socialRoutes);
 
 // V2 routes
 await app.register(userRoutes, { userService });
-await app.register(invitationRoutes, { invitationService });
+await app.register(invitationRoutes, { invitationService, rateLimiter });
 await app.register(syncRoutes, { syncService });
 await app.register(collabRoutes, { collabService });
 
@@ -93,8 +93,12 @@ app.setErrorHandler((error, request, reply) => {
   if (error && typeof error === 'object' && 'code' in error && error.code === 'P2025') {
     return fail(reply, 404, 'Record not found');
   }
-  return fail(reply, error instanceof z.ZodError ? 400 : 500,
-    error instanceof z.ZodError ? 'Invalid request' : 'Internal server error');
+  if (error instanceof z.ZodError) {
+    const firstIssue = error.issues[0];
+    const message = firstIssue ? `${firstIssue.path.join('.')}: ${firstIssue.message}` : 'Invalid request';
+    return fail(reply, 400, message);
+  }
+  return fail(reply, 500, 'Internal server error');
 });
 
 await app.listen({ host: config.host, port: config.port });

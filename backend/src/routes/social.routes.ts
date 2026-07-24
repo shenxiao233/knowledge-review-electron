@@ -1,10 +1,8 @@
 import type { FastifyInstance } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 import { requireAuth, auth } from '../middleware/auth.js';
 import { fail } from '../utils/response.js';
-
-const prisma = new PrismaClient();
 
 export default async function socialRoutes(app: FastifyInstance) {
 

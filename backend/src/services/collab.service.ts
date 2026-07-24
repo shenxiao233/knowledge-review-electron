@@ -1,457 +1,326 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
-import { ForbiddenError } from '../utils/errors.js';
-
-const prisma = new PrismaClient();
+import AdmZip from 'adm-zip';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import path from 'node:path';
+import { config } from '../config.js';
+import { storedPackagePath } from '../utils/storage.js';
+import { sha256 } from '../utils/crypto.js';
+import { ClientInputError, ForbiddenError } from '../utils/errors.js';
 
 export class CollabService {
-  private async assertPullRequestAccess(userId: string, pullRequestId: string) {
-    const pr = await prisma.deckPullRequest.findUnique({
-      where: { id: pullRequestId },
-      select: {
-        createdById: true,
-        sourceDeck: { select: { id: true, ownerId: true } },
-        targetDeck: { select: { id: true, ownerId: true } },
-      },
-    });
-    if (!pr) throw new Error('Pull request not found');
-    if (pr.createdById === userId || pr.sourceDeck.ownerId === userId || pr.targetDeck.ownerId === userId) return;
-
-    const collaboration = await prisma.deckCollaborator.findFirst({
-      where: {
-        userId,
-        acceptedAt: { not: null },
-        deckId: { in: [pr.sourceDeck.id, pr.targetDeck.id] },
-      },
-      select: { id: true },
-    });
-    if (!collaboration) throw new ForbiddenError('You are not authorized to access this pull request');
-  }
-
   /**
-   * Fork a deck
+   * Push a card contribution to a published deck.
+   * Any authenticated user can push — the deck owner reviews the card.
    */
-  async forkDeck(userId: string, sourceDeckId: string, newTitle?: string) {
-    const sourceDeck = await prisma.deck.findUnique({
-      where: { id: sourceDeckId },
-      include: {
-        owner: { select: { username: true } },
-        versions: {
-          where: { status: 'PUBLISHED' },
-          orderBy: { version: 'desc' },
-          take: 1,
-        },
-      },
-    });
-
-    if (!sourceDeck) throw new Error('Source deck not found');
-    if (sourceDeck.status !== 'PUBLISHED') throw new Error('Only published decks can be forked');
-    if (!sourceDeck.isForkable) throw new Error('This deck cannot be forked');
-
-    const forkTitle = newTitle || `${sourceDeck.title} (Fork)`;
-
-    // Create forked deck
-    const forkedDeck = await prisma.deck.create({
-      data: {
-        ownerId: userId,
-        title: forkTitle,
-        description: sourceDeck.description,
-        category: sourceDeck.category,
-        status: 'DRAFT',
-        isForkable: true,
-        forkedFromId: sourceDeckId,
-      },
-    });
-
-    // Create fork record
-    await prisma.deckFork.create({
-      data: {
-        sourceDeckId,
-        forkedDeckId: forkedDeck.id,
-        forkedById: userId,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'deck.fork',
-        targetId: forkedDeck.id,
-        metadata: { sourceDeckId },
-      },
-    });
-
-    return forkedDeck;
-  }
-
-  /**
-   * Create a commit on a forked deck
-   */
-  async createCommit(userId: string, deckId: string, message: string, changes: any) {
-    const deck = await prisma.deck.findUnique({
-      where: { id: deckId, ownerId: userId },
-    });
-
-    if (!deck) throw new Error('Deck not found or you are not the owner');
-
-    const validated = z.object({
-      message: z.string().min(1).max(500),
-      changes: z.any(),
-    }).parse({ message, changes });
-
-    const commit = await prisma.deckCommit.create({
-      data: {
-        deckId,
-        authorId: userId,
-        message: validated.message,
-        changes: validated.changes,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'deck.commit',
-        targetId: commit.id,
-        metadata: { deckId },
-      },
-    });
-
-    return commit;
-  }
-
-  /**
-   * Create a pull request
-   */
-  async createPullRequest(userId: string, data: {
-    sourceDeckId: string;
-    targetDeckId: string;
-    title: string;
-    description: string;
+  async pushCard(userId: string, deckId: string, data: {
+    action: string;
+    cardId: string;
+    cardData: unknown;
   }) {
     const validated = z.object({
-      sourceDeckId: z.string().uuid(),
-      targetDeckId: z.string().uuid(),
-      title: z.string().min(1).max(200),
-      description: z.string().max(2000),
+      action: z.enum(['ADD', 'MODIFY']),
+      cardId: z.string().min(1).max(100),
+      cardData: z.record(z.string(), z.any()),
     }).parse(data);
 
-    if (validated.sourceDeckId === validated.targetDeckId) {
-      throw new Error('Source and target decks must be different');
+    const deck = await prisma.deck.findUnique({
+      where: { id: deckId },
+      select: { id: true, ownerId: true, status: true, publishedVersion: true },
+    });
+    if (!deck) throw new ClientInputError('Deck not found');
+    if (deck.status !== 'PUBLISHED') throw new ClientInputError('Only published decks accept card contributions');
+
+    // For MODIFY, verify the card exists in the current published version.
+    if (validated.action === 'MODIFY') {
+      const version = await prisma.deckVersion.findFirst({
+        where: { deckId, status: 'PUBLISHED' },
+        orderBy: { version: 'desc' },
+        select: { packagePath: true },
+      });
+      if (!version) throw new ClientInputError('Deck has no published version');
+      const cards = await this.readCardsFromPackage(storedPackagePath(version.packagePath));
+      if (!cards.some((c: any) => String(c.id ?? c.cardId ?? '') === validated.cardId)) {
+        throw new ClientInputError(`Card "${validated.cardId}" not found in this deck — use ADD instead`);
+      }
     }
 
-    // Verify source deck is owned by user
-    const sourceDeck = await prisma.deck.findUnique({
-      where: { id: validated.sourceDeckId, ownerId: userId },
+    // Prevent duplicate pending contributions for the same card by the same user.
+    const existing = await prisma.cardContribution.findFirst({
+      where: { deckId, contributorId: userId, cardId: validated.cardId, status: 'PENDING' },
+      select: { id: true },
     });
-    if (!sourceDeck) throw new Error('Source deck not found or you are not the owner');
+    if (existing) throw new ClientInputError('You already have a pending contribution for this card');
 
-    // Verify target deck exists
-    const targetDeck = await prisma.deck.findUnique({
-      where: { id: validated.targetDeckId },
-    });
-    if (!targetDeck) throw new Error('Target deck not found');
-    if (targetDeck.status === 'DISABLED') throw new Error('Disabled decks cannot receive pull requests');
-
-    const pr = await prisma.deckPullRequest.create({
+    const contribution = await prisma.cardContribution.create({
       data: {
-        sourceDeckId: validated.sourceDeckId,
-        targetDeckId: validated.targetDeckId,
-        title: validated.title,
-        description: validated.description,
-        createdById: userId,
-        status: 'OPEN',
+        deckId,
+        contributorId: userId,
+        action: validated.action,
+        cardId: validated.cardId,
+        cardData: validated.cardData,
+        status: 'PENDING',
       },
     });
 
     await prisma.auditLog.create({
       data: {
         userId,
-        action: 'deck.pr.create',
-        targetId: pr.id,
-        metadata: { sourceDeckId: validated.sourceDeckId, targetDeckId: validated.targetDeckId },
+        action: 'card.push',
+        targetId: contribution.id,
+        metadata: { deckId, cardId: validated.cardId, action: validated.action },
       },
     });
 
-    return pr;
+    return contribution;
   }
 
   /**
-   * Review a pull request
+   * List card contributions for a deck.
+   * The deck owner sees all; other users see only their own.
    */
-  async reviewPullRequest(userId: string, pullRequestId: string, decision: string, comment?: string) {
-    const validated = z.object({
-      decision: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'COMMENTED']),
-      comment: z.string().max(2000).optional(),
-    }).parse({ decision, comment });
-
-    const pr = await prisma.deckPullRequest.findUnique({
-      where: { id: pullRequestId },
-      include: { targetDeck: { select: { ownerId: true } } },
-    });
-
-    if (!pr) throw new Error('Pull request not found');
-    if (pr.status !== 'OPEN') throw new Error('Pull request is not open');
-
-    // Only target deck owner or collaborators can review
-    const isTargetOwner = pr.targetDeck.ownerId === userId;
-    const isCollaborator = await prisma.deckCollaborator.findFirst({
-      where: { deckId: pr.targetDeckId, userId, acceptedAt: { not: null } },
-    });
-
-    if (!isTargetOwner && !isCollaborator) {
-      throw new Error('You are not authorized to review this pull request');
-    }
-
-    const review = await prisma.deckPRReview.create({
-      data: {
-        pullRequestId,
-        reviewerId: userId,
-        decision: validated.decision,
-        comment: validated.comment,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'deck.pr.review',
-        targetId: review.id,
-        metadata: { pullRequestId, decision: validated.decision },
-      },
-    });
-
-    return review;
-  }
-
-  /**
-   * Merge a pull request (target deck owner only)
-   */
-  async mergePullRequest(userId: string, pullRequestId: string) {
-    const pr = await prisma.deckPullRequest.findUnique({
-      where: { id: pullRequestId },
-      include: {
-        targetDeck: { select: { ownerId: true } },
-        sourceDeck: { select: { id: true, title: true } },
-      },
-    });
-
-    if (!pr) throw new Error('Pull request not found');
-    if (pr.status !== 'OPEN') throw new Error('Pull request is not open');
-    if (pr.targetDeck.ownerId !== userId) {
-      throw new Error('Only the target deck owner can merge this pull request');
-    }
-
-    // Check if approved
-    const reviews = await prisma.deckPRReview.findMany({
-      where: { pullRequestId },
-    });
-    const hasApproval = reviews.some((r) => r.decision === 'APPROVED');
-
-    if (!hasApproval) {
-      throw new Error('Pull request must be approved before merging');
-    }
-
-    // Merge the PR
-    const merged = await prisma.deckPullRequest.update({
-      where: { id: pullRequestId },
-      data: {
-        status: 'MERGED',
-        mergedById: userId,
-        mergedAt: new Date(),
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'deck.pr.merge',
-        targetId: pullRequestId,
-        metadata: { sourceDeckId: pr.sourceDeckId, targetDeckId: pr.targetDeckId },
-      },
-    });
-
-    return merged;
-  }
-
-  /**
-   * Close a pull request
-   */
-  async closePullRequest(userId: string, pullRequestId: string) {
-    const pr = await prisma.deckPullRequest.findUnique({
-      where: { id: pullRequestId },
-    });
-
-    if (!pr) throw new Error('Pull request not found');
-    if (pr.status !== 'OPEN') throw new Error('Pull request is not open');
-    if (pr.createdById !== userId) {
-      throw new Error('Only the PR creator can close it');
-    }
-
-    const closed = await prisma.deckPullRequest.update({
-      where: { id: pullRequestId },
-      data: {
-        status: 'CLOSED',
-        closedAt: new Date(),
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: { userId, action: 'deck.pr.close', targetId: pullRequestId },
-    });
-
-    return closed;
-  }
-
-  /**
-   * Add a comment to a pull request
-   */
-  async addPRComment(userId: string, pullRequestId: string, content: string) {
-    const validated = z.object({
-      content: z.string().min(1).max(2000),
-    }).parse({ content });
-
-    await this.assertPullRequestAccess(userId, pullRequestId);
-    const pr = await prisma.deckPullRequest.findUnique({ where: { id: pullRequestId } });
-
-    if (!pr) throw new Error('Pull request not found');
-    if (pr.status !== 'OPEN') throw new Error('Pull request is not open');
-
-    const comment = await prisma.deckPRComment.create({
-      data: {
-        pullRequestId,
-        authorId: userId,
-        content: validated.content,
-      },
-    });
-
-    await prisma.auditLog.create({
-      data: { userId, action: 'deck.pr.comment', targetId: comment.id, metadata: { pullRequestId } },
-    });
-
-    return comment;
-  }
-
-  /**
-   * Get pull request with all details
-   */
-  async getPullRequest(userId: string, pullRequestId: string) {
-    await this.assertPullRequestAccess(userId, pullRequestId);
-    return prisma.deckPullRequest.findUnique({
-      where: { id: pullRequestId },
-      include: {
-        sourceDeck: { select: { id: true, title: true, owner: { select: { username: true } } } },
-        targetDeck: { select: { id: true, title: true, owner: { select: { username: true } } } },
-        createdBy: { select: { username: true } },
-        reviews: {
-          include: { reviewer: { select: { username: true } } },
-          orderBy: { createdAt: 'desc' },
-        },
-        comments: {
-          include: { author: { select: { username: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
-  }
-
-  /**
-   * List pull requests for a deck
-   */
-  async listPullRequests(userId: string, deckId: string, status?: string) {
+  async listContributions(userId: string, deckId: string, status?: string) {
     const deck = await prisma.deck.findUnique({
       where: { id: deckId },
       select: { ownerId: true },
     });
-    if (!deck) throw new Error('Deck not found');
-    if (deck.ownerId !== userId) {
-      const collaborator = await prisma.deckCollaborator.findFirst({
-        where: { deckId, userId, acceptedAt: { not: null } },
-        select: { id: true },
-      });
-      if (!collaborator) throw new ForbiddenError('You are not authorized to access this deck');
-    }
-    const where: any = {
-      OR: [
-        { sourceDeckId: deckId },
-        { targetDeckId: deckId },
-      ],
-    };
-    if (status) where.status = status;
+    if (!deck) throw new ClientInputError('Deck not found');
 
-    return prisma.deckPullRequest.findMany({
+    const where: any = { deckId };
+    if (status) where.status = status;
+    if (deck.ownerId !== userId) where.contributorId = userId;
+
+    return prisma.cardContribution.findMany({
       where,
       include: {
-        createdBy: { select: { username: true } },
-        _count: { select: { reviews: true, comments: true } },
+        contributor: { select: { id: true, username: true, nickname: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
   }
 
   /**
-   * Invite a collaborator to a deck
+   * List all contributions by the current user across all decks.
+   * Used for the "My Messages" feature — shows push status and review opinions.
    */
-  async inviteCollaborator(userId: string, deckId: string, collaboratorId: string, role = 'editor') {
-    const deck = await prisma.deck.findUnique({
-      where: { id: deckId, ownerId: userId },
+  async listMyContributions(userId: string) {
+    return prisma.cardContribution.findMany({
+      where: { contributorId: userId },
+      include: {
+        deck: { select: { id: true, title: true, ownerId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
     });
+  }
 
-    if (!deck) throw new Error('Deck not found or you are not the owner');
+  /**
+   * List all contributions for decks owned by the current user (incoming review requests).
+   */
+  async listIncomingContributions(userId: string) {
+    const deckIds = (await prisma.deck.findMany({
+      where: { ownerId: userId },
+      select: { id: true },
+    })).map((d) => d.id);
+    if (!deckIds.length) return [];
+    return prisma.cardContribution.findMany({
+      where: { deckId: { in: deckIds } },
+      include: {
+        deck: { select: { id: true, title: true } },
+        contributor: { select: { id: true, username: true, nickname: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+  }
 
-    const collaborator = await prisma.deckCollaborator.create({
+  /**
+   * Get a single contribution's details.
+   * Only the deck owner or the contributor can view.
+   */
+  async getContribution(userId: string, contributionId: string) {
+    const contribution = await prisma.cardContribution.findUnique({
+      where: { id: contributionId },
+      include: {
+        deck: { select: { ownerId: true, title: true } },
+        contributor: { select: { id: true, username: true, nickname: true } },
+      },
+    });
+    if (!contribution) throw new ClientInputError('Contribution not found');
+
+    if (contribution.deck.ownerId !== userId && contribution.contributorId !== userId) {
+      throw new ForbiddenError('You are not authorized to view this contribution');
+    }
+    return contribution;
+  }
+
+  /**
+   * Review a card contribution (approve or reject).
+   * Only the deck owner can review. On approval, the card is merged into the
+   * deck's latest published version ZIP in place.
+   */
+  async reviewContribution(userId: string, contributionId: string, decision: string, note?: string, editedCardData?: unknown) {
+    const validated = z.object({
+      decision: z.enum(['APPROVED', 'REJECTED']),
+      note: z.string().max(2000).optional(),
+      editedCardData: z.record(z.string(), z.any()).optional(),
+    }).parse({ decision, note, editedCardData });
+
+    const contribution = await prisma.cardContribution.findUnique({
+      where: { id: contributionId },
+      include: { deck: { select: { id: true, ownerId: true, title: true } } },
+    });
+    if (!contribution) throw new ClientInputError('Contribution not found');
+    if (contribution.deck.ownerId !== userId) {
+      throw new ForbiddenError('Only the deck owner can review contributions');
+    }
+    if (contribution.status !== 'PENDING') {
+      throw new ClientInputError('This contribution has already been reviewed');
+    }
+
+    // If approved, merge the card into the ZIP in place.
+    // Use editedCardData if the owner modified the card during review.
+    if (validated.decision === 'APPROVED') {
+      const dataToMerge = validated.editedCardData || contribution.cardData;
+      await this.mergeCardIntoDeck({
+        ...contribution,
+        cardData: dataToMerge,
+      });
+    }
+
+    const updated = await prisma.cardContribution.update({
+      where: { id: contributionId },
       data: {
-        deckId,
-        userId: collaboratorId,
-        role,
+        status: validated.decision,
+        reviewerId: userId,
+        reviewedAt: new Date(),
+        reviewNote: validated.note,
       },
     });
 
     await prisma.auditLog.create({
       data: {
         userId,
-        action: 'deck.collaborator.invite',
-        targetId: collaborator.id,
-        metadata: { deckId, collaboratorId, role },
+        action: 'card.review',
+        targetId: contributionId,
+        metadata: {
+          deckId: contribution.deckId,
+          cardId: contribution.cardId,
+          decision: validated.decision,
+        },
       },
     });
 
-    return collaborator;
+    return updated;
+  }
+
+  // ─── Private helpers ───
+
+  /**
+   * Read and parse cards.json from a ZIP package on disk.
+   */
+  private async readCardsFromPackage(packagePath: string): Promise<any[]> {
+    const zip = new AdmZip(packagePath);
+    const cardsEntry = zip.getEntry('cards.json');
+    if (!cardsEntry) throw new ClientInputError('Package missing cards.json');
+    const cards = JSON.parse(cardsEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
+    if (!Array.isArray(cards)) throw new ClientInputError('cards.json must contain an array');
+    return cards;
   }
 
   /**
-   * Accept collaboration invitation
+   * Merge an approved card contribution into the deck's latest published
+   * version ZIP, modifying the package in place.
+   *
+   * Uses a Postgres advisory lock on the deck to serialise concurrent
+   * merges so the ZIP is not corrupted by overlapping writes.
    */
-  async acceptCollaboration(userId: string, deckId: string) {
-    const collaborator = await prisma.deckCollaborator.update({
-      where: { deckId_userId: { deckId, userId } },
-      data: { acceptedAt: new Date() },
-    });
+  private async mergeCardIntoDeck(contribution: {
+    deckId: string;
+    action: string;
+    cardId: string;
+    cardData: any;
+  }) {
+    return prisma.$transaction(async (tx) => {
+      // Serialise concurrent merges on the same deck.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${contribution.deckId}))`;
 
-    return collaborator;
-  }
+      // Re-fetch the latest published version inside the lock.
+      const version = await tx.deckVersion.findFirst({
+        where: { deckId: contribution.deckId, status: 'PUBLISHED' },
+        orderBy: { version: 'desc' },
+        select: { id: true, packagePath: true, manifest: true },
+      });
+      if (!version) throw new ClientInputError('Deck has no published version to merge into');
 
-  /**
-   * Remove a collaborator
-   */
-  async removeCollaborator(userId: string, deckId: string, collaboratorId: string) {
-    const deck = await prisma.deck.findUnique({
-      where: { id: deckId, ownerId: userId },
-    });
+      const packagePath = storedPackagePath(version.packagePath);
+      try {
+        await fsp.access(packagePath, fs.constants.R_OK);
+      } catch {
+        throw new ClientInputError('Deck package is missing from server storage');
+      }
 
-    if (!deck) throw new Error('Deck not found or you are not the owner');
+      // Read current cards from the ZIP.
+      const zip = new AdmZip(packagePath);
+      const cardsEntry = zip.getEntry('cards.json');
+      if (!cardsEntry) throw new ClientInputError('Package missing cards.json');
+      const cards: any[] = JSON.parse(cardsEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
+      if (!Array.isArray(cards)) throw new ClientInputError('cards.json must contain an array');
 
-    await prisma.deckCollaborator.delete({
-      where: { deckId_userId: { deckId, userId: collaboratorId } },
-    });
+      // Apply the contribution.
+      let cardCountChanged = false;
+      if (contribution.action === 'ADD') {
+        // Avoid duplicate card IDs.
+        if (cards.some((c) => String(c.id ?? c.cardId ?? '') === contribution.cardId)) {
+          throw new ClientInputError(`Card "${contribution.cardId}" already exists in this deck`);
+        }
+        cards.push(contribution.cardData);
+        cardCountChanged = true;
+      } else {
+        // MODIFY — replace the matching card.
+        const idx = cards.findIndex((c) => String(c.id ?? c.cardId ?? '') === contribution.cardId);
+        if (idx === -1) throw new ClientInputError(`Card "${contribution.cardId}" not found in the deck`);
+        cards[idx] = contribution.cardData;
+      }
 
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action: 'deck.collaborator.remove',
-        targetId: collaboratorId,
-        metadata: { deckId },
-      },
+      // Write updated cards.json back into the ZIP.
+      const updatedCardsBuffer = Buffer.from(JSON.stringify(cards, null, 2), 'utf8');
+      zip.deleteFile('cards.json');
+      zip.addFile('cards.json', updatedCardsBuffer);
+
+      // Update manifest.json cardCount if it changed.
+      if (cardCountChanged) {
+        const manifestEntry = zip.getEntry('manifest.json');
+        if (manifestEntry) {
+          const manifest = JSON.parse(manifestEntry.getData().toString('utf8').replace(/^\uFEFF/, ''));
+          manifest.cardCount = cards.length;
+          const updatedManifestBuffer = Buffer.from(JSON.stringify(manifest, null, 2), 'utf8');
+          zip.deleteFile('manifest.json');
+          zip.addFile('manifest.json', updatedManifestBuffer);
+        }
+      }
+
+      // Write the ZIP back to disk (overwrites the original in place).
+      zip.writeZip(packagePath);
+
+      // Recalculate sha256 and file size, update the DeckVersion record.
+      const newHash = await sha256(packagePath);
+      const stat = await fsp.stat(packagePath);
+      await tx.deckVersion.update({
+        where: { id: version.id },
+        data: {
+          sha256: newHash,
+          packageSize: BigInt(stat.size),
+          manifest: { ...(version.manifest as any), cardCount: cards.length },
+        },
+      });
+
+      // Touch the parent Deck's updatedAt so the frontend shows the correct merge time.
+      await tx.deck.update({
+        where: { id: contribution.deckId },
+        data: { updatedAt: new Date() },
+      });
     });
   }
 }

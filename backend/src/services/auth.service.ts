@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
@@ -7,8 +7,6 @@ import { fail } from '../utils/response.js';
 import { RateLimiter } from '../plugins/rate-limit.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 import { InvitationService } from './invitation.service.js';
-
-const prisma = new PrismaClient();
 
 export class AuthService {
   private invitationService: InvitationService;
@@ -27,15 +25,12 @@ export class AuthService {
     
     const body = z.object({
       invitationCode: z.string().min(1),
-      accessKey: z.string().min(1),
+      accessKey: z.string().optional(),
       username: z.string().min(3).max(80).regex(/^[a-zA-Z0-9_-]+$/, 'Username may only contain letters, numbers, hyphens and underscores'),
       password: z.string().min(8).max(200)
     }).safeParse(request.body);
-    
+
     if (!body.success) return fail(reply, 400, 'Invalid registration data');
-    if (body.data.accessKey !== config.marketAccessKey) {
-      return fail(reply, 401, 'Invalid server key');
-    }
     
     if (!await this.rateLimiter.consume(
       reply, 
@@ -97,15 +92,12 @@ export class AuthService {
     }
     
     const body = z.object({
-      accessKey: z.string().min(1),
+      accessKey: z.string().optional(),
       username: z.string().min(3).max(80).regex(/^[a-zA-Z0-9_-]+$/, 'Username may only contain letters, numbers, hyphens and underscores'),
       password: z.string().min(8).max(200)
     }).safeParse(request.body);
-    
+
     if (!body.success) return fail(reply, 400, 'Invalid registration data');
-    if (body.data.accessKey !== config.marketAccessKey) {
-      return fail(reply, 401, 'Invalid server key');
-    }
     
     if (!await this.rateLimiter.consume(
       reply, 
@@ -136,29 +128,29 @@ export class AuthService {
   }
   
   async login(request: FastifyRequest, reply: FastifyReply) {
-    const body = z.object({ 
-      accessKey: z.string().min(1), 
-      username: z.string().min(1), 
-      password: z.string().min(1) 
+    const body = z.object({
+      accessKey: z.string().optional(),
+      username: z.string().min(1),
+      password: z.string().min(1)
     }).safeParse(request.body);
-    
+
     const username = body.success ? body.data.username.trim().toLowerCase() : '';
-    
+
     if (!await this.rateLimiter.consume(
-      reply, 
-      requestRateLimitKey(request, 'login-ip'), 
-      config.loginRateLimitMax, 
+      reply,
+      requestRateLimitKey(request, 'login-ip'),
+      config.loginRateLimitMax,
       config.loginRateLimitWindowSeconds * 1000
     )) return;
-    
+
     if (username && !await this.rateLimiter.consume(
-      reply, 
-      requestRateLimitKey(request, 'login-account', username), 
-      config.loginRateLimitMax, 
+      reply,
+      requestRateLimitKey(request, 'login-account', username),
+      config.loginRateLimitMax,
       config.loginRateLimitWindowSeconds * 1000
     )) return;
-    
-    if (!body.success || body.data.accessKey !== config.marketAccessKey) {
+
+    if (!body.success) {
       return fail(reply, 401, 'Invalid market credentials');
     }
     

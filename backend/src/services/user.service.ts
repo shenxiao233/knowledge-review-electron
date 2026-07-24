@@ -1,10 +1,8 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { fail } from '../utils/response.js';
-
-const prisma = new PrismaClient();
 
 export class UserService {
   /**
@@ -38,7 +36,7 @@ export class UserService {
   }) {
     const validated = z.object({
       nickname: z.string().min(1).max(100),
-      avatar: z.string().max(500).optional(),
+      avatar: z.string().max(3000000).optional(),
       bio: z.string().max(1000).optional(),
       email: z.string().email().max(255).optional(),
     }).parse(data);
@@ -79,7 +77,7 @@ export class UserService {
   }) {
     const validated = z.object({
       nickname: z.string().min(1).max(100).optional(),
-      avatar: z.string().max(500).optional(),
+      avatar: z.string().max(3000000).optional(),
       bio: z.string().max(1000).optional(),
       email: z.string().email().max(255).optional(),
     }).parse(data);

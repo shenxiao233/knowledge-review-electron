@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
 import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
@@ -12,8 +12,6 @@ import { deckStoragePath, storageRelative, storedPackagePath } from '../utils/st
 import { normalizeCategoryName, dateFromQuery, sanitizeBigInt } from '../utils/helpers.js';
 import { fail } from '../utils/response.js';
 import { ClientInputError } from '../utils/errors.js';
-
-const prisma = new PrismaClient();
 
 export default async function adminRoutes(
   app: FastifyInstance,
@@ -32,6 +30,7 @@ export default async function adminRoutes(
       select: {
         id: true, username: true, role: true, enabled: true,
         createdAt: true, lastLoginAt: true,
+        nickname: true, avatar: true,
       },
       orderBy: { createdAt: 'desc' },
       ...(query.page ? { skip: (query.page - 1) * query.pageSize, take: query.pageSize } : {}),
@@ -93,6 +92,53 @@ export default async function adminRoutes(
     return user;
   });
 
+  // DELETE /api/v1/admin/users/:id - Delete user
+  app.delete('/api/v1/admin/users/:id', { preHandler: requireAdmin }, async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+
+    if (id === auth(request).id) return fail(reply, 400, 'Cannot delete your own account');
+
+    const target = await prisma.user.findUnique({ where: { id }, select: { id: true, role: true } });
+    if (!target) return fail(reply, 404, 'User not found');
+
+    // Prevent deleting the last admin
+    if (target.role === 'ADMIN') {
+      const adminCount = await prisma.user.count({ where: { role: 'ADMIN', enabled: true } });
+      if (adminCount <= 1) return fail(reply, 400, 'Cannot delete the last admin account');
+    }
+
+    await prisma.user.delete({ where: { id } });
+
+    await prisma.auditLog.create({
+      data: { userId: auth(request).id, action: 'admin.user.delete', targetId: id },
+    });
+
+    return { deleted: true, id };
+  });
+
+  // POST /api/v1/admin/users/:id/reset-password - Admin resets a user's password
+  app.post('/api/v1/admin/users/:id/reset-password', { preHandler: requireAdmin }, async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({
+      newPassword: z.string().min(8).max(200),
+    }).parse(request.body);
+
+    const target = await prisma.user.findUnique({ where: { id }, select: { id: true, username: true } });
+    if (!target) return fail(reply, 404, 'User not found');
+
+    const passwordHash = await argon2.hash(body.newPassword);
+    await prisma.user.update({
+      where: { id },
+      data: { passwordHash, passwordChangedAt: new Date() },
+    });
+
+    await prisma.auditLog.create({
+      data: { userId: auth(request).id, action: 'admin.user.reset-password', targetId: id },
+    });
+
+    return { reset: true, id: target.id, username: target.username };
+  });
+
   // GET /api/v1/admin/decks - All decks (admin view)
   app.get('/api/v1/admin/decks', { preHandler: requireAdmin }, async (request) => {
     const query = z.object({
@@ -105,7 +151,7 @@ export default async function adminRoutes(
     const decks = await prisma.deck.findMany({
       where,
       include: {
-        owner: { select: { username: true } },
+        owner: { select: { username: true, nickname: true } },
         versions: { orderBy: { version: 'desc' }, take: 1 },
         _count: { select: { downloads: true } },
       },

@@ -9,7 +9,7 @@
     "dev": "electron .",
     "build": "electron-builder --win nsis --publish never",
     "release": "electron-builder --win nsis --publish never",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/modules/idb-store.js && node --check src/modules/kr-core.js && node --check src/modules/kr-state.js && node --check src/modules/kr-documents.js && node --check src/modules/kr-cards.js && node --check src/modules/kr-review.js && node --check src/modules/kr-market.js && node --check src/modules/kr-profile.js && node --check src/modules/kr-settings.js && node --check src/modules/kr-ui.js && node --check src/review/fsrs-adapter.js && node --check src/renderer.js && node --check src/market-login-characters.js",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/modules/idb-store.js && node --check src/modules/kr-core.js && node --check src/modules/kr-state.js && node --check src/modules/kr-documents.js && node --check src/modules/kr-cards.js && node --check src/modules/kr-review.js && node --check src/modules/kr-market.js && node --check src/modules/kr-collab.js && node --check src/modules/kr-profile.js && node --check src/modules/kr-settings.js && node --check src/modules/kr-ui.js && node --check src/review/fsrs-adapter.js && node --check src/renderer.js && node --check src/market-login-characters.js",
     "doctor": "node scripts/doctor.js",
     "test:fsrs": "node scripts/test-fsrs.js"
   },
