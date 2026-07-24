@@ -101,6 +101,13 @@ async function autoPushCard(card, action, snapshot) {
     refresh();
     // Refresh market deck list and re-render grid so card counts stay in sync
     refreshMarketData();
+    // Schedule a delayed sync of subscribed decks — the backend's mergeCardIntoDeck
+    // modifies the package in place without bumping the version, so subscribers
+    // need a re-sync to detect sha256 / card-count changes.
+    setTimeout(() => {
+      marketUpdateCache.clear();
+      syncSubscribedDecks().catch(() => {});
+    }, 3000);
   } catch (err) {
     const errMsg = err.message || '推送失败';
     // If the deck doesn't exist or isn't published on the server, clean up

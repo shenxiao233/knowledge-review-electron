@@ -300,7 +300,7 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .rail-btn > svg { width: 19px; height: 19px; }
 .section-icon { width: 17px; height: 17px; color: var(--green); flex: 0 0 auto; }
 .mini-icon-button svg, .crumb-back svg, .doc-actions svg, .outline-pane h3 svg, .review-dock header svg { width: 16px; height: 16px; }
-.app-frame { grid-template-columns: 48px minmax(0, 1fr); background: #fff; }
+.app-frame { grid-template-columns: 48px minmax(0, 1fr); background: var(--bg); }
 .rail { padding: 8px 5px; gap: 9px; background: #f8f7f4; border-right-color: #e9e5df; }
 .logo { width: 32px; height: 32px; border-radius: 9px; box-shadow: none; font-size: 14px; }
 .rail-btn { width: 36px; height: 36px; border-radius: 9px; }
@@ -1437,7 +1437,7 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 }
 
 /* Review page learning-center layout. */
-.review-page .review-stage { display: flex; flex-direction: column; overflow: hidden; padding: 4px clamp(18px, 3vw, 44px) 30px 0; background: #f6f8f7; }
+.review-page .review-stage { display: flex; flex-direction: column; overflow: hidden; padding: 4px clamp(18px, 3vw, 44px) 30px 0; background: var(--bg); }
 .review-page .review-stage > .review-home { width: min(1240px, 100%); max-width: 1240px; margin-right: auto; margin-left: auto; }
 .review-page .review-stage > .review-study { width: 100%; max-width: none; margin: 0; }
 .review-page .review-study { min-height: 0; flex: 1 1 auto; overflow: hidden; }
@@ -1933,7 +1933,7 @@ select option { color: #34413b; background: #fff; }
 @keyframes stamp-in { from { opacity: 0; } to { opacity: .9; } }
 
 /* Deck market prototype: isolated from the local card-library data surface. */
-.market-view { min-width: 0; min-height: 0; overflow: auto; background: #fff; }
+.market-view { min-width: 0; min-height: 0; overflow: auto; background: var(--bg); }
 .market-topbar { display: none; }
 .market-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
 .market-title-mark { width: 42px; height: 42px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 13px; background: var(--green-soft); color: var(--green); }
@@ -2440,11 +2440,11 @@ select option { color: #34413b; background: #fff; }
    ═══════════════════════════════════════════════ */
 
 /* Surface & layout */
-.market-admin-surface { min-width: 0; min-height: 100%; height: 100%; display: flex; overflow: hidden; background: #fbfaf8; }
+.market-admin-surface { min-width: 0; min-height: 100%; height: 100%; display: flex; overflow: hidden; background: var(--bg); }
 .market-admin-surface[hidden] { display: none; }
 .market-admin-surface .admin-sidebar { min-height: 100%; }
 .market-admin-surface .admin-main { min-height: 100%; }
-.admin-view { min-width: 0; min-height: 0; overflow: hidden; background: #fbfaf8; }
+.admin-view { min-width: 0; min-height: 0; overflow: hidden; background: var(--bg); }
 .admin-view.active { display: flex; }
 .admin-view[hidden] { display: none; }
 .app-auth-locked .page-shell > .view:not(#marketView) { display: none !important; }
@@ -2840,7 +2840,7 @@ select option { color: #34413b; background: #fff; }
 /* ═══════════════════════════════════════════════
    Collaboration Workspace — commercial-grade warm style
    ═══════════════════════════════════════════════ */
-.collab-view { min-width: 0; overflow: hidden; background: #fbfaf8; }
+.collab-view { min-width: 0; overflow: hidden; background: var(--bg); }
 .collab-view.active { display: flex; }
 .collab-surface { display: flex; min-width: 0; min-height: 100%; width: 100%; height: 100%; }
 
@@ -3018,6 +3018,12 @@ select option { color: #34413b; background: #fff; }
   border: 1px dashed #d8d4cd; border-radius: 12px; background: #f7f6f3;
 }
 .collab-empty-state p { margin: 0; color: #8a958e; font-size: 13px; line-height: 1.6; }
+.collab-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 4px 4px; }
+.collab-pagination span { color: #8a958e; font-size: 12px; }
+.collab-pagination div { display: flex; gap: 6px; }
+.collab-pagination button { height: 32px; padding: 0 14px; border: 1px solid #e5e0d9; border-radius: 8px; background: #fff; color: #53635a; font-size: 12px; font-weight: 600; cursor: pointer; }
+.collab-pagination button:hover:not(:disabled) { background: #f4f3f0; }
+.collab-pagination button:disabled { opacity: .4; cursor: default; }
 .collab-loading {
   padding: 40px; text-align: center; color: #9ca68f; font-size: 13px;
 }
@@ -3115,7 +3121,7 @@ select option { color: #34413b; background: #fff; }
 }
 
 /* Personal workspace and local deck publishing surface. */
-.profile-view { min-width: 0; overflow: auto; background: #f7f8f6; }
+.profile-view { min-width: 0; overflow: auto; background: var(--bg); }
 .profile-topbar { position: relative; min-height: 86px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 30px; border-bottom: 1px solid var(--line); background: #fff; }
 .profile-topbar h1 { margin: 4px 0 0; color: #304039; font-size: 24px; }
 .profile-topbar p { margin: 4px 0 0; color: #8c9891; font-size: 12px; }
@@ -3762,9 +3768,9 @@ select option { color: #34413b; background: #fff; }
 /* Main content area: warm cream background */
 .market-admin-surface .admin-main {
   padding: 34px clamp(22px, 4vw, 64px) 70px;
-  background: #fbfaf8;
+  background: var(--bg);
 }
-.market-admin-surface .admin-view { background: #fbfaf8; }
+.market-admin-surface .admin-view { background: var(--bg); }
 
 /* Page header: green underline bar like settings page */
 .market-admin-surface .admin-main-header {

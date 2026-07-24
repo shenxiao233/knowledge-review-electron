@@ -11,6 +11,9 @@ let collabFilter = 'PENDING'; // ALL | PENDING | APPROVED | REJECTED
 let collabActiveContribution = null; // contribution detail view
 let collabRenderToken = 0;
 let collabEditMode = false; // inline edit mode in detail view
+let collabPage = 1;
+let collabTotalPages = 1;
+const COLLAB_PAGE_SIZE = 10;
 
 // --- API helpers ---
 function collabApi(path, options) { return marketApi('/v2/' + path, options); }
@@ -79,12 +82,17 @@ async function renderCollabContributions(token) {
   const listNode = $('#collabCCList');
   if (!listNode) return;
   try {
-    const statusParam = collabFilter !== 'ALL' ? `?status=${collabFilter}` : '';
-    const contributions = await collabApi(`decks/${encodeURIComponent(collabActiveDeckId)}/card-contributions${statusParam}`);
+    const params = new URLSearchParams({ page: String(collabPage), pageSize: String(COLLAB_PAGE_SIZE) });
+    if (collabFilter !== 'ALL') params.set('status', collabFilter);
+    const result = await collabApi(`decks/${encodeURIComponent(collabActiveDeckId)}/card-contributions?${params.toString()}`);
     if (token !== collabRenderToken) return;
-    const list = Array.isArray(contributions) ? contributions : (contributions && contributions.items) || [];
+    const list = Array.isArray(result) ? result : (result && result.items) || [];
+    collabTotalPages = (result && result.totalPages) || 1;
+    collabPage = (result && result.page) || 1;
+    const total = (result && result.total) || list.length;
     const listHtml = list.length > 0 ? list.map(renderContributionCard).join('') : '<div class="collab-empty-state"><p>暂无卡片推送。</p></div>';
-    listNode.innerHTML = listHtml;
+    const pagerHtml = collabTotalPages > 1 ? `<div class="collab-pagination"><span>第 ${collabPage} / ${collabTotalPages} 页 · 共 ${total} 条</span><div><button type="button" data-collab-page="${collabPage - 1}" ${collabPage <= 1 ? 'disabled' : ''}>上一页</button><button type="button" data-collab-page="${collabPage + 1}" ${collabPage >= collabTotalPages ? 'disabled' : ''}>下一页</button></div></div>` : '';
+    listNode.innerHTML = listHtml + pagerHtml;
     bindContributionCardEvents(listNode);
   } catch (err) {
     if (token !== collabRenderToken) return;
@@ -253,6 +261,7 @@ function bindCollabEvents(viewNode) {
       collabActiveDeckId = btn.dataset.collabDeck;
       collabActiveContribution = null;
       collabFilter = 'PENDING';
+      collabPage = 1;
       renderCollabShell(viewNode);
     });
   });
@@ -262,6 +271,7 @@ function bindCollabMainEvents(content) {
   content.querySelectorAll('[data-collab-filter]').forEach((btn) => {
     btn.addEventListener('click', () => {
       collabFilter = btn.dataset.collabFilter;
+      collabPage = 1;
       renderCollabMain();
     });
   });
@@ -276,6 +286,15 @@ function bindContributionCardEvents(container) {
   });
   container.querySelectorAll('[data-collab-retry]').forEach((btn) => {
     btn.addEventListener('click', () => renderCollabMain());
+  });
+  container.querySelectorAll('[data-collab-page]').forEach((btn) => {
+    if (btn.disabled) return;
+    btn.addEventListener('click', () => {
+      const newPage = Number(btn.dataset.collabPage);
+      if (newPage < 1 || newPage > collabTotalPages) return;
+      collabPage = newPage;
+      renderCollabMain();
+    });
   });
 }
 

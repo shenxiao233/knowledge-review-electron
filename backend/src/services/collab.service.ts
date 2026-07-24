@@ -136,10 +136,14 @@ export class CollabService {
   }
 
   /**
-   * List card contributions for a deck.
+   * List card contributions for a deck with pagination.
    * The deck owner sees all; other users see only their own.
+   * Automatically cleans up contributions older than 7 days.
    */
-  async listContributions(userId: string, deckId: string, status?: string) {
+  async listContributions(userId: string, deckId: string, status?: string, page = 1, pageSize = 10) {
+    // Auto-cleanup: permanently delete contributions older than 7 days.
+    await this.cleanupOldContributions(deckId);
+
     const deck = await prisma.deck.findUnique({
       where: { id: deckId },
       select: { ownerId: true },
@@ -150,12 +154,38 @@ export class CollabService {
     if (status) where.status = status;
     if (deck.ownerId !== userId) where.contributorId = userId;
 
-    return prisma.cardContribution.findMany({
+    const total = await prisma.cardContribution.count({ where });
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const currentPage = Math.min(Math.max(1, page), totalPages);
+    const items = await prisma.cardContribution.findMany({
       where,
       include: {
         contributor: { select: { id: true, username: true, nickname: true } },
       },
       orderBy: { createdAt: 'desc' },
+      skip: (currentPage - 1) * pageSize,
+      take: pageSize,
+    });
+    return { items, page: currentPage, totalPages, total };
+  }
+
+  /**
+   * Permanently delete contributions older than 7 days.
+   * - APPROVED/REJECTED: deleted based on reviewedAt (or createdAt as fallback)
+   * - Stale PENDING (never reviewed): deleted based on createdAt
+   */
+  async cleanupOldContributions(deckId?: string) {
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const baseWhere = deckId ? { deckId } : {};
+    return prisma.cardContribution.deleteMany({
+      where: {
+        ...baseWhere,
+        OR: [
+          { status: { in: ['APPROVED', 'REJECTED'] }, reviewedAt: { lt: sevenDaysAgo } },
+          { status: 'PENDING', createdAt: { lt: sevenDaysAgo } },
+          { status: { in: ['APPROVED', 'REJECTED'] }, reviewedAt: null, createdAt: { lt: sevenDaysAgo } },
+        ],
+      },
     });
   }
 

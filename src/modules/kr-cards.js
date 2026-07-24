@@ -560,6 +560,13 @@ async function pushSelectedCards() {
     save();
     refresh();
     refreshMarketData();
+    // Schedule a delayed sync of subscribed decks — the backend's mergeCardIntoDeck
+    // modifies the package in place without bumping the version, so subscribers
+    // need a re-sync to detect sha256 / card-count changes.
+    setTimeout(() => {
+      marketUpdateCache.clear();
+      syncSubscribedDecks().catch(() => {});
+    }, 3000);
     if (fail === 0) {
       progressText.textContent = `全部${actionLabel}成功！共 ${ok} 张卡片已提交。`;
       toast(`已${actionLabel} ${ok} 张卡片。${pushAction === 'DELETE' ? '删除请求' : pushAction === 'MODIFY' ? '修改' : ''}已提交，所有者推送免审核。`);

@@ -30,11 +30,15 @@ export default async function collabRoutes(
     return reply.code(201).send(contribution);
   });
 
-  // GET /api/v2/decks/:id/card-contributions - List contributions (owner sees all, others see own)
+  // GET /api/v2/decks/:id/card-contributions - List contributions (owner sees all, others see own) with pagination
   app.get('/api/v2/decks/:id/card-contributions', { preHandler: requireAuth }, async (request) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const query = z.object({ status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional() }).parse(request.query || {});
-    return collabService.listContributions(auth(request).id, id, query.status);
+    const query = z.object({
+      status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(10),
+    }).parse(request.query || {});
+    return collabService.listContributions(auth(request).id, id, query.status, query.page, query.pageSize);
   });
 
   // GET /api/v2/card-contributions/:id - Get contribution details
