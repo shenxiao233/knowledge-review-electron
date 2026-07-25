@@ -129,16 +129,46 @@ function formatMarketDate(value) {
   const pad = (number) => String(number).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
-async function loadMarketDecks() {
-  const backendSort = marketSort === 'popular' ? 'popular' : 'newest';
-  const params = new URLSearchParams({ page: String(marketPage), pageSize: String(marketPageSize), sort: backendSort });
-  if (marketQuery) params.set('search', marketQuery);
-  const result = await marketApi(`/decks?${params.toString()}`);
+function applyMarketDecks(result) {
   const decks = Array.isArray(result) ? result : (result.decks || result.items || []);
   marketTotal = Array.isArray(result) ? decks.length : Number(result.total || 0);
   marketTotalPages = Array.isArray(result) ? 1 : Math.max(1, Number(result.totalPages || 1));
   marketDecks = Array.isArray(decks) ? decks.map(normalizeMarketDeck) : [];
   marketUpdateCache.clear();
+}
+async function loadMarketDecks({ forceRefresh = false } = {}) {
+  const backendSort = marketSort === 'popular' ? 'popular' : 'newest';
+  const cacheKey = `${marketPage}:${backendSort}:${marketQuery}`;
+  const now = Date.now();
+  const cached = marketDecksCache && marketDecksCache._key === cacheKey ? marketDecksCache : null;
+  const isFresh = cached && !forceRefresh && (now - cached._ts) < MARKET_DECKS_CACHE_TTL;
+
+  if (isFresh) { applyMarketDecks(cached); return; }
+
+  if (cached && !forceRefresh) {
+    // Stale-while-revalidate: apply cached data instantly, refresh in background
+    applyMarketDecks(cached);
+    (async () => {
+      try {
+        const params = new URLSearchParams({ page: String(marketPage), pageSize: String(marketPageSize), sort: backendSort });
+        if (marketQuery) params.set('search', marketQuery);
+        const result = await marketApi(`/decks?${params.toString()}`);
+        marketDecksCache = { ...result, _key: cacheKey, _ts: Date.now() };
+        saveMarketCache();
+        applyMarketDecks(result);
+        if ($('#marketView')?.classList.contains('active')) renderMarket();
+      } catch { /* keep stale data */ }
+    })();
+    return;
+  }
+
+  // No cache (or forced refresh) — fetch from network
+  const params = new URLSearchParams({ page: String(marketPage), pageSize: String(marketPageSize), sort: backendSort });
+  if (marketQuery) params.set('search', marketQuery);
+  const result = await marketApi(`/decks?${params.toString()}`);
+  marketDecksCache = { ...result, _key: cacheKey, _ts: Date.now() };
+  saveMarketCache();
+  applyMarketDecks(result);
 }
 async function loadMarketFavorites() {
   if (!marketToken) return;
@@ -156,24 +186,45 @@ async function loadMarketCategories() {
   marketCategories = [];
 }
 async function loadMarketCapabilities() {
-  const healthUrl = `${marketApiBase.replace(/\/api\/v1$/, '')}/health`;
+  const now = Date.now();
+  const cached = marketCapsCache;
+  const isFresh = cached && (now - cached._ts) < MARKET_CAPS_CACHE_TTL;
+
+  if (isFresh) { marketCapabilities = cached.data || {}; return cached.data; }
+
+  if (cached) {
+    // Stale-while-revalidate
+    marketCapabilities = cached.data || {};
+    (async () => {
+      try {
+        const health = await fetchServerHealth();
+        marketCapsCache = { data: health?.capabilities || {}, _ts: Date.now() };
+        saveMarketCache();
+        marketCapabilities = marketCapsCache.data;
+      } catch { /* keep stale */ }
+    })();
+    return cached.data;
+  }
+
+  // No cache — fetch from network
   try {
-    // Try IPC proxy first
-    if (window.reviewBridge?.market?.fetch) {
-      const result = await window.reviewBridge.market.fetch({ url: healthUrl, options: { method: 'GET' } });
-      if (result && result.ok && result.body) {
-        marketCapabilities = result.body.capabilities || {};
-        return result.body;
-      }
-    }
-    // Fallback to direct fetch
-    const health = await fetch(healthUrl, { cache: 'no-store' }).then((response) => response.json());
-    marketCapabilities = health.capabilities || {};
+    const health = await fetchServerHealth();
+    marketCapsCache = { data: health?.capabilities || {}, _ts: Date.now() };
+    saveMarketCache();
+    marketCapabilities = marketCapsCache.data;
     return health;
   } catch {
     marketCapabilities = {};
     return null;
   }
+}
+async function fetchServerHealth() {
+  const healthUrl = `${marketApiBase.replace(/\/api\/v1$/, '')}/health`;
+  if (window.reviewBridge?.market?.fetch) {
+    const result = await window.reviewBridge.market.fetch({ url: healthUrl, options: { method: 'GET' } });
+    if (result && result.ok && result.body) return result.body;
+  }
+  return await fetch(healthUrl, { cache: 'no-store' }).then((r) => r.json());
 }
 async function syncMyMarketDeckMetadata() {
   if (!marketToken) return;
@@ -709,32 +760,27 @@ async function submitMarketAuth(event) {
     marketToken = result.token || '';
     marketUser = result.user || null;
     if (!marketToken) throw new Error('服务器没有返回有效登录令牌');
-    // Parallel: load all market data + profile in one round-trip instead of 6 sequential awaits
-    const [capsRes, catRes, metaRes, decksRes, favsRes, profRes] = await Promise.allSettled([
-      loadMarketCapabilities(),
-      loadMarketCategories(),
-      syncMyMarketDeckMetadata(),
-      loadMarketDecks(),
-      loadMarketFavorites(),
-      fetchServerProfile(),
-    ]);
-    [capsRes, catRes, metaRes, decksRes, favsRes, profRes].forEach((r, i) => {
-      if (r.status === 'rejected') console.warn(`[MARKET-AUTH] Post-login call #${i} failed (non-fatal):`, r.reason?.message || r.reason);
-    });
     const wasAppAuthLocked = appAuthLocked;
+
+    // Check if the user account changed — must run BEFORE unlocking UI to prevent
+    // cross-account data leakage. This also invalidates market cache for new users.
+    const currentUserId = marketUser?.id || marketUser?.username || '';
+    if (currentUserId) checkAndHandleUserChange(currentUserId);
+
+    // Apply cached market data to globals so the UI has something to show instantly.
+    try { if (marketDecksCache) applyMarketDecks(marketDecksCache); } catch { /* non-fatal */ }
+    try { if (marketCapsCache) marketCapabilities = marketCapsCache.data || {}; } catch { /* non-fatal */ }
+    try { if (marketProfileCache) applyServerProfile(marketProfileCache.data); } catch { /* non-fatal */ }
+
+    // Unlock UI immediately — local state + cached market data is ready.
     marketUnlocked = true;
     setAppAuthLock(false);
     renderRailUserAvatar();
-    // Check if the user account changed — reset local data to prevent
-    // cross-account data leakage. Must run BEFORE fullCloudSync.
-    const currentUserId = marketUser?.id || marketUser?.username || '';
-    if (currentUserId) checkAndHandleUserChange(currentUserId);
-    // Trigger full cloud sync after login — pull server data then push local state
-    try { fullCloudSync().catch((e) => console.warn("[MARKET-AUTH] Cloud sync failed (non-fatal):", e.message)); } catch(e) { console.warn("[MARKET-AUTH] Cloud sync trigger failed:", e.message); }
+
     if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
     $('#marketAuthForm')?.classList.add('is-authenticated');
-    await saveMarketLoginCredentials(username, password);
-    if (isRegister) toggleMarketAuthMode();
+
+    // Navigate to the appropriate view before firing background calls.
     if (marketUser?.needsProfileCompletion) {
       view('library');
       showOnboarding();
@@ -745,6 +791,31 @@ async function submitMarketAuth(event) {
       else renderMarket();
       toast(isRegister ? '注册成功，已登录应用。' : '服务器认证成功，应用已解锁。');
     }
+
+    // Fire all post-login data loads in the background (non-blocking).
+    // SWR-enabled functions return instantly if cache is fresh, otherwise
+    // they fetch and update globals + re-render when done.
+    Promise.allSettled([
+      loadMarketCapabilities(),
+      loadMarketCategories(),
+      syncMyMarketDeckMetadata(),
+      loadMarketDecks(),
+      loadMarketFavorites(),
+      fetchServerProfile(),
+    ]).then((results) => {
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') console.warn(`[MARKET-AUTH] Post-login call #${i} failed (non-fatal):`, r.reason?.message || r.reason);
+      });
+      // Re-render market if it's the active view after background data loads.
+      if ($('#marketView')?.classList.contains('active')) renderMarket();
+    });
+
+    // Trigger full cloud sync in background — pulls server data then pushes local state.
+    try { fullCloudSync().catch((e) => console.warn("[MARKET-AUTH] Cloud sync failed (non-fatal):", e.message)); } catch(e) { console.warn("[MARKET-AUTH] Cloud sync trigger failed:", e.message); }
+
+    // Save credentials in background (non-blocking).
+    saveMarketLoginCredentials(username, password).catch(() => {});
+    if (isRegister) toggleMarketAuthMode();
   } catch (error) {
   console.error("[MARKET-AUTH] Login error:", error);
     marketToken = '';
@@ -1273,7 +1344,7 @@ function bindAdminWorkspaceEvents() {
       await adminApi(`/admin/decks/${button.dataset.adminDeckCategorySave}/category`, { method: 'PATCH', body: JSON.stringify({ category }) });
       toast('牌组分类已更新。');
       await loadMarketCategories();
-      await loadMarketDecks();
+      await loadMarketDecks({ forceRefresh: true });
       await renderAdminWorkspace();
     } catch (error) {
       toast(error.message || '调整牌组分类失败。');
@@ -1305,7 +1376,7 @@ function bindAdminWorkspaceEvents() {
         await adminApi(`/admin/decks/${deckId}/category`, { method: 'PATCH', body: JSON.stringify({ category }) });
         toast('牌组分类已调整。');
         dlg.close();
-        await loadMarketDecks();
+        await loadMarketDecks({ forceRefresh: true });
         await renderAdminWorkspace();
       } catch (error) {
         toast(error.message || '调整牌组分类失败。');
@@ -1356,7 +1427,7 @@ function bindAdminWorkspaceEvents() {
     button.disabled = true;
     try {
       await adminApi(`/admin/decks/${button.dataset.adminDeckId}/${button.dataset.adminDeckAction}`, { method: 'PATCH' });
-      await loadMarketDecks();
+      await loadMarketDecks({ forceRefresh: true });
       toast('牌组状态已更新。');
       await renderAdminWorkspace();
     } catch (error) {
@@ -1370,7 +1441,7 @@ function bindAdminWorkspaceEvents() {
     try {
       if (marketCapabilities.permanentDeckDelete !== true) throw new Error('当前后端版本不支持永久删除，请先重启新版后端服务。');
       await adminApi(`/admin/decks/${button.dataset.adminDeckDelete}`, { method: 'DELETE' });
-      await loadMarketDecks();
+      await loadMarketDecks({ forceRefresh: true });
       toast('停用牌组及其服务器数据已永久删除。');
       await renderAdminWorkspace();
     } catch (error) {
@@ -1383,7 +1454,7 @@ function bindAdminWorkspaceEvents() {
     button.disabled = true;
     try {
       await adminApi(`/admin/decks/${button.dataset.adminDeckId}/versions/${button.dataset.adminVersion}/${button.dataset.adminVersionAction}`, { method: 'PATCH' });
-      await loadMarketDecks();
+      await loadMarketDecks({ forceRefresh: true });
       toast(button.dataset.adminVersionAction === 'publish' ? '牌组新版本已发布。' : '牌组新版本已拒绝。');
       await renderAdminWorkspace();
     } catch (error) {
@@ -1466,26 +1537,60 @@ function toggleMarketAuthMode() {
 // ─── Server Profile Read/Write Chain ───
 // Fetches the full profile from GET /api/v2/me/profile and merges into marketUser.
 // Called after login to ensure nickname, bio, avatar come from the server (canonical source).
+function applyServerProfile(profile) {
+  if (!profile || typeof profile !== 'object') return;
+  marketUser = {
+    ...marketUser,
+    nickname: profile.nickname || marketUser?.nickname || null,
+    avatar: profile.avatar || marketUser?.avatar || null,
+    bio: profile.bio || marketUser?.bio || null,
+    uid: profile.uid || marketUser?.uid || null,
+    status: profile.status || marketUser?.status || null,
+  };
+  const local = profileData();
+  if (profile.nickname) local.name = profile.nickname;
+  if (profile.bio) local.bio = profile.bio;
+  if (profile.avatar) local.avatar = profile.avatar;
+  else local.avatar = '';
+  save();
+}
 async function fetchServerProfile() {
   if (!marketToken || !marketUnlocked) return;
+  const now = Date.now();
+  const cached = marketProfileCache;
+  const isFresh = cached && (now - cached._ts) < MARKET_PROFILE_CACHE_TTL;
+
+  if (isFresh) { applyServerProfile(cached.data); return; }
+
+  if (cached) {
+    // Stale-while-revalidate
+    applyServerProfile(cached.data);
+    renderRailUserAvatar();
+    renderMarketSettingsAccount();
+    if (typeof renderProfile === 'function') renderProfile();
+    (async () => {
+      try {
+        const profile = await marketApi('/v2/me/profile');
+        if (profile && typeof profile === 'object') {
+          marketProfileCache = { data: profile, _ts: Date.now() };
+          saveMarketCache();
+          applyServerProfile(profile);
+          renderRailUserAvatar();
+          renderMarketSettingsAccount();
+          if (typeof renderProfile === 'function') renderProfile();
+        }
+      } catch { /* keep stale */ }
+    })();
+    return;
+  }
+
+  // No cache — fetch from network
   try {
     const profile = await marketApi('/v2/me/profile');
     if (profile && typeof profile === 'object') {
-      marketUser = {
-        ...marketUser,
-        nickname: profile.nickname || marketUser?.nickname || null,
-        avatar: profile.avatar || marketUser?.avatar || null,
-        bio: profile.bio || marketUser?.bio || null,
-        uid: profile.uid || marketUser?.uid || null,
-        status: profile.status || marketUser?.status || null,
-      };
-      // Sync server profile into local state so account switches show correct data
-      const local = profileData();
-      if (profile.nickname) local.name = profile.nickname;
-      if (profile.bio) local.bio = profile.bio;
-      if (profile.avatar) local.avatar = profile.avatar;
-      else local.avatar = '';
-      save();
+      marketProfileCache = { data: profile, _ts: Date.now() };
+      saveMarketCache();
+      applyServerProfile(profile);
       renderRailUserAvatar();
       renderMarketSettingsAccount();
       if (typeof renderProfile === 'function') renderProfile();

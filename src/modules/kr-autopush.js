@@ -27,7 +27,7 @@ function isCardFrozen(card) {
 // and deck metadata stay in sync after push operations.
 function refreshMarketData() {
   if (!marketUnlocked || !marketToken) return;
-  loadMarketDecks()
+  loadMarketDecks({ forceRefresh: true })
     .then(() => { renderMarket(); renderProfile(); })
     .catch(() => {});
 }
@@ -284,7 +284,7 @@ async function syncSubscribedDecks() {
   // so we can fall back to card-count comparison for those decks.
   const needsDeckList = Object.values(decks).some((d) => !d.remoteSha256);
   if (needsDeckList) {
-    try { await loadMarketDecks(); } catch { /* non-fatal */ }
+    try { await loadMarketDecks({ forceRefresh: true }); } catch { /* non-fatal */ }
   }
 
   let changed = false;

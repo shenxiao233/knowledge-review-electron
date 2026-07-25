@@ -60,6 +60,7 @@ function load() {
 
 // Initialize state after load() is defined
 state = load();
+try { loadMarketCache(); } catch (e) { /* non-fatal */ }
 syncReviewLog();
 ensureCardOrder(state.cards);
 

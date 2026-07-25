@@ -239,6 +239,37 @@ let adminUsersCache = null;
 let adminUsersCacheTime = 0;
 const ADMIN_USERS_CACHE_TTL = 30_000;
 let adminAvatarCache = {};
+// ─── Market data cache (persisted to localStorage, separate from state) ───
+let marketDecksCache = null;
+let marketCapsCache = null;
+let marketProfileCache = null;
+const MARKET_DECKS_CACHE_TTL = 60_000;
+const MARKET_CAPS_CACHE_TTL = 300_000;
+const MARKET_PROFILE_CACHE_TTL = 60_000;
+const MARKET_CACHE_KEY = 'kr-market-cache-v1';
+function loadMarketCache() {
+  try {
+    const raw = localStorage.getItem(MARKET_CACHE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    marketDecksCache = parsed.decks || null;
+    marketCapsCache = parsed.caps || null;
+    marketProfileCache = parsed.profile || null;
+  } catch { /* ignore corrupted cache */ }
+}
+function saveMarketCache() {
+  try {
+    localStorage.setItem(MARKET_CACHE_KEY, JSON.stringify({
+      decks: marketDecksCache, caps: marketCapsCache, profile: marketProfileCache,
+    }));
+  } catch { /* localStorage might be full */ }
+}
+function invalidateMarketCache() {
+  marketDecksCache = null;
+  marketCapsCache = null;
+  marketProfileCache = null;
+  try { localStorage.removeItem(MARKET_CACHE_KEY); } catch { /* ignore */ }
+}
 let profileEditingDeckId = '';
 let marketDecks = [];
 

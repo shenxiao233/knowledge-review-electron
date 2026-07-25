@@ -114,6 +114,9 @@ function resetLocalStateForNewUser(userId) {
   // 1. Clear cloud sync state (signatures, versions are per-account)
   cloudSyncPushedSigs.clear();
   try { localStorage.removeItem(SIGS_STORAGE_KEY); } catch (e) {}
+  // 1b. Clear cached market data (decks list, capabilities, server profile)
+  //     so the new user doesn't see the previous user's market data.
+  invalidateMarketCache();
 
   // 2. Reset local data to EMPTY state — cloud pull will populate if data exists.
   //    Sample data is seeded only AFTER pull confirms the user has no cloud data.
