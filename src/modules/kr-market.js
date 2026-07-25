@@ -276,9 +276,24 @@ async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
   if (remember) remember.checked = true;
   if (autoLogin && !marketAutoLoginTried && saved.username && saved.password) {
     marketAutoLoginTried = true;
+    // Safety timeout: if auto-login doesn't complete within 15 seconds
+    // (e.g. form not bound, requestSubmit silently fails, network hangs),
+    // clear the bootstrap flag so the login form becomes visible.
+    const bootstrapTimeout = setTimeout(() => {
+      if (marketAuthBootstrapping) {
+        console.warn('[MARKET-AUTH] Auto-login bootstrap timed out, showing login form.');
+        marketAuthBootstrapping = false;
+        renderMarket();
+      }
+    }, 15000);
     setTimeout(() => {
       const form = $('#marketAuthForm');
-      if (!form) return;
+      if (!form) {
+        clearTimeout(bootstrapTimeout);
+        marketAuthBootstrapping = false;
+        renderMarket();
+        return;
+      }
       form.dataset.autoLogin = 'true';
       form.requestSubmit();
     }, 120);
@@ -288,8 +303,10 @@ async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
 async function saveMarketLoginCredentials(username, password) {
   const remember = $('#marketRememberCredentials')?.checked === true;
   marketRememberCredentials = remember;
-  if (remember) await window.reviewBridge?.market?.saveCredentials?.({ username, password });
-  else await window.reviewBridge?.market?.clearCredentials?.();
+  if (remember) {
+    const serverAddr = $('#marketServerKey')?.value?.trim() || '';
+    await window.reviewBridge?.market?.saveCredentials?.({ username, password, accessKey: serverAddr });
+  } else await window.reviewBridge?.market?.clearCredentials?.();
 }
 
 function showMarketWorkspace() {
@@ -665,6 +682,7 @@ async function submitMarketAuth(event) {
     const errorBox = $('#marketLoginError');
     if (errorBox) { errorBox.textContent = validationError; errorBox.classList.add('is-visible'); }
     window.marketLoginCharacters?.triggerError?.(validationError);
+    renderMarket();
     return;
   }
   // Update marketApiBase from the server address field

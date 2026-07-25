@@ -565,11 +565,11 @@ async function writeMarketCredentials(payload) {
   const accessKey = String(payload?.accessKey || '');
   const username = String(payload?.username || '');
   const password = String(payload?.password || '');
-  if (!accessKey || !username || !password) return { ok: false, error: '牌组市场登录信息不完整。' };
+  if (!username || !password) return { ok: false, error: '牌组市场登录信息不完整。' };
   const tempPath = `${marketCredentialsPath}.tmp`;
   const saved = {
     remember: true,
-    accessKey: safeStorage.encryptString(accessKey).toString('base64'),
+    accessKey: accessKey ? safeStorage.encryptString(accessKey).toString('base64') : '',
     username,
     password: safeStorage.encryptString(password).toString('base64')
   };
