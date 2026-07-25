@@ -127,7 +127,7 @@ async function writeLocalState(data) {
   const dataDir = path.dirname(stateDataPath);
   const tempPath = `${stateDataPath}.tmp-${process.pid}`;
   const previousPath = `${stateDataPath}.previous`;
-  const payload = JSON.stringify({ format: 'knowledge-review-local-state', version: 1, savedAt: new Date().toISOString(), data: valid }, null, 2);
+  const payload = JSON.stringify({ format: 'knowledge-review-local-state', version: 1, savedAt: new Date().toISOString(), data: valid });
   await fs.mkdir(dataDir, { recursive: true });
   await fs.writeFile(tempPath, payload, 'utf8');
   try {
@@ -195,7 +195,9 @@ async function backupUserData(reason = 'manual') {
   return target;
 }
 
-if (process.env.KR_DISABLE_GPU !== '0') {
+// GPU acceleration is enabled by default for smoother rendering (animations,
+// scrolling, KaTeX). Set KR_DISABLE_GPU=1 to disable for troubleshooting driver issues.
+if (process.env.KR_DISABLE_GPU === '1') {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
 }

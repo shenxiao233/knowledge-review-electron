@@ -325,29 +325,32 @@ async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
   if (username) username.value = saved.username || '';
   if (password) password.value = saved.password || '';
   if (remember) remember.checked = true;
-  if (autoLogin && !marketAutoLoginTried && saved.username && saved.password) {
+  if (!marketAutoLoginTried && saved.username && saved.password) {
     marketAutoLoginTried = true;
-    // Safety timeout: if auto-login doesn't complete within 15 seconds
-    // (e.g. form not bound, requestSubmit silently fails, network hangs),
-    // clear the bootstrap flag so the login form becomes visible.
+    // Safety timeout: if auto-login doesn't complete within 8 seconds
+    // (e.g. network hangs), clear the bootstrap flag so the login form becomes visible.
     const bootstrapTimeout = setTimeout(() => {
       if (marketAuthBootstrapping) {
         console.warn('[MARKET-AUTH] Auto-login bootstrap timed out, showing login form.');
         marketAuthBootstrapping = false;
         renderMarket();
       }
-    }, 15000);
-    setTimeout(() => {
-      const form = $('#marketAuthForm');
-      if (!form) {
-        clearTimeout(bootstrapTimeout);
-        marketAuthBootstrapping = false;
-        renderMarket();
-        return;
-      }
+    }, 8000);
+    // Fire form.requestSubmit() synchronously — the submit handler is already bound
+    // by bind() in init(). This starts the HTTP login request immediately, so it
+    // overlaps with remaining init() Phase 4 work (loadDoc, syncSettings, refresh, view).
+    const form = $('#marketAuthForm');
+    if (form) {
+      const loaderText = $('#marketAuthBootstrapText');
+      if (loaderText) loaderText.textContent = '正在尝试自动登录…';
       form.dataset.autoLogin = 'true';
+      form.dataset.bootstrapTimeout = bootstrapTimeout;
       form.requestSubmit();
-    }, 120);
+    } else {
+      clearTimeout(bootstrapTimeout);
+      marketAuthBootstrapping = false;
+      renderMarket();
+    }
   }
 }
 
@@ -442,6 +445,8 @@ async function logoutMarket() {
   } catch (e) {
     console.warn('[LOGOUT] Cloud sync failed (non-fatal):', e.message);
   }
+  // Flush any pending Dexie writes before clearing the session
+  try { await flushDexie(); } catch (e) { /* non-fatal */ }
   await returnToMarketLogin();
 }
 function openPasswordChangeDialog() {
@@ -714,7 +719,6 @@ function ensureMarketRegistrationField() {
 }
 async function submitMarketAuth(event) {
   event.preventDefault();
-  marketAuthBootstrapping = false;
   ensureMarketRegistrationField();
   const form = $('#marketAuthForm');
   const isAutoLogin = form?.dataset.autoLogin === 'true';
@@ -737,8 +741,22 @@ async function submitMarketAuth(event) {
     const errorBox = $('#marketLoginError');
     if (errorBox) { errorBox.textContent = validationError; errorBox.classList.add('is-visible'); }
     window.marketLoginCharacters?.triggerError?.(validationError);
+    marketAuthBootstrapping = false;
     renderMarket();
     return;
+  }
+  // For manual login (not auto-login), show the cat animation overlay during the HTTP request.
+  // For auto-login, marketAuthBootstrapping is already true (set at module load).
+  if (!isAutoLogin) {
+    marketAuthBootstrapping = true;
+    const loaderText = $('#marketAuthBootstrapText');
+    if (loaderText) loaderText.textContent = isRegister ? '正在注册…' : '正在验证身份…';
+    renderMarket();
+  }
+  // Clear the auto-login safety timeout — the request is now in-flight.
+  if (form?.dataset.bootstrapTimeout) {
+    clearTimeout(Number(form.dataset.bootstrapTimeout));
+    delete form.dataset.bootstrapTimeout;
   }
   // Update marketApiBase from the server address field
   const newBase = parseMarketApiBase(serverAddr);
@@ -772,7 +790,8 @@ async function submitMarketAuth(event) {
     try { if (marketCapsCache) marketCapabilities = marketCapsCache.data || {}; } catch { /* non-fatal */ }
     try { if (marketProfileCache) applyServerProfile(marketProfileCache.data); } catch { /* non-fatal */ }
 
-    // Unlock UI immediately — local state + cached market data is ready.
+    // Hide loading overlay and unlock UI.
+    marketAuthBootstrapping = false;
     marketUnlocked = true;
     setAppAuthLock(false);
     renderRailUserAvatar();
@@ -780,15 +799,13 @@ async function submitMarketAuth(event) {
     if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
     $('#marketAuthForm')?.classList.add('is-authenticated');
 
-    // Navigate to the appropriate view before firing background calls.
+    // Always navigate to library on successful login — don't stay on the login page.
     if (marketUser?.needsProfileCompletion) {
       view('library');
       showOnboarding();
       toast(isRegister ? '注册成功，请完成个人资料设置。' : '欢迎回来，请完成个人资料设置。');
     } else {
-      if (wasAppAuthLocked || isAutoLogin) view('library');
-      else if (!isAutoLogin || $('#marketView')?.classList.contains('active')) showMarketWorkspace();
-      else renderMarket();
+      view('library');
       toast(isRegister ? '注册成功，已登录应用。' : '服务器认证成功，应用已解锁。');
     }
 
@@ -818,6 +835,7 @@ async function submitMarketAuth(event) {
     if (isRegister) toggleMarketAuthMode();
   } catch (error) {
   console.error("[MARKET-AUTH] Login error:", error);
+    marketAuthBootstrapping = false;
     marketToken = '';
     marketUnlocked = false;
     setAppAuthLock(true);
@@ -839,8 +857,7 @@ async function submitMarketAuth(event) {
     }
     window.marketLoginCharacters?.triggerError?.(cnMsg);
     // Re-render the market view so the login form becomes visible again.
-    // Without this, the empty bootstrap placeholder div stays shown after
-    // a failed auto-login, leaving the user with a blank white screen.
+    // Without this, the bootstrap overlay stays shown after a failed login.
     renderMarket();
   } finally {
     if (submit) submit.disabled = false;

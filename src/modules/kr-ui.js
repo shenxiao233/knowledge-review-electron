@@ -202,11 +202,11 @@ function activateGlobalSearchResult(result) {
     view('library');
     state.activeDocId = result.id;
     loadDoc();
-    refresh();
+    refresh({ tree: true, home: true, outline: true });
   } else if (result.type === 'card') {
     view('library');
     state.selectedCardId = result.id;
-    refresh();
+    refresh({ cards: true });
     setTimeout(() => { const el = document.querySelector('[data-card="' + result.id + '"]'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 100);
   } else if (result.type === 'market') {
     view('market');
@@ -234,7 +234,8 @@ function bind() {
   $('#blockFormat')?.addEventListener('change', (event) => editorCommand('formatBlock', event.target.value));
   $('#fontSizeSelect')?.addEventListener('change', (event) => editorCommand('fontSize', event.target.value));
   $$('.formatbar .select-trigger, .formatbar [data-command]').forEach((button) => button.addEventListener('mousedown', (event) => { rememberSelection(); event.preventDefault(); }));
-  els.noteEditor?.addEventListener('input', () => { saveDoc(); outline(); updateEditorWordCount(); });
+  const debouncedEditorSave = debounce(() => { saveDoc(); outline(); }, 500);
+  els.noteEditor?.addEventListener('input', () => { updateEditorWordCount(); debouncedEditorSave(); });
   els.noteEditor?.addEventListener('mouseup', rememberSelection);
   els.noteEditor?.addEventListener('keyup', rememberSelection);
   els.noteEditor?.addEventListener('paste', handleEditorPaste);
@@ -352,7 +353,13 @@ function bind() {
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => setting(button.dataset.setting)));
   [els.desiredRetention, els.dailyLimit, els.dailyNewLimit].forEach((input) => input?.addEventListener('input', settings));
   $('.toast-close')?.addEventListener('click', () => els.toast.classList.remove('show'));
-  $('#globalSearchInput')?.addEventListener('input', (e) => renderGlobalSearchResults(e.target.value));
+  // Debounce global search: 200ms delay avoids scanning all cards/docs/decks
+  // on every keystroke. Empty query clears immediately (no debounce needed).
+  const debouncedGlobalSearch = debounce((query) => renderGlobalSearchResults(query), 200);
+  $('#globalSearchInput')?.addEventListener('input', (e) => {
+    if (!e.target.value) renderGlobalSearchResults('');
+    else debouncedGlobalSearch(e.target.value);
+  });
   $('#globalSearchModal')?.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); globalSearchSelectedIdx = Math.min(globalSearchSelectedIdx + 1, globalSearchResults.length - 1); renderGlobalSearchResults($('#globalSearchInput')?.value || ''); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); globalSearchSelectedIdx = Math.max(globalSearchSelectedIdx - 1, 0); renderGlobalSearchResults($('#globalSearchInput')?.value || ''); }
@@ -532,23 +539,16 @@ function ensureStoragePanel() {
       return;
     }
 
-    // Start cloud sync immediately when the dialog appears — sync runs
-    // in parallel while the user reads the dialog and decides.
-    const syncPromise = (typeof fullCloudSync === 'function')
-      ? Promise.race([
-          fullCloudSync(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
-        ]).catch((e) => console.warn('[EXIT] Sync failed:', e.message))
-      : Promise.resolve();
+    // Start cloud sync in background — do NOT block exit. The beforeunload
+    // handler already calls flushDexie() as a safety net for local persistence.
+    if (typeof fullCloudSync === 'function') {
+      fullCloudSync().catch((e) => console.warn('[EXIT] Background sync failed:', e.message));
+    }
 
-    // Show "syncing" hint while sync is running
-    let syncDone = false;
-    syncPromise.then(() => { syncDone = true; }).catch(() => { syncDone = true; });
-
-    overlay.classList.add('is-syncing');
-    hint.textContent = '正在同步数据到云端…';
-    confirmBtn.textContent = '等待同步完成…';
-    confirmBtn.disabled = true;
+    overlay.classList.remove('is-syncing');
+    hint.textContent = '确认退出？后台将自动同步数据。';
+    confirmBtn.textContent = '确定退出';
+    confirmBtn.disabled = false;
     cancelBtn.style.display = '';
     overlay.hidden = false;
 
@@ -560,30 +560,19 @@ function ensureStoragePanel() {
       cancelBtn.removeEventListener('click', hideDialog);
     }
 
-    async function onConfirm() {
+    function onConfirm() {
       if (exitInProgress) return;
       exitInProgress = true;
       confirmBtn.disabled = true;
       cancelBtn.style.display = 'none';
-      hint.textContent = syncDone ? '同步完成，正在退出…' : '等待同步完成…';
-      confirmBtn.textContent = '正在退出…';
-
-      try { await syncPromise; } catch (e) {}
-      try { await window.reviewBridge?.windowControls?.confirmExit?.(); } catch (e) {}
+      hint.textContent = '正在退出…';
+      // Exit immediately — cloud sync runs in background, flushDexie handles local save
+      window.reviewBridge?.windowControls?.confirmExit?.();
     }
 
     function onEsc(e) {
       if (e.key === 'Escape' && !exitInProgress) hideDialog();
     }
-
-    // Once sync finishes, enable the confirm button
-    syncPromise.then(() => {
-      if (exitInProgress) return;
-      overlay.classList.remove('is-syncing');
-      hint.textContent = '数据已同步，可以安全退出。';
-      confirmBtn.textContent = '确定退出';
-      confirmBtn.disabled = false;
-    });
 
     confirmBtn.addEventListener('click', onConfirm);
     cancelBtn.addEventListener('click', hideDialog);

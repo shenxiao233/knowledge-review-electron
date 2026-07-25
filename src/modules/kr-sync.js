@@ -61,18 +61,46 @@ function scheduleSavePushedSigs() {
 // Load persisted signatures at module initialization
 loadPushedSigs();
 
-// --- Object signature ---
+// --- Object signature (cached + FNV-1a hash) ---
 // Computes a lightweight hash that changes when any field of the object changes.
 // This is used to detect which objects need to be pushed incrementally.
+//
+// Performance: JSON.stringify is the dominant cost. To avoid re-serializing
+// unchanged objects on every push cycle (every 5s), we cache the signature per
+// object reference (WeakMap) and only recompute when the object is marked dirty.
+// Invalidation happens in saveCardChange()/saveDocChange() (hot mutation paths)
+// and invalidateAllSignatureCaches() (bulk operations like cloud pull).
+let _sigCache = new WeakMap();   // obj -> signature string
+let _sigDirty = new WeakSet();    // obj -> needs recompute
+
 function objectSignature(obj) {
+  if (!obj || typeof obj !== 'object') return 'err:0';
+  // Fast path: object not dirty and already cached
+  if (!_sigDirty.has(obj) && _sigCache.has(obj)) {
+    return _sigCache.get(obj);
+  }
   try {
     const json = JSON.stringify(obj);
-    let h = 0;
+    // FNV-1a 32-bit hash (faster than djb2, better avalanche)
+    let h = 0x811c9dc5;
     for (let i = 0; i < json.length; i++) {
-      h = ((h << 5) - h + json.charCodeAt(i)) | 0;
+      h ^= json.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
     }
-    return h + ':' + json.length;
+    const sig = (h >>> 0) + ':' + json.length;
+    _sigCache.set(obj, sig);
+    _sigDirty.delete(obj);
+    return sig;
   } catch { return 'err:0'; }
+}
+
+function invalidateSignatureCache(obj) {
+  if (obj && typeof obj === 'object') _sigDirty.add(obj);
+}
+
+function invalidateAllSignatureCaches() {
+  _sigCache = new WeakMap();  // WeakMap can't be cleared; reassign to drop all refs
+  // _sigDirty retains entries — they'll be lazily recomputed on next objectSignature() call
 }
 
 function sigKey(objectType, objectId) { return `${objectType}:${objectId}`; }
@@ -136,6 +164,14 @@ function resetLocalStateForNewUser(userId) {
   state.activeDocId = null;
   state.extractedText = '';
 
+  // 2b. Wipe Dexie structured stores immediately (fire-and-forget) so old user's
+  //     data can't be loaded if the app crashes before the debounced save fires.
+  try { wipeDexieData().catch(() => {}); } catch (e) { /* non-fatal */ }
+  // 2c. Sync in-memory card index with the cleared state
+  try { rebuildCardIndex(); } catch (e) { /* non-fatal */ }
+  try { invalidateAllCardSearchIndices(); } catch (e) { /* non-fatal */ }
+  try { invalidateAllSignatureCaches(); } catch (e) { /* non-fatal */ }
+
   // 3. Reset sync metadata for the new user
   state.syncMeta = {
     deviceId: preservedDeviceId,
@@ -151,6 +187,9 @@ function resetLocalStateForNewUser(userId) {
   // 5. Persist the reset state to all local storage layers
   cloudSyncSuppressPush = true;
   try { save(); } finally { cloudSyncSuppressPush = false; }
+  // 5b. Force immediate Dexie write so the empty state is persisted without
+  //     waiting for the 500ms debounce (prevents old data recovery on crash).
+  try { flushDexie().catch(() => {}); } catch (e) { /* non-fatal */ }
 
   console.log(`[CLOUD-SYNC] Local state reset for user: ${userId}`);
 }
@@ -165,7 +204,7 @@ function seedSampleDataForNewUser() {
   state.activeDocId = sampleDocs[0]?.id || null;
   cloudSyncSuppressPush = true;
   try { save(); } finally { cloudSyncSuppressPush = false; }
-  refresh();
+  refreshDirty();
   console.log('[CLOUD-SYNC] Seeded sample data for new user (no cloud data found).');
 }
 
@@ -471,7 +510,7 @@ async function pushToCloud() {
     if (needsRefresh) {
       cloudSyncSuppressPush = true;
       try { save(); } finally { cloudSyncSuppressPush = false; }
-      refresh();
+      refreshDirty();
       console.log(`[CLOUD-SYNC] Merged ${conflictsToMerge.length} conflicts from server.`);
       // Schedule a re-push to send merged data (with local FSRS state) back to server
       scheduleCloudSyncPush();
@@ -502,20 +541,30 @@ async function pullFromCloud() {
 
     let changed = false;
     let needsRepush = false; // track objects that need to be pushed back after merge
+    // Build O(1) lookup maps to avoid findIndex per pulled object
+    const cardIdxMap = new Map();
+    (state.cards || []).forEach((c, i) => cardIdxMap.set(c.id, i));
+    const docIdxMap = new Map();
+    (state.documents || []).forEach((d, i) => docIdxMap.set(d.id, i));
+
     for (const obj of objects) {
       const localVersion = getSyncVersion(obj.objectType, obj.objectId);
       // Skip if we already have this version or newer
       if (localVersion >= obj.objectVersion) continue;
 
       if (obj.objectType === 'CARD' && obj.data) {
-        const idx = state.cards.findIndex((c) => c.id === obj.objectId);
-        const localCard = idx >= 0 ? state.cards[idx] : null;
+        const idx = cardIdxMap.get(obj.objectId);
+        const localCard = idx !== undefined ? state.cards[idx] : null;
         const localReviews = Number(localCard?.reviews || 0);
         const serverReviews = Number(obj.data?.reviews || 0);
-        if (idx >= 0) {
-          state.cards[idx] = mergeCardFromServer(localCard, obj.data);
+        let mergedCard;
+        if (idx !== undefined) {
+          mergedCard = mergeCardFromServer(localCard, obj.data);
+          state.cards[idx] = mergedCard;
         } else {
-          state.cards.push(normCard(obj.data));
+          mergedCard = normCard(obj.data);
+          state.cards.push(mergedCard);
+          cardIdxMap.set(mergedCard.id, state.cards.length - 1);
         }
         setSyncVersion('CARD', obj.objectId, obj.objectVersion);
         // If we preserved local FSRS state, the merged card differs from server.
@@ -524,18 +573,22 @@ async function pullFromCloud() {
           cloudSyncPushedSigs.delete(sigKey('CARD', obj.objectId));
           needsRepush = true;
         } else {
-          setPushedSig('CARD', obj.objectId, state.cards.find((c) => c.id === obj.objectId) || obj.data);
+          setPushedSig('CARD', obj.objectId, mergedCard);
         }
         changed = true;
       } else if (obj.objectType === 'DOCUMENT' && obj.data) {
-        const idx = state.documents.findIndex((d) => d.id === obj.objectId);
-        if (idx >= 0) {
-          state.documents[idx] = mergeDocumentFromServer(state.documents[idx], obj.data);
+        const idx = docIdxMap.get(obj.objectId);
+        let mergedDoc;
+        if (idx !== undefined) {
+          mergedDoc = mergeDocumentFromServer(state.documents[idx], obj.data);
+          state.documents[idx] = mergedDoc;
         } else {
-          state.documents.push(normDoc(obj.data));
+          mergedDoc = normDoc(obj.data);
+          state.documents.push(mergedDoc);
+          docIdxMap.set(mergedDoc.id, state.documents.length - 1);
         }
         setSyncVersion('DOCUMENT', obj.objectId, obj.objectVersion);
-        setPushedSig('DOCUMENT', obj.objectId, state.documents.find((d) => d.id === obj.objectId) || obj.data);
+        setPushedSig('DOCUMENT', obj.objectId, mergedDoc);
         changed = true;
       } else if (obj.objectType === 'SETTINGS' && obj.data) {
         // SETTINGS merge combines local + server data — result may differ from server.
@@ -553,9 +606,11 @@ async function pullFromCloud() {
     }
 
     if (changed) {
+      try { invalidateAllCardSearchIndices(); } catch (e) { /* non-fatal */ }
+      try { invalidateAllSignatureCaches(); } catch (e) { /* non-fatal */ }
       cloudSyncSuppressPush = true;
       try { save(); } finally { cloudSyncSuppressPush = false; }
-      refresh();
+      refreshDirty();
       scheduleSavePushedSigs();
       // If merge produced data that differs from server (e.g., local FSRS state
       // was preserved, or SETTINGS were combined), push it back immediately.

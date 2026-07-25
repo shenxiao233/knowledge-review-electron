@@ -21,6 +21,29 @@
   }
   const { marked, Renderer } = markedLib;
 
+  // Shared renderer — created once, reused across all markdownToHtml calls.
+  const sharedRenderer = new Renderer();
+  sharedRenderer.link = function(token) {
+    var href = token.href || '';
+    var title = token.title || '';
+    var text = token.text || '';
+    var safeUrl = markdownUrl(href, '#');
+    var titleAttr = title ? ' title="' + esc(title) + '"' : '';
+    return '<a href="' + safeUrl + '" target="_blank" rel="noreferrer"' + titleAttr + '>' + text + '</a>';
+  };
+  sharedRenderer.image = function(token) {
+    var href = token.href || '';
+    var alt = token.text || '';
+    return markdownImageMarkup(href, alt);
+  };
+  sharedRenderer.code = function(token) {
+    var code = token.text || '';
+    var lang = token.lang || '';
+    var escaped = esc(code);
+    var langClass = lang ? ' class="language-' + esc(lang) + '"' : '';
+    return '<pre><code' + langClass + '>' + escaped + '</code></pre>';
+  };
+
   /**
    * 将 Markdown 转换为 HTML
    * @param {string} markdown - Markdown 源码
@@ -69,38 +92,9 @@
       });
     }
 
-    // Phase 3: 创建自定义渲染器
-    var renderer = new Renderer();
-
-    // 自定义链接渲染（安全 URL + 新窗口打开）
-    renderer.link = function(token) {
-      var href = token.href || '';
-      var title = token.title || '';
-      var text = token.text || '';
-      var safeUrl = markdownUrl(href, '#');
-      var titleAttr = title ? ' title="' + esc(title) + '"' : '';
-      return '<a href="' + safeUrl + '" target="_blank" rel="noreferrer"' + titleAttr + '>' + text + '</a>';
-    };
-
-    // 自定义图片渲染（安全 URL）
-    renderer.image = function(token) {
-      var href = token.href || '';
-      var alt = token.text || '';
-      return markdownImageMarkup(href, alt);
-    };
-
-    // 代码块渲染（转义 HTML）
-    renderer.code = function(token) {
-      var code = token.text || '';
-      var lang = token.lang || '';
-      var escaped = esc(code);
-      var langClass = lang ? ' class="language-' + esc(lang) + '"' : '';
-      return '<pre><code' + langClass + '>' + escaped + '</code></pre>';
-    };
-
-    // Phase 4: marked 渲染
+    // Phase 4: marked 渲染（复用共享 Renderer）
     var html = marked.parse(processed, {
-      renderer: renderer,
+      renderer: sharedRenderer,
       gfm: true,
       breaks: false,
       pedantic: false

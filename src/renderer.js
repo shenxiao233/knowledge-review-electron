@@ -2,8 +2,9 @@
  * renderer.js — Application bootstrap entry point
  *
  * Load order in index.html (all shared global scope, no bundler):
- *   idb-store -> kr-core -> kr-state -> kr-cards -> kr-documents ->
- *   kr-review -> kr-market -> kr-profile -> kr-settings -> kr-ui -> THIS FILE
+ *   dexie.min -> kr-db -> idb-store -> kr-core -> kr-state -> kr-cards ->
+ *   kr-documents -> kr-review -> kr-market -> kr-profile -> kr-settings ->
+ *   kr-ui -> THIS FILE
  *
  * init() is defined in kr-settings.js. This file is the LAST script loaded,
  * so all dependencies are available when init() runs.
@@ -25,6 +26,15 @@ async function bootstrap() {
     }
   }
 }
+
+// Flush pending Dexie writes before the window closes to prevent data loss.
+// This is critical because Dexie saves are debounced (500ms) — if the user
+// closes the window during the debounce window, unsaved data would be lost.
+window.addEventListener('beforeunload', () => {
+  try {
+    if (typeof flushDexie === 'function') flushDexie().catch(() => {});
+  } catch (e) { /* non-fatal */ }
+});
 
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", function() {

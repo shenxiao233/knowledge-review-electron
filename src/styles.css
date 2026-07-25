@@ -28,6 +28,10 @@ button { cursor: pointer; border: 0; background: transparent; color: inherit; }
 input, textarea, select { border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius); padding: 8px 10px; color: var(--text); outline: none; }
 input:focus, textarea:focus, select:focus { border-color: #9ac7b7; box-shadow: 0 0 0 3px rgba(47, 125, 100, 0.1); }
 
+/* Hide native selects until enhanceSelectsPortal() wraps them in .select-shell.
+   Prevents the flash of unstyled native dropdown before JS enhancement runs. */
+body:not(.selects-ready) select:not(.select-shell select) { visibility: hidden; }
+
 .window-chrome { height: 38px; display: flex; align-items: center; justify-content: space-between; padding-left: 12px; background: #f4f3f1; border-bottom: 1px solid #e2dfda; color: #59635d; user-select: none; -webkit-app-region: drag; }
 .window-brand { min-width: 0; display: flex; align-items: center; gap: 9px; }
 .window-brand-mark { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; background: #263d35; color: #d5ebe1; }
@@ -3606,12 +3610,20 @@ select option { color: #34413b; background: #fff; }
 .user-rail-avatar:focus-visible { outline: 2px solid #67c99a; outline-offset: 2px; }
 .admin-rail-btn svg { width: 18px; height: 18px; }
 
-.market-auth-bootstrap { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; gap: 10px; background: #f7faf8; color: #2d5443; }
+.market-auth-bootstrap { position: absolute; inset: 0; z-index: 4; display: grid; place-content: center; justify-items: center; background: #f7faf8; overflow: hidden; }
 .market-auth-bootstrap[hidden] { display: none; }
-.market-auth-bootstrap strong { font-size: 16px; }
-.market-auth-bootstrap small { color: #91a49a; font-size: 11px; }
-.market-auth-spinner { width: 24px; height: 24px; border: 2px solid #d9ebe1; border-top-color: #2f8067; border-radius: 50%; animation: market-auth-spin .8s linear infinite; }
-@keyframes market-auth-spin { to { transform: rotate(360deg); } }
+.market-auth-bootstrap .loader { width: fit-content; height: fit-content; display: flex; align-items: center; justify-content: center; }
+.market-auth-bootstrap .wrapper { width: fit-content; height: fit-content; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+.market-auth-bootstrap .catContainer { width: 100%; height: fit-content; display: flex; align-items: center; justify-content: center; position: relative; }
+.market-auth-bootstrap .catbody { width: 80px; }
+.market-auth-bootstrap .tail { position: absolute; width: 17px; top: 50%; animation: cat-tail 0.5s ease-in infinite alternate-reverse; transform-origin: top; }
+@keyframes cat-tail { 0% { transform: rotateZ(60deg); } 50% { transform: rotateZ(0deg); } 100% { transform: rotateZ(-20deg); } }
+.market-auth-bootstrap .wall { width: 300px; }
+.market-auth-bootstrap .text { display: flex; flex-direction: column; width: 50px; position: absolute; margin: 0px 0px 100px 120px; }
+.market-auth-bootstrap .zzz { color: black; font-weight: 700; font-size: 15px; animation: cat-zzz 2s linear infinite; }
+.market-auth-bootstrap .bigzzz { color: black; font-weight: 700; font-size: 25px; margin-left: 10px; animation: cat-zzz 2.3s linear infinite; }
+@keyframes cat-zzz { 0% { color: transparent; } 50% { color: black; } 100% { color: transparent; } }
+.market-auth-bootstrap .loader-text { margin-top: 16px; font-size: 14px; font-weight: 600; color: #5a6b62; letter-spacing: 0.5px; }
 
 .settings-account-section { margin-top: 24px; padding: 22px; border: 1px solid #dce8e1; border-radius: 12px; background: #fbfdfc; }
 .settings-account-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }

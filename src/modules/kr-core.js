@@ -326,8 +326,9 @@ function ensureCardOrder(cards = []) {
   cards.forEach((card, index) => { const key = card.folder || '未分组'; if (!groups.has(key)) groups.set(key, []); groups.get(key).push({ card, index }); });
   groups.forEach((items) => {
     items.sort((a, b) => { const ao = Number(a.card.order); const bo = Number(b.card.order); const av = Number.isFinite(ao) && ao > 0 ? ao : Number.MAX_SAFE_INTEGER; const bv = Number.isFinite(bo) && bo > 0 ? bo : Number.MAX_SAFE_INTEGER; return av - bv || a.index - b.index; });
-    items.forEach(({ card }, index) => { card.order = index + 1; });
+    items.forEach(({ card }, index) => { const newOrder = index + 1; if (card.order !== newOrder) { card.order = newOrder; try { invalidateSignatureCache(card); } catch (e) { /* kr-sync.js may not be loaded yet at module-init time */ } } });
   });
+  bumpCardOrderVersion();
 }
 function groupCards(folder) { return state.cards.filter((card) => (card.folder || '未分组') === folder).sort((a, b) => Number(a.order || 0) - Number(b.order || 0)); }
 function cardPosition(card) {
@@ -339,17 +340,30 @@ function cardPosition(card) {
 }
 function reviewCount(card) { return Math.max(0, Number(card?.reviews ?? card?.fsrs?.reps ?? 0)); }
 function reviewCountLabel(card) { return `复习 ${reviewCount(card)} 次`; }
+
+// Version-based cache: positions and groupOrder are only rebuilt when cards
+// are added, removed, reordered, or when groups change.
+let _cardOrderVersion = 0;
+let _cachedVersion = -1;
+let _cachedGroupOrder = new Map();
+let _cachedPositions = new Map();
+function bumpCardOrderVersion() { _cardOrderVersion++; }
 function sortCardsForDisplay(cards) {
-  const groupOrder = new Map((state.groups || []).map((group, index) => [group, index]));
-  const positions = new Map();
-  const grouped = new Map();
-  state.cards.forEach((card) => {
-    const group = card.folder || '未分组';
-    if (!grouped.has(group)) grouped.set(group, []);
-    grouped.get(group).push(card);
-  });
-  grouped.forEach((items) => items.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0)).forEach((card, index) => positions.set(card.id, index + 1)));
-  cardPositionCache = positions;
+  if (_cachedVersion !== _cardOrderVersion) {
+    _cachedGroupOrder = new Map((state.groups || []).map((group, index) => [group, index]));
+    _cachedPositions = new Map();
+    const grouped = new Map();
+    state.cards.forEach((card) => {
+      const group = card.folder || '未分组';
+      if (!grouped.has(group)) grouped.set(group, []);
+      grouped.get(group).push(card);
+    });
+    grouped.forEach((items) => items.slice().sort((a, b) => Number(a.order || 0) - Number(b.order || 0)).forEach((card, index) => _cachedPositions.set(card.id, index + 1)));
+    cardPositionCache = _cachedPositions;
+    _cachedVersion = _cardOrderVersion;
+  }
+  const groupOrder = _cachedGroupOrder;
+  const positions = _cachedPositions;
   const reviewSort = cardSortDirection === 'reviews-asc' || cardSortDirection === 'reviews-desc';
   const direction = cardSortDirection === 'desc' || cardSortDirection === 'reviews-desc' ? -1 : 1;
   return cards.sort((a, b) => {
@@ -364,14 +378,14 @@ function normDoc(doc) {
   return { ...doc, id: doc.id || id('doc'), folderId: doc.folderId || null, title: doc.title || '未命名文档', html: doc.html || '<h1>未命名文档</h1><p>开始记录你的知识。</p>', createdAt: doc.createdAt || new Date().toISOString(), updatedAt: doc.updatedAt || doc.createdAt || new Date().toISOString() };
 }
 function reviewEventIsActive(event) {
-  const card = state.cards.find((item) => item.id === event.cardId);
+  const card = getCardIndex().get(event.cardId);
   if (!card?.resetAt || !event.reviewedAt) return true;
   return new Date(event.reviewedAt).getTime() > new Date(card.resetAt).getTime();
 }
 function reviewEventMatchesGroup(event, group) {
   if (group === 'all') return true;
   if (event.folder === group) return true;
-  return state.cards.find((card) => card.id === event.cardId)?.folder === group;
+  return getCardIndex().get(event.cardId)?.folder === group;
 }
 // Compress and resize an avatar image file to a small base64 JPEG data URL.
 // Max 256x256 pixels, JPEG quality 0.8 — typically results in 10-50KB base64 strings

@@ -7,9 +7,9 @@
  *           restoreLatexForStorage, formatBytes
  */
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'pushSelectedButton', 'dedupCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileDeckPagination', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { els[key] = document.getElementById(key); });
-  els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
-  els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'pushSelectedButton', 'dedupCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileDeckPagination', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { if (!els[key]) els[key] = document.getElementById(key); });
+  if (!els.reviewPriority) els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
+  if (!els.reviewPriorityDescription) els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
 }
 /* ensureAccountSecurityPanel removed - password change moved to market account menu */
 
@@ -26,20 +26,27 @@ async function init() {
   // locked until authentication succeeds, including when local data loads.
   try { setAppAuthLock(true); } catch (e) {}
 
-  // === Phase 1: Load data from all sources ===
-  let idbRecord = null;
+  // === Phase 1: Migrate old data & load from Dexie (primary backend) ===
+  // Start disk load in parallel with Dexie migration to minimize startup latency.
+  const _diskPromise = (async () => { try { return await window.reviewBridge?.data?.load(); } catch (e) { console.warn('[INIT] Persistent load failed:', e.message); return null; } })();
+
   try {
-    idbRecord = await idbLoadState();
+    const migrated = await migrateToDexie();
+    if (migrated) console.log('[INIT] Data migrated to Dexie structured stores.');
   } catch (e) {
-    console.warn('[INIT] IDB load failed:', e.message);
+    console.warn('[INIT] Migration failed:', e.message);
   }
 
-  let persistent = null;
+  // Load from Dexie structured stores (falls back to legacy IDB blob internally)
+  let dexieResult = null;
   try {
-    persistent = await window.reviewBridge?.data?.load();
+    dexieResult = await loadFromDexieWithFallback();
   } catch (e) {
-    console.warn('[INIT] Persistent load failed:', e.message);
+    console.warn('[INIT] Dexie load failed:', e.message);
   }
+
+  // Disk load was started in parallel — await its result now
+  let persistent = await _diskPromise;
 
   const browserState = localStorage.getItem(KEY) || localStorage.getItem('knowledge-review-state-v1');
 
@@ -56,16 +63,17 @@ async function init() {
     ? { data: persistent.data, savedAt: persistent.savedAt || '', source: 'electron' }
     : null;
 
-  const idbCandidate = idbRecord && idbRecord.data ? (() => {
-    try {
-      return { data: JSON.parse(idbRecord.data), savedAt: idbRecord.savedAt || '', source: 'indexedDB' };
-    } catch { return null; }
-  })() : null;
+  // Dexie result is either structured data { data, savedAt } or legacy { _legacy, _raw, _savedAt }
+  const dexieCandidate = dexieResult
+    ? dexieResult._legacy
+      ? (() => { try { return { data: JSON.parse(dexieResult._raw), savedAt: dexieResult._savedAt || '', source: 'dexie-legacy' }; } catch { return null; } })()
+      : { data: dexieResult.data, savedAt: dexieResult.savedAt || '', source: 'dexie' }
+    : null;
 
   const cardCount = (c) => Array.isArray(c?.data?.cards) ? c.data.cards.length : 0;
   const hasData = (c) => Boolean(c && (cardCount(c) || c.data?.documents?.length || c.data?.groups?.length));
 
-  const candidates = [idbCandidate, persistentCandidate, browserCandidate].filter(hasData);
+  const candidates = [dexieCandidate, persistentCandidate, browserCandidate].filter(hasData);
 
   // BUG-02 fix: Select by most recent savedAt instead of card count to prevent
   // deleted cards from "resurrecting" when an older snapshot has more cards.
@@ -94,7 +102,7 @@ async function init() {
   // === Phase 3: Apply selected data to state ===
   if (selected) {
     try {
-      state = hydrate(JSON.stringify(selected.data));
+      state = hydrate(selected.data);  // hydrate accepts object or string
     } catch (e) {
       console.error('[INIT] Hydrate failed:', e.message);
       state = hydrate('');
@@ -108,15 +116,15 @@ async function init() {
       console.warn('[INIT] localStorage write failed (may be full):', e.message);
     }
     try { schedulePersistentSave(true); } catch (e) {}
-    try { idbSaveState().catch(function(){}); } catch (e) {}
+    try { scheduleDexieSave(); } catch (e) {}
     idbReady = true;
   } else {
     state = hydrate('');
     try { save(); } catch (e) {}
   }
 
-  try { migrateLocalStorageToIDB().catch(function(){}); } catch (e) {}
-  idbReady = true;
+  // Rebuild in-memory card index for O(1) lookups
+  try { rebuildCardIndex(); } catch (e) { console.warn('[INIT] rebuildCardIndex failed:', e.message); }
 
 
   // === Phase 4: UI initialization (each step wrapped in try/catch) ===
@@ -140,15 +148,19 @@ async function init() {
   safeCall('ensureLocalModeSetting', ensureLocalModeSetting);
   safeCall('ensureCardEditorFields', ensureCardEditorFields);
   safeCall('enhanceSelectsPortal', enhanceSelectsPortal);
+  document.body.classList.add('selects-ready');
   safeCall('ensureToolbarPalettes', ensureToolbarPalettes);
   safeCall('bind', bind);
+  // Auto-login right after bind() — form submit handler is now attached.
+  // form.requestSubmit() fires synchronously, so the HTTP login request
+  // starts immediately and overlaps with the remaining Phase 4 work below.
+  loadWebDavConfig().catch(() => {}); // non-blocking — don't delay auto-login
+  try { ensureMarketRegistrationField(); } catch (e) {}
+  try { await loadSavedMarketCredentials(); } catch (e) {}
+
   safeCall('enableTooltips', enableTooltips);
   safeCall('bindUpdateEvents', bindUpdateEvents);
   safeCall('startAutoPushTimers', startAutoPushTimers);
-
-  try { await loadWebDavConfig(); } catch (e) {}
-  try { ensureMarketRegistrationField(); } catch (e) {}
-  try { await loadSavedMarketCredentials(); } catch (e) {}
 
   cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc';
 
@@ -253,21 +265,51 @@ function safeRender(label, fn) {
     console.error('[VIEW] view() failed for "' + name + '":', err);
   }
 }
- function refresh() {
-  safeRender('renderTree', renderTree);
-  safeRender('renderKnowledgeHome', renderKnowledgeHome);
-  safeRender('outline', outline);
-  safeRender('renderHeatmaps', renderHeatmaps);
-  safeRender('renderReviewPlanControls', renderReviewPlanControls);
-  safeRender('renderDock', renderDock);
-  safeRender('renderStandalone', renderStandalone);
-  safeRender('renderReviewHome', renderReviewHome);
-  safeRender('renderReviewPlan', renderReviewPlan);
-  safeRender('renderReviewHistory', renderReviewHistory);
-  safeRender('renderCards', renderCards);
-  safeRender('renderMarket', renderMarket);
-  safeRender('renderProfile', renderProfile);
-  safeRender('badges', badges);
+// Refresh only specific UI parts. Pass an object with truthy keys to render
+// a subset of views, e.g. refresh({ cards: true, dock: true }).
+// Called without arguments, renders everything (backward compatible).
+//
+// Available keys:
+//   tree, home, outline, heatmaps, reviewPlanControls, dock,
+//   standalone, reviewHome, reviewPlan, reviewHistory,
+//   cards, market, profile, badges
+const REFRESH_MAP = {
+  tree: () => safeRender('renderTree', renderTree),
+  home: () => safeRender('renderKnowledgeHome', renderKnowledgeHome),
+  outline: () => safeRender('outline', outline),
+  heatmaps: () => safeRender('renderHeatmaps', renderHeatmaps),
+  reviewPlanControls: () => safeRender('renderReviewPlanControls', renderReviewPlanControls),
+  dock: () => safeRender('renderDock', renderDock),
+  standalone: () => safeRender('renderStandalone', renderStandalone),
+  reviewHome: () => safeRender('renderReviewHome', renderReviewHome),
+  reviewPlan: () => safeRender('renderReviewPlan', renderReviewPlan),
+  reviewHistory: () => safeRender('renderReviewHistory', renderReviewHistory),
+  cards: () => safeRender('renderCards', renderCards),
+  market: () => safeRender('renderMarket', renderMarket),
+  profile: () => safeRender('renderProfile', renderProfile),
+  badges: () => safeRender('badges', badges),
+};
+function refresh(parts) {
+  if (!parts || typeof parts !== 'object') {
+    for (const fn of Object.values(REFRESH_MAP)) fn();
+    try { clearDirty(); } catch (e) { /* uiDirty may not be loaded yet */ }
+    return;
+  }
+  for (const key of Object.keys(parts)) {
+    if (parts[key] && REFRESH_MAP[key]) REFRESH_MAP[key]();
+  }
+  try { clearDirty(parts); } catch (e) { /* non-fatal */ }
+}
+// Refresh only views marked dirty by mutation functions.
+// Falls back to full refresh if no dirty flags are set (safety net).
+function refreshDirty() {
+  let any = false;
+  const parts = {};
+  for (const key of Object.keys(uiDirty)) {
+    if (uiDirty[key]) { any = true; parts[key] = true; }
+  }
+  if (any) refresh(parts);
+  else refresh(); // safety: full refresh if nothing flagged dirty
 }
 function setting(name) { $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.setting === name)); $$('.setting-panel').forEach((panel) => panel.classList.toggle('active', panel.id === `${name}Panel`)); }
 function formatBytes(value) {

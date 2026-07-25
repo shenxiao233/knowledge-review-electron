@@ -9,7 +9,7 @@
 function buildQueue(force = false) {
   const activeGroup = state.reviewPlan?.group || 'all';
   const order = state.reviewPlan?.order === 'random' ? 'random' : 'ordered';
-  const inPlan = (item) => activeGroup === 'all' || item.folder === activeGroup || state.cards.find((card) => card.id === item.cardId)?.folder === activeGroup;
+  const inPlan = (item) => activeGroup === 'all' || item.folder === activeGroup || getCardIndex().get(item.cardId)?.folder === activeGroup;
   const reviewedToday = todayReviewEvents().filter((event) => reviewEventIsActive(event) && inPlan(event)).length;
   const remaining = Math.max(0, (Number(state.settings.dailyLimit) || 50) - reviewedToday);
   const due = state.cards.filter((card) => inPlan(card) && !card.suspended && isDue(card));
@@ -44,7 +44,7 @@ function renderStandalone() { if (!answered) buildQueue(); renderQuestion($('#st
 function finalizeMultiple(card) { if (!answer.length) return toast('请至少选择一个选项。'); answerCard(card, null, true); }
 function answerNoteCardLegacy(card, rating) { if (answered) return; recordReviewLegacy(card, rating); }
 function recordReviewLegacy(card, rating) { recordReview(card, rating === 'familiar' ? 'Good' : rating === 'fuzzy' ? 'Hard' : 'Again'); }
-function next() { if (Date.now() - lastNext < 450 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisposition = 'pending'; reviewDisplayCard = null; index = 0; buildQueue(); renderDock(); renderStandalone(); renderReviewPlan(); }
+function next() { if (Date.now() - lastNext < 100 || pendingReviewCardId) return; lastNext = Date.now(); answered = false; answer = []; pendingCorrect = false; reviewDisposition = 'pending'; reviewDisplayCard = null; index = 0; buildQueue(); renderDock(); renderStandalone(); renderReviewPlan(); }
 function retryCurrentReview() { if (!reviewDisplayCard) return; answered = false; answer = []; pendingCorrect = false; reviewDisposition = 'pending'; pendingReviewCardId = ''; renderDock(); renderStandalone(); }
 function reviewActionButtons(card) { return `<div class="review-space-actions"><button type="button" class="review-action-button retry-review-action" data-review-action="retry">再选一次</button><button type="button" class="review-action-button primary-review-action" data-review-action="next">${card.type === 'note' ? '下一条' : '下一题'}</button></div>`; }
 function reviewDispositionActions(card) {
@@ -131,7 +131,7 @@ function renderReviewHistory() {
     return;
   }
   els.reviewHistory.innerHTML = events.map((event) => {
-    const card = state.cards.find((item) => item.id === event.cardId);
+    const card = getCardIndex().get(event.cardId);
     const title = event.question || card?.question || '已删除卡片';
     const folder = event.folder || card?.folder || '未分组';
     const meta = reviewRatingMeta(event);
@@ -142,7 +142,58 @@ function renderReviewHistory() {
 
 function shiftHeatmapMonth(offset) { heatmapMonth = new Date(heatmapMonth.getFullYear(), heatmapMonth.getMonth() + offset, 1); renderHeatmaps(); }
 function renderHeatmaps() { renderGithubHeatmap(els.heatmap); els.todayCount.textContent = `共 ${state.reviewLog[today()] || 0} 次复习`; }
-function renderGithubHeatmap(box) { if (!box) return; const weeks = box.classList.contains('compact') ? 26 : 52; const totalDays = weeks * 7; const now = new Date(); now.setHours(0, 0, 0, 0); const start = new Date(now.getTime() - (totalDays - 1) * DAY); box.classList.remove('monthly-heatmap'); box.classList.add('github-heatmap'); box.innerHTML = ''; for (let i = 0; i < totalDays; i += 1) { const date = new Date(start.getTime() + i * DAY); const key = dateKey(date); const count = state.reviewLog[key] || 0; const cell = document.createElement('button'); cell.type = 'button'; cell.className = `heat-cell ${count > 30 ? 'heat-3' : count > 10 ? 'heat-2' : count ? 'heat-1' : ''}`; cell.title = `${key} · ${count} 次复习${i === totalDays - 1 ? ' · 今天' : ''}`; cell.setAttribute('aria-label', `${key}，${count} 次复习${i === totalDays - 1 ? '，今天' : ''}`); cell.dataset.date = key; if (i === totalDays - 1) cell.classList.add('today-cell'); cell.addEventListener('click', () => { $$('.heat-cell.selected').forEach((item) => item.classList.remove('selected')); cell.classList.add('selected'); toast(`${key} · ${count} 次复习`); }); box.appendChild(cell); } }
+function renderGithubHeatmap(box) {
+  if (!box) return;
+  const weeks = box.classList.contains('compact') ? 26 : 52;
+  const totalDays = weeks * 7;
+  const now = new Date(); now.setHours(0, 0, 0, 0);
+  const start = new Date(now.getTime() - (totalDays - 1) * DAY);
+  box.classList.remove('monthly-heatmap');
+  box.classList.add('github-heatmap');
+  // Event delegation: one click handler on the container instead of per-cell.
+  if (!box._heatDelegate) {
+    box._heatDelegate = true;
+    box.addEventListener('click', (event) => {
+      const cell = event.target.closest('.heat-cell');
+      if (!cell) return;
+      $$('.heat-cell.selected').forEach((item) => item.classList.remove('selected'));
+      cell.classList.add('selected');
+      toast(`${cell.dataset.date} · ${cell.dataset.count || 0} 次复习`);
+    });
+  }
+  // First build: create the grid. Subsequent calls: only update className/title.
+  const existing = box.querySelectorAll('.heat-cell');
+  if (existing.length === totalDays) {
+    for (let i = 0; i < totalDays; i += 1) {
+      const date = new Date(start.getTime() + i * DAY);
+      const key = dateKey(date);
+      const count = state.reviewLog[key] || 0;
+      const cell = existing[i];
+      cell.className = `heat-cell ${count > 30 ? 'heat-3' : count > 10 ? 'heat-2' : count ? 'heat-1' : ''}${i === totalDays - 1 ? ' today-cell' : ''}`;
+      cell.title = `${key} · ${count} 次复习${i === totalDays - 1 ? ' · 今天' : ''}`;
+      cell.setAttribute('aria-label', `${key}，${count} 次复习${i === totalDays - 1 ? '，今天' : ''}`);
+      cell.dataset.date = key;
+      cell.dataset.count = count;
+    }
+  } else {
+    box.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    for (let i = 0; i < totalDays; i += 1) {
+      const date = new Date(start.getTime() + i * DAY);
+      const key = dateKey(date);
+      const count = state.reviewLog[key] || 0;
+      const cell = document.createElement('button');
+      cell.type = 'button';
+      cell.className = `heat-cell ${count > 30 ? 'heat-3' : count > 10 ? 'heat-2' : count ? 'heat-1' : ''}${i === totalDays - 1 ? ' today-cell' : ''}`;
+      cell.title = `${key} · ${count} 次复习${i === totalDays - 1 ? ' · 今天' : ''}`;
+      cell.setAttribute('aria-label', `${key}，${count} 次复习${i === totalDays - 1 ? '，今天' : ''}`);
+      cell.dataset.date = key;
+      cell.dataset.count = count;
+      frag.appendChild(cell);
+    }
+    box.appendChild(frag);
+  }
+}
 
 function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(days * 24 * 60))} 分钟`; if (days < 2) return `${Math.max(1, Math.round(days * 24))} 小时`; return `${Math.round(days)} 天`; }
 function syncSettings() {
@@ -399,15 +450,20 @@ function recordReview(card, rating, suspendAfter = false, forceTomorrow = false)
   pendingReviewCardId = '';
   pendingCorrect = false;
   reviewDisposition = 'pending';
+  saveCardChange(card.id);
+  markDirty({ reviewPlan: true, reviewHistory: true, heatmaps: true, badges: true, dock: true });
   save();
   queueVersion++;
   buildQueue();
   renderDock();
   renderStandalone();
-  renderReviewPlan();
-  renderReviewHistory();
-  renderHeatmaps();
-  badges();
+  // Defer non-critical renders to next frame: keep review flow responsive
+  requestAnimationFrame(() => {
+    renderReviewPlan();
+    renderReviewHistory();
+    renderHeatmaps();
+    badges();
+  });
 }
 function streak() {
   // BUG-09 fix: If today has reviews, start counting from today (i=0).

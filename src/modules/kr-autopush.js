@@ -175,7 +175,7 @@ async function retryFailedPushes() {
 
 async function retryCardPush(cardId) {
   if (!marketUnlocked || !marketToken) { toast('请先登录牌组市场。'); return; }
-  const card = state.cards.find((c) => c.id === cardId);
+  const card = getCardIndex().get(cardId);
   if (!card || !card.pushStatus || card.pushStatus.status !== 'failed') return;
   const action = card.pushStatus.action || 'MODIFY';
   const snapshot = card.pushStatus.snapshot;
@@ -188,7 +188,7 @@ async function retryCardPush(cardId) {
 // --- Clear a card's push status (convert to local) ---
 
 function clearCardPush(cardId) {
-  const card = state.cards.find((c) => c.id === cardId);
+  const card = getCardIndex().get(cardId);
   if (!card || !card.pushStatus) return;
   const wasAdd = card.pushStatus.action === 'ADD';
   card.pushStatus = null;
