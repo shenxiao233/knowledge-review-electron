@@ -1,6 +1,7 @@
 ﻿import 'dotenv/config';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import compress from '@fastify/compress';
 import jwt from '@fastify/jwt';
 import multipart from '@fastify/multipart';
 import { Redis } from 'ioredis';
@@ -42,6 +43,10 @@ await app.register(cors, {
     return callback(new Error('Origin is not allowed'), false);
   },
 });
+
+// Enable gzip/deflate compression for all responses — critical for sync data
+// over high-latency connections (JSON compresses 70-80%).
+await app.register(compress, { threshold: 1024 });
 
 await app.register(jwt, { secret: config.jwtSecret });
 await app.register(multipart, { limits: { fileSize: maxUploadBytes, files: 1 } });
