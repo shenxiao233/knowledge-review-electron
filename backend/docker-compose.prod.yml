@@ -15,8 +15,12 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-market}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       POSTGRES_DB: ${POSTGRES_DB:-market}
+    # Use tuned config for 1 vCore / 2GB RAM VPS.
+    # See postgres/postgresql.conf for memory budget details.
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-market} -d ${POSTGRES_DB:-market}"]
       interval: 5s
@@ -35,10 +39,14 @@ services:
       - .env.prod
     environment:
       # Connect to the postgres service by service name (no host.docker.internal needed).
-      DATABASE_URL: postgresql://${POSTGRES_USER:-market}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-market}?schema=public
+      # connection_limit=8 caps the Prisma pool for a 2GB VPS (PG max_connections=50).
+      # pool_timeout=20s prevents indefinite hangs if the pool is exhausted.
+      DATABASE_URL: postgresql://${POSTGRES_USER:-market}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-market}?schema=public&connection_limit=8&pool_timeout=20
       STORAGE_DIR: /app/storage
     ports:
-      - "${API_PORT:-4000}:4000"
+      # Bind to localhost only — Nginx (on host) handles external traffic.
+      # If not using Nginx, change to "${API_PORT:-4000}:4000" to expose publicly.
+      - "127.0.0.1:${API_PORT:-4000}:4000"
     volumes:
       - "${HOST_STORAGE_DIR:-./storage}:/app/storage"
     depends_on:

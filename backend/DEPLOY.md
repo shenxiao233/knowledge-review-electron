@@ -85,12 +85,12 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm \
 ### 6. 防火墙放行端口
 
 ```bash
-# Ubuntu UFW
-sudo ufw allow 4000/tcp
+# Ubuntu UFW — 开放 Nginx 端口（HTTP + HTTPS）
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
 
-# 或 firewalld (CentOS/RHEL)
-sudo firewall-cmd --permanent --add-port=4000/tcp
-sudo firewall-cmd --reload
+# 如果不使用 Nginx，直接暴露 API 端口：
+# sudo ufw allow 4000/tcp
 ```
 
 ### 7. 客户端配置
@@ -103,34 +103,90 @@ http://your-server-ip:4000
 
 以及对应的 `marketServerKey`（必须和 `.env.prod` 中的 `MARKET_ACCESS_KEY` 一致）。
 
-## 可选：Nginx 反向代理 + HTTPS
+## Nginx 反向代理 + HTTPS（推荐）
 
-生产环境建议用域名 + HTTPS。安装 Nginx 后配置：
+仓库已包含针对 1 vCore / 2GB VPS 调优的 Nginx 配置和 PostgreSQL 参数。生产环境建议使用 Nginx 作为反向代理，原因如下：
 
-```nginx
-server {
-    listen 80;
-    server_name api.your-domain.com;
+- **TLS 终结**：Nginx 处理 HTTPS 加解密，释放 Node.js 的 CPU
+- **请求缓冲**：250MB 上传时 Nginx 先接收完整请求体再转发后端，慢客户端不占用 Node.js 事件循环
+- **超时控制**：防止慢客户端长时间挂住连接
+- **gzip 压缩**：与 Fastify 的压缩互补
+- **安全**：隐藏 Node.js 直接暴露的端口
 
-    # Certbot 会自动添加 443/SSL 配置
-    location / {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-然后申请 Let's Encrypt 证书：
+### 1. 安装 Nginx 并部署配置
 
 ```bash
-sudo apt install certbot python3-certbot-nginx
+sudo apt update && sudo apt install -y nginx
+
+# 部署仓库内的配置文件
+sudo cp nginx/nginx.conf /etc/nginx/sites-available/market-api
+sudo ln -s /etc/nginx/sites-available/market-api /etc/nginx/sites-enabled/
+sudo rm -f /etc/nginx/sites-enabled/default
+
+# 创建 certbot 挑战目录（用于 Let's Encrypt）
+sudo mkdir -p /var/www/certbot
+
+# 测试配置并重载
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### 2. 申请 HTTPS 证书
+
+```bash
+sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d api.your-domain.com
 ```
 
-使用 Nginx 反向代理时，在 `.env.prod` 中设置 `TRUST_PROXY=true`，这样 rate limit 会使用真实客户端 IP。
+Certbot 会自动修改 Nginx 配置添加 443/SSL 并设置自动续期。
+
+### 3. 设置 TRUST_PROXY
+
+在 `.env.prod` 中确保：
+
+```bash
+TRUST_PROXY=true
+```
+
+这样 Fastify 会从 `X-Forwarded-For` 读取真实客户端 IP，rate limiting 才能正常工作。
+
+### 4. 重启服务
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod restart api
+```
+
+### 5. 客户端配置
+
+在 Electron 应用中，打开 设置 → 服务器地址，填入：
+
+```
+https://api.your-domain.com
+```
+
+以及对应的 `marketServerKey`（必须和 `.env.prod` 中的 `MARKET_ACCESS_KEY` 一致）。
+
+## PostgreSQL 调优 & Prisma 连接池
+
+仓库已包含针对 2GB VPS 调优的 PostgreSQL 配置（`postgres/postgresql.conf`），通过 `docker-compose.prod.yml` 自动挂载，无需手动操作。
+
+| 参数 | 值 | 说明 |
+|------|-----|------|
+| `max_connections` | 50 | 1 个 API 进程 + 迁移 + 管理查询 |
+| `shared_buffers` | 256MB | ~12.5% 总内存 |
+| `effective_cache_size` | 512MB | 提示查询规划器可用缓存 |
+| `work_mem` | 2MB | 每连接排序内存 |
+
+Prisma 连接池已通过 `DATABASE_URL` 中的 `connection_limit=8&pool_timeout=20` 参数控制。在 1 vCore 机器上，Prisma 默认只开 3 个连接（`CPU × 2 + 1`），8 个连接能更好处理并发请求，同时 50 个 PG max_connections 留有充裕余量。
+
+### 内存分配概览（2GB VPS）
+
+```
+PostgreSQL:  ~350MB  (shared_buffers 256MB + work_mem × conns + overhead)
+Node.js API: ~250MB
+Nginx:       ~20MB
+OS + 缓存:   ~400MB
+剩余:        ~980MB  (OS page cache 补充数据库缓存)
+```
 
 ## 常用运维命令
 
