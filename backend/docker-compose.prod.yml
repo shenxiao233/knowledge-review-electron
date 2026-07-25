@@ -1,0 +1,55 @@
+# Production Docker Compose — includes PostgreSQL + API
+# Usage:
+#   cp .env.prod.example .env.prod   # then edit values
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Create admin user after first boot:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod run --rm \
+#     --entrypoint node api dist/scripts/create-admin.js
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-market}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-market}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-market} -d ${POSTGRES_DB:-market}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    # Do not expose PostgreSQL port to the host in production.
+    # If you need direct access for debugging, uncomment:
+    # ports:
+    #   - "5432:5432"
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env.prod
+    environment:
+      # Connect to the postgres service by service name (no host.docker.internal needed).
+      DATABASE_URL: postgresql://${POSTGRES_USER:-market}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-market}?schema=public
+      STORAGE_DIR: /app/storage
+    ports:
+      - "${API_PORT:-4000}:4000"
+    volumes:
+      - "${HOST_STORAGE_DIR:-./storage}:/app/storage"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  postgres_data:
