@@ -408,12 +408,11 @@ async function pushToCloud() {
     }
   }
 
-  // --- Phase 3: Delete removed objects from server ---
-  for (const { objectType, objectId, key } of deletedKeys) {
+  // --- Phase 3: Delete removed objects from server (parallel for low latency) ---
+  await Promise.allSettled(deletedKeys.map(async ({ objectType, objectId, key }) => {
     try {
       await marketApi(`/v2/sync/${objectType}/${encodeURIComponent(objectId)}`, { method: 'DELETE' });
       cloudSyncPushedSigs.delete(key);
-      // Reset version tracking for deleted object
       setSyncVersion(objectType, objectId, 0);
     } catch (err) {
       // Non-fatal — might already be deleted on server
@@ -422,7 +421,7 @@ async function pushToCloud() {
         setSyncVersion(objectType, objectId, 0);
       }
     }
-  }
+  }));
 
   // --- Phase 4: Merge conflicts from server ---
   if (conflictsToMerge.length > 0) {
@@ -480,6 +479,7 @@ async function pushToCloud() {
     console.log(`[CLOUD-SYNC] Pushed ${pushSuccessCount} objects, deleted ${deletedKeys.length} objects.`);
     scheduleSavePushedSigs();
   }
+  return pushSuccessCount + deletedKeys.length;
 }
 
 // --- Pull from cloud ---
@@ -583,8 +583,9 @@ async function fullCloudSync() {
       }
     }
     // Phase 2: Push local changes (incremental — only changed objects)
-    await pushToCloud();
-    // Phase 3: Register/update device sync time
+    const pushedCount = await pushToCloud();
+    // Phase 3: Register/update device sync time (skip when nothing changed to save a round-trip)
+    if (pulledCount > 0 || pushedCount > 0 || !state.syncMeta?.serverDeviceId) {
     try {
       let serverDeviceId = state.syncMeta?.serverDeviceId || '';
       if (!serverDeviceId) {
@@ -609,6 +610,7 @@ async function fullCloudSync() {
       }
     } catch (e) {
       // Non-fatal — device sync time tracking is optional
+    }
     }
     setLastSyncAt(new Date().toISOString());
     cloudSyncSuppressPush = true;

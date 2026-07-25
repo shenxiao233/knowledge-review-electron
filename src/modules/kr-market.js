@@ -359,9 +359,9 @@ async function showMarketDecks() {
   marketSurface = 'decks';
   if (marketUnlocked) {
     try {
-      await loadMarketCategories();
-      await loadMarketDecks();
-      await loadMarketFavorites();
+      const results = await Promise.allSettled([loadMarketCategories(), loadMarketDecks(), loadMarketFavorites()]);
+      const firstError = results.find((r) => r.status === 'rejected');
+      if (firstError) throw firstError.reason;
     } catch (error) {
       toast(error instanceof Error ? error.message : '公开牌组刷新失败。');
     }
@@ -370,7 +370,11 @@ async function showMarketDecks() {
 }
 async function refreshMarketPage({ resetPage = false } = {}) {
   if (resetPage) marketPage = 1;
-  try { await loadMarketCategories(); await loadMarketDecks(); await loadMarketFavorites(); } catch (error) { toast(error instanceof Error ? error.message : '公开牌组刷新失败。'); }
+  try {
+    const results = await Promise.allSettled([loadMarketCategories(), loadMarketDecks(), loadMarketFavorites()]);
+    const firstError = results.find((r) => r.status === 'rejected');
+    if (firstError) throw firstError.reason;
+  } catch (error) { toast(error instanceof Error ? error.message : '公开牌组刷新失败。'); }
   renderMarket();
 }
 function marketProfileSummary() {
@@ -705,11 +709,18 @@ async function submitMarketAuth(event) {
     marketToken = result.token || '';
     marketUser = result.user || null;
     if (!marketToken) throw new Error('服务器没有返回有效登录令牌');
-    try { await loadMarketCapabilities(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketCapabilities failed (non-fatal):", e.message); }
-    try { await loadMarketCategories(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketCategories failed (non-fatal):", e.message); }
-    try { await syncMyMarketDeckMetadata(); } catch(e) { console.warn("[MARKET-AUTH] syncMyMarketDeckMetadata failed (non-fatal):", e.message); }
-    try { await loadMarketDecks(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketDecks failed (non-fatal):", e.message); }
-    try { await loadMarketFavorites(); } catch(e) { console.warn("[MARKET-AUTH] loadMarketFavorites failed (non-fatal):", e.message); }
+    // Parallel: load all market data + profile in one round-trip instead of 6 sequential awaits
+    const [capsRes, catRes, metaRes, decksRes, favsRes, profRes] = await Promise.allSettled([
+      loadMarketCapabilities(),
+      loadMarketCategories(),
+      syncMyMarketDeckMetadata(),
+      loadMarketDecks(),
+      loadMarketFavorites(),
+      fetchServerProfile(),
+    ]);
+    [capsRes, catRes, metaRes, decksRes, favsRes, profRes].forEach((r, i) => {
+      if (r.status === 'rejected') console.warn(`[MARKET-AUTH] Post-login call #${i} failed (non-fatal):`, r.reason?.message || r.reason);
+    });
     const wasAppAuthLocked = appAuthLocked;
     marketUnlocked = true;
     setAppAuthLock(false);
@@ -720,7 +731,6 @@ async function submitMarketAuth(event) {
     if (currentUserId) checkAndHandleUserChange(currentUserId);
     // Trigger full cloud sync after login — pull server data then push local state
     try { fullCloudSync().catch((e) => console.warn("[MARKET-AUTH] Cloud sync failed (non-fatal):", e.message)); } catch(e) { console.warn("[MARKET-AUTH] Cloud sync trigger failed:", e.message); }
-    try { await fetchServerProfile(); } catch(e) { console.warn("[MARKET-AUTH] fetchServerProfile failed (non-fatal):", e.message); }
     if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
     $('#marketAuthForm')?.classList.add('is-authenticated');
     await saveMarketLoginCredentials(username, password);
