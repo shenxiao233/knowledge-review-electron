@@ -964,34 +964,67 @@ async function renderAdminWorkspace() {
   // Bind navigation before awaiting remote data so a failed endpoint cannot freeze the workspace.
   bindAdminWorkspaceEvents();
   if (adminActiveTab === 'users') {
-    let usersResult;
-    try {
-      usersResult = await adminApi(`/admin/users?page=${adminPage.users}&pageSize=${adminPageSize}`);
-    } catch (error) {
-      content.innerHTML = `<section class="admin-section-card admin-load-error"><h2>许可用户暂时无法加载</h2><p>${esc(error.message || '请检查后端服务。')}</p><button type="button" class="table-action" data-admin-retry="true">重新加载</button></section>`;
+    const cacheKey = adminPage.users;
+    const now = Date.now();
+    const cached = adminUsersCache && adminUsersCache._cacheKey === cacheKey ? adminUsersCache : null;
+    const isFresh = cached && (now - adminUsersCacheTime) < ADMIN_USERS_CACHE_TTL;
+
+    function renderUsersTable(result) {
+      const page = result.items ? result : adminPaginate(result, adminPage.users);
+      adminTotalPages.users = page.totalPages;
+      content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">LICENSED ACCOUNTS</span><h2>许可用户</h2><p>普通用户必须启用后才能进入牌组市场。</p></div></div><form id="adminCreateUserForm" class="admin-create-form"><input id="adminNewUsername" required minlength="3" placeholder="账户名" /><input id="adminNewPassword" required minlength="8" type="password" placeholder="初始密码（至少 8 位）" /><button type="submit" class="primary">创建账户</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${page.items.map((user) => { const displayName = user.nickname || user.username; const cachedAvatar = adminAvatarCache[user.id]; const avatarHtml = cachedAvatar ? `<img src="${esc(cachedAvatar)}" alt="" class="admin-user-avatar" />` : `<span class="admin-user-avatar-fallback" data-admin-user-avatar="${esc(user.id)}">${esc(displayName.slice(0, 1).toUpperCase())}</span>`; return `<tr><td><div class="admin-user-cell">${avatarHtml}<div class="admin-user-info"><strong>${esc(displayName)}</strong><small>${esc(user.username)}</small></div></div></td><td><span class="admin-role">${esc(user.role)}</span></td><td><span class="admin-enabled ${user.enabled ? 'on' : 'off'}">${user.enabled ? '已启用' : '已停用'}</span></td><td>${esc(formatDateTime(user.createdAt))}</td><td class="admin-action-cell"><button type="button" class="table-action" data-admin-user-action="${user.enabled ? 'disable' : 'enable'}" data-admin-user-id="${esc(user.id)}">${user.enabled ? '停用' : '启用'}</button><button type="button" class="table-action" data-admin-user-reset="${esc(user.id)}" data-admin-user-name="${esc(user.nickname || user.username)}" title="重置密码">重置密码</button><button type="button" class="table-action danger" data-admin-user-delete="${esc(user.id)}" title="删除账户">删除</button></td></tr>`; }).join('')}</tbody></table></div>${adminPaginationMarkup('users', page)}</section>`;
       bindAdminWorkspaceEvents();
-      return;
-    }
-    if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
-    const page = usersResult.items ? usersResult : adminPaginate(usersResult, adminPage.users);
-    adminTotalPages.users = page.totalPages;
-    content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">LICENSED ACCOUNTS</span><h2>许可用户</h2><p>普通用户必须启用后才能进入牌组市场。</p></div></div><form id="adminCreateUserForm" class="admin-create-form"><input id="adminNewUsername" required minlength="3" placeholder="账户名" /><input id="adminNewPassword" required minlength="8" type="password" placeholder="初始密码（至少 8 位）" /><button type="submit" class="primary">创建账户</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${page.items.map((user) => { const displayName = user.nickname || user.username; const avatarHtml = `<span class="admin-user-avatar-fallback" data-admin-user-avatar="${esc(user.id)}">${esc(displayName.slice(0, 1).toUpperCase())}</span>`; return `<tr><td><div class="admin-user-cell">${avatarHtml}<div class="admin-user-info"><strong>${esc(displayName)}</strong><small>${esc(user.username)}</small></div></div></td><td><span class="admin-role">${esc(user.role)}</span></td><td><span class="admin-enabled ${user.enabled ? 'on' : 'off'}">${user.enabled ? '已启用' : '已停用'}</span></td><td>${esc(formatDateTime(user.createdAt))}</td><td class="admin-action-cell"><button type="button" class="table-action" data-admin-user-action="${user.enabled ? 'disable' : 'enable'}" data-admin-user-id="${esc(user.id)}">${user.enabled ? '停用' : '启用'}</button><button type="button" class="table-action" data-admin-user-reset="${esc(user.id)}" data-admin-user-name="${esc(user.nickname || user.username)}" title="重置密码">重置密码</button><button type="button" class="table-action danger" data-admin-user-delete="${esc(user.id)}" title="删除账户">删除</button></td></tr>`; }).join('')}</tbody></table></div>${adminPaginationMarkup('users', page)}</section>`;
-    // Lazy-load avatars in parallel (non-blocking — table renders instantly with letter fallbacks)
-    Promise.allSettled(page.items.map(async (user) => {
-      try {
-        const result = await adminApi(`/admin/users/${encodeURIComponent(user.id)}/avatar`);
-        if (result?.avatar && renderToken === adminRenderToken && activeTab === adminActiveTab) {
-          const el = content.querySelector(`[data-admin-user-avatar="${user.id}"]`);
-          if (el) {
-            const img = document.createElement('img');
-            img.src = result.avatar;
-            img.alt = '';
-            img.className = 'admin-user-avatar';
-            el.replaceWith(img);
+      // Lazy-load avatars that aren't cached yet (non-blocking)
+      Promise.allSettled(page.items.filter((u) => !(u.id in adminAvatarCache)).map(async (user) => {
+        try {
+          const res = await adminApi(`/admin/users/${encodeURIComponent(user.id)}/avatar`);
+          if (res?.avatar) { adminAvatarCache[user.id] = res.avatar; }
+          else { adminAvatarCache[user.id] = ''; }
+          if (renderToken === adminRenderToken && activeTab === adminActiveTab) {
+            const el = content.querySelector(`[data-admin-user-avatar="${user.id}"]`);
+            if (el && res?.avatar) {
+              const img = document.createElement('img');
+              img.src = res.avatar;
+              img.alt = '';
+              img.className = 'admin-user-avatar';
+              el.replaceWith(img);
+            }
           }
-        }
-      } catch { /* avatar is optional */ }
-    }));
+        } catch { /* avatar is optional */ }
+      }));
+    }
+
+    if (isFresh) {
+      renderUsersTable(cached);
+    } else if (cached) {
+      // Stale-while-revalidate: render cached data instantly, refresh in background
+      renderUsersTable(cached);
+      (async () => {
+        try {
+          const fresh = await adminApi(`/admin/users?page=${adminPage.users}&pageSize=${adminPageSize}`);
+          if (renderToken === adminRenderToken && activeTab === adminActiveTab) {
+            fresh._cacheKey = cacheKey;
+            adminUsersCache = fresh;
+            adminUsersCacheTime = Date.now();
+            renderUsersTable(fresh);
+          }
+        } catch { /* keep stale data */ }
+      })();
+    } else {
+      // No cache — fetch from network
+      try {
+        const usersResult = await adminApi(`/admin/users?page=${adminPage.users}&pageSize=${adminPageSize}`);
+        if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
+        usersResult._cacheKey = cacheKey;
+        adminUsersCache = usersResult;
+        adminUsersCacheTime = Date.now();
+        renderUsersTable(usersResult);
+      } catch (error) {
+        content.innerHTML = `<section class="admin-section-card admin-load-error"><h2>许可用户暂时无法加载</h2><p>${esc(error.message || '请检查后端服务。')}</p><button type="button" class="table-action" data-admin-retry="true">重新加载</button></section>`;
+        bindAdminWorkspaceEvents();
+        return;
+      }
+    }
   } else if (adminActiveTab === 'audit') {
     let result;
     try { result = await adminApi(`/admin/audit-logs?page=${adminPage.audit}&pageSize=${adminPageSize}`); } catch (error) {
@@ -1086,7 +1119,7 @@ function bindAdminWorkspaceEvents() {
   $$('.admin-nav [data-admin-tab]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminTab; renderAdminWorkspace(); });
   $$('[data-admin-go]').forEach((button) => button.onclick = () => { adminActiveTab = button.dataset.adminGo; renderAdminWorkspace(); });
   $$('[data-admin-page]').forEach((button) => button.onclick = () => { const kind = button.dataset.adminPage; adminPage[kind] = Number(button.dataset.page); renderAdminWorkspace(); });
-  $$('[data-admin-retry]').forEach((button) => button.onclick = () => renderAdminWorkspace());
+  $$('[data-admin-retry]').forEach((button) => button.onclick = () => { adminUsersCacheTime = 0; renderAdminWorkspace(); });
   $$('[data-admin-storage-refresh]').forEach((button) => button.onclick = async () => { button.disabled = true; try { const result = await adminApi('/admin/storage/health'); toast(result.healthy ? '存储检查通过。' : `发现 ${result.missing.length + result.orphanFiles.length} 个文件问题。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '存储检查失败。'); } finally { button.disabled = false; } });
   $$('[data-admin-storage-cleanup]').forEach((button) => button.onclick = async () => { if (!await adminConfirm('只清理超过 24 小时的临时上传文件，继续吗？', '清理临时文件')) return; button.disabled = true; try { const result = await adminApi('/admin/storage/cleanup', { method: 'POST', body: JSON.stringify({ olderThanHours: 24, removeOrphans: false, removeQuarantine: false }) }); toast(`已清理 ${result.removed.length} 个临时文件。`); await renderAdminWorkspace(); } catch (error) { toast(error.message || '清理失败。'); } finally { button.disabled = false; } });
   const createInvitationForm = $('#adminCreateInvitationForm');
@@ -1140,6 +1173,7 @@ function bindAdminWorkspaceEvents() {
     try {
       await adminApi('/admin/users', { method: 'POST', body: JSON.stringify({ username: $('#adminNewUsername').value.trim(), password: $('#adminNewPassword').value }) });
       toast('许可账户已创建。');
+      adminUsersCacheTime = 0;
       await renderAdminWorkspace();
     } catch (error) {
       toast(error.message || '创建账户失败。');
@@ -1282,7 +1316,7 @@ function bindAdminWorkspaceEvents() {
     });
     dlg.querySelector('#adminCategoryForm')?.addEventListener('submit', (e) => { e.preventDefault(); dlg.querySelector('#adminCategorySubmit')?.click(); });
   });
-  $$('[data-admin-user-action]').forEach((button) => button.onclick = async () => { try { await adminApi(`/admin/users/${button.dataset.adminUserId}/${button.dataset.adminUserAction}`, { method: 'PATCH' }); renderAdminWorkspace(); } catch (error) { toast(error.message || '更新账户失败。'); } });
+  $$('[data-admin-user-action]').forEach((button) => button.onclick = async () => { try { await adminApi(`/admin/users/${button.dataset.adminUserId}/${button.dataset.adminUserAction}`, { method: 'PATCH' }); adminUsersCacheTime = 0; renderAdminWorkspace(); } catch (error) { toast(error.message || '更新账户失败。'); } });
   $$('[data-admin-user-reset]').forEach((button) => button.onclick = async () => {
     const userId = button.dataset.adminUserReset;
     const userName = button.dataset.adminUserName || '该用户';
@@ -1316,7 +1350,7 @@ function bindAdminWorkspaceEvents() {
       }
     });
   });
-  $$('[data-admin-user-delete]').forEach((button) => button.onclick = async () => { if (!await adminConfirm('确定要删除该账户吗？此操作不可撤销。', '删除账户')) return; try { await adminApi(`/admin/users/${button.dataset.adminUserDelete}`, { method: 'DELETE' }); toast('账户已删除。'); renderAdminWorkspace(); } catch (error) { toast(error.message || '删除账户失败。'); } });
+  $$('[data-admin-user-delete]').forEach((button) => button.onclick = async () => { if (!await adminConfirm('确定要删除该账户吗？此操作不可撤销。', '删除账户')) return; try { await adminApi(`/admin/users/${button.dataset.adminUserDelete}`, { method: 'DELETE' }); toast('账户已删除。'); adminUsersCacheTime = 0; delete adminAvatarCache[button.dataset.adminUserDelete]; renderAdminWorkspace(); } catch (error) { toast(error.message || '删除账户失败。'); } });
   $$('[data-admin-deck-action]').forEach((button) => button.onclick = async () => {
     if (button.disabled) return;
     button.disabled = true;

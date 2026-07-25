@@ -235,6 +235,10 @@ let adminPage = { users: 1, decks: 1, audit: 1, invitations: 1 };
 let adminTotalPages = { users: 1, decks: 1, audit: 1, invitations: 1 };
 const adminPageSize = 8;
 let adminRenderToken = 0;
+let adminUsersCache = null;
+let adminUsersCacheTime = 0;
+const ADMIN_USERS_CACHE_TTL = 30_000;
+let adminAvatarCache = {};
 let profileEditingDeckId = '';
 let marketDecks = [];
 
