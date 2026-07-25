@@ -491,6 +491,9 @@ async function pullFromCloud() {
       ? `/v2/sync/full?lastSyncAt=${encodeURIComponent(lastSync)}`
       : '/v2/sync/full';
     const result = await marketApi(url);
+    // Always update lastSyncAt to the SERVER's time (not client time) to prevent
+    // clock-skew from causing re-downloads of unchanged objects on the next sync.
+    setLastSyncAt(result?.syncTime || new Date().toISOString());
     const objects = result?.objects || [];
     if (objects.length === 0) return 0;
 
@@ -532,17 +535,19 @@ async function pullFromCloud() {
         setPushedSig('DOCUMENT', obj.objectId, state.documents.find((d) => d.id === obj.objectId) || obj.data);
         changed = true;
       } else if (obj.objectType === 'SETTINGS' && obj.data) {
-        // SETTINGS merge combines local + server data — result differs from server.
-        // Delete sig so the merged result gets pushed back.
+        // SETTINGS merge combines local + server data — result may differ from server.
+        // Only mark for re-push if the merge actually changed local data.
+        const beforeJson = JSON.stringify({ groups: state.groups, folders: state.folders, reviewEvents: state.reviewEvents, favorites: state.favorites, profile: state.profile, reviewPlan: state.reviewPlan });
         mergeSettingsFromServer(obj.data);
+        const afterJson = JSON.stringify({ groups: state.groups, folders: state.folders, reviewEvents: state.reviewEvents, favorites: state.favorites, profile: state.profile, reviewPlan: state.reviewPlan });
         setSyncVersion('SETTINGS', obj.objectId, obj.objectVersion);
-        cloudSyncPushedSigs.delete(sigKey('SETTINGS', obj.objectId));
-        needsRepush = true;
+        if (beforeJson !== afterJson) {
+          cloudSyncPushedSigs.delete(sigKey('SETTINGS', obj.objectId));
+          needsRepush = true;
+        }
         changed = true;
       }
     }
-
-    setLastSyncAt(result?.syncTime || new Date().toISOString());
 
     if (changed) {
       cloudSyncSuppressPush = true;
@@ -612,7 +617,8 @@ async function fullCloudSync() {
       // Non-fatal — device sync time tracking is optional
     }
     }
-    setLastSyncAt(new Date().toISOString());
+    // lastSyncAt was already set to the server's syncTime by pullFromCloud().
+    // Do NOT overwrite with client time — that causes clock-skew re-download bugs.
     cloudSyncSuppressPush = true;
     try { save(); } finally { cloudSyncSuppressPush = false; }
   } catch (err) {
