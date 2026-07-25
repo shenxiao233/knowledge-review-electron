@@ -1,6 +1,6 @@
 {
   "name": "knowledge-review-electron",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Notion Card knowledge management and spaced-review desktop app built with Electron.",
   "author": "shenxiao233",
   "main": "src/main.js",
@@ -62,6 +62,9 @@
       "selectPerMachineByDefault": true,
       "packElevateHelper": true,
       "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Notion Card",
       "artifactName": "NotionCard-${version}-Setup.${ext}"
     },
     "publish": {

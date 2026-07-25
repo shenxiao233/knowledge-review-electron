@@ -49,6 +49,9 @@ const { Readable } = require('stream');
 const { pipeline } = require('stream/promises');
 
 app.setName('Notion Card');
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.shenxiao233.knowledgereview');
+}
 const legacyRuntimeDataPaths = [
   path.join(__dirname, '..', 'runtime-data'),
   path.join(process.cwd(), 'runtime-data'),
@@ -859,7 +862,7 @@ ipcMain.handle('update:install', async () => {
     const backupPath = await backupUserData('before-update');
     sendUpdateEvent('backup-created', { path: backupPath });
     setImmediate(() => {
-      try { autoUpdater.quitAndInstall(false, true); } catch { updateInstallStarted = false; }
+      try { autoUpdater.quitAndInstall(true, true); } catch { updateInstallStarted = false; }
     });
     return { ok: true };
   } catch (error) {
