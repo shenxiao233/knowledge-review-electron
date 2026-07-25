@@ -118,12 +118,14 @@ http://your-server-ip:4000
 ```bash
 sudo apt update && sudo apt install -y nginx
 
-# 部署仓库内的配置文件
-sudo cp nginx/nginx.conf /etc/nginx/sites-available/market-api
-sudo ln -s /etc/nginx/sites-available/market-api /etc/nginx/sites-enabled/
+# 仓库内的 nginx.conf 是完整的 Nginx 主配置（含 worker_processes、events、http 块），
+# 直接替换系统主配置文件，而不是放到 sites-available/。
+sudo cp nginx/nginx.conf /etc/nginx/nginx.conf
+
+# 清理 Ubuntu 默认站点（可选）
 sudo rm -f /etc/nginx/sites-enabled/default
 
-# 创建 certbot 挑战目录（用于 Let's Encrypt）
+# 创建 certbot 挑战目录（用于 Let's Encrypt，无域名可跳过）
 sudo mkdir -p /var/www/certbot
 
 # 测试配置并重载
