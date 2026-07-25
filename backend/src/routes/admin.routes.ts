@@ -30,7 +30,7 @@ export default async function adminRoutes(
       select: {
         id: true, username: true, role: true, enabled: true,
         createdAt: true, lastLoginAt: true,
-        nickname: true, avatar: true,
+        nickname: true,
       },
       orderBy: { createdAt: 'desc' },
       ...(query.page ? { skip: (query.page - 1) * query.pageSize, take: query.pageSize } : {}),
@@ -42,6 +42,17 @@ export default async function adminRoutes(
       items: users, page: query.page, pageSize: query.pageSize,
       total, totalPages: Math.max(1, Math.ceil(total / query.pageSize)),
     };
+  });
+
+  // GET /api/v1/admin/users/:id/avatar - Lazy-load a single user's avatar
+  app.get('/api/v1/admin/users/:id/avatar', { preHandler: requireAdmin }, async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: { avatar: true },
+    });
+    if (!user) return fail(reply, 404, 'User not found');
+    return { avatar: user.avatar || null };
   });
 
   // POST /api/v1/admin/users - Admin creates a user

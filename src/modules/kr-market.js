@@ -975,7 +975,23 @@ async function renderAdminWorkspace() {
     if (renderToken !== adminRenderToken || activeTab !== adminActiveTab) return;
     const page = usersResult.items ? usersResult : adminPaginate(usersResult, adminPage.users);
     adminTotalPages.users = page.totalPages;
-    content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">LICENSED ACCOUNTS</span><h2>许可用户</h2><p>普通用户必须启用后才能进入牌组市场。</p></div></div><form id="adminCreateUserForm" class="admin-create-form"><input id="adminNewUsername" required minlength="3" placeholder="账户名" /><input id="adminNewPassword" required minlength="8" type="password" placeholder="初始密码（至少 8 位）" /><button type="submit" class="primary">创建账户</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${page.items.map((user) => { const displayName = user.nickname || user.username; const avatarHtml = user.avatar ? `<img src="${esc(user.avatar)}" alt="" class="admin-user-avatar" />` : `<span class="admin-user-avatar-fallback">${esc(displayName.slice(0, 1).toUpperCase())}</span>`; return `<tr><td><div class="admin-user-cell">${avatarHtml}<div class="admin-user-info"><strong>${esc(displayName)}</strong><small>${esc(user.username)}</small></div></div></td><td><span class="admin-role">${esc(user.role)}</span></td><td><span class="admin-enabled ${user.enabled ? 'on' : 'off'}">${user.enabled ? '已启用' : '已停用'}</span></td><td>${esc(formatDateTime(user.createdAt))}</td><td class="admin-action-cell"><button type="button" class="table-action" data-admin-user-action="${user.enabled ? 'disable' : 'enable'}" data-admin-user-id="${esc(user.id)}">${user.enabled ? '停用' : '启用'}</button><button type="button" class="table-action" data-admin-user-reset="${esc(user.id)}" data-admin-user-name="${esc(user.nickname || user.username)}" title="重置密码">重置密码</button><button type="button" class="table-action danger" data-admin-user-delete="${esc(user.id)}" title="删除账户">删除</button></td></tr>`; }).join('')}</tbody></table></div>${adminPaginationMarkup('users', page)}</section>`;
+    content.innerHTML = `<section class="admin-section-card"><div class="admin-section-card-head"><div><span class="market-eyebrow">LICENSED ACCOUNTS</span><h2>许可用户</h2><p>普通用户必须启用后才能进入牌组市场。</p></div></div><form id="adminCreateUserForm" class="admin-create-form"><input id="adminNewUsername" required minlength="3" placeholder="账户名" /><input id="adminNewPassword" required minlength="8" type="password" placeholder="初始密码（至少 8 位）" /><button type="submit" class="primary">创建账户</button></form><div class="admin-table-wrap"><table class="admin-table"><thead><tr><th>用户</th><th>角色</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody>${page.items.map((user) => { const displayName = user.nickname || user.username; const avatarHtml = `<span class="admin-user-avatar-fallback" data-admin-user-avatar="${esc(user.id)}">${esc(displayName.slice(0, 1).toUpperCase())}</span>`; return `<tr><td><div class="admin-user-cell">${avatarHtml}<div class="admin-user-info"><strong>${esc(displayName)}</strong><small>${esc(user.username)}</small></div></div></td><td><span class="admin-role">${esc(user.role)}</span></td><td><span class="admin-enabled ${user.enabled ? 'on' : 'off'}">${user.enabled ? '已启用' : '已停用'}</span></td><td>${esc(formatDateTime(user.createdAt))}</td><td class="admin-action-cell"><button type="button" class="table-action" data-admin-user-action="${user.enabled ? 'disable' : 'enable'}" data-admin-user-id="${esc(user.id)}">${user.enabled ? '停用' : '启用'}</button><button type="button" class="table-action" data-admin-user-reset="${esc(user.id)}" data-admin-user-name="${esc(user.nickname || user.username)}" title="重置密码">重置密码</button><button type="button" class="table-action danger" data-admin-user-delete="${esc(user.id)}" title="删除账户">删除</button></td></tr>`; }).join('')}</tbody></table></div>${adminPaginationMarkup('users', page)}</section>`;
+    // Lazy-load avatars in parallel (non-blocking — table renders instantly with letter fallbacks)
+    Promise.allSettled(page.items.map(async (user) => {
+      try {
+        const result = await adminApi(`/admin/users/${encodeURIComponent(user.id)}/avatar`);
+        if (result?.avatar && renderToken === adminRenderToken && activeTab === adminActiveTab) {
+          const el = content.querySelector(`[data-admin-user-avatar="${user.id}"]`);
+          if (el) {
+            const img = document.createElement('img');
+            img.src = result.avatar;
+            img.alt = '';
+            img.className = 'admin-user-avatar';
+            el.replaceWith(img);
+          }
+        }
+      } catch { /* avatar is optional */ }
+    }));
   } else if (adminActiveTab === 'audit') {
     let result;
     try { result = await adminApi(`/admin/audit-logs?page=${adminPage.audit}&pageSize=${adminPageSize}`); } catch (error) {
