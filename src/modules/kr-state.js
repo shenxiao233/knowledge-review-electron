@@ -9,18 +9,25 @@ function hydrate(raw) {
   try {
     if (!raw) return { ...structuredClone(base), documents: sampleDocs.map(normDoc) };
     const saved = JSON.parse(raw);
-    const documents = Array.isArray(saved.documents) && saved.documents.length ? saved.documents.map(normDoc) : structuredClone(sampleDocs);
-    sampleDocs.forEach((doc) => { if (!documents.some((item) => item.id === doc.id)) documents.push(normDoc(doc)); });
-    const cards = Array.isArray(saved.cards) && saved.cards.length ? saved.cards.map(normCard) : structuredClone(sampleCards);
-    ensureCardOrder(cards);
+    const documents = Array.isArray(saved.documents) ? saved.documents.map(normDoc) : [];
+    const folders = Array.isArray(saved.folders) ? [...saved.folders] : [];
+    const cards = Array.isArray(saved.cards) ? saved.cards.map(normCard) : [];
+    // Deduplicate by ID (cleans up entries from older hydrate versions that re-added samples)
+    const _seen = new Set();
+    const dedupedFolders = folders.filter((f) => { if (_seen.has(f.id)) return false; _seen.add(f.id); return true; });
+    _seen.clear();
+    const dedupedDocs = documents.filter((d) => { if (_seen.has(d.id)) return false; _seen.add(d.id); return true; });
+    _seen.clear();
+    const dedupedCards = cards.filter((c) => { if (_seen.has(c.id)) return false; _seen.add(c.id); return true; });
+    ensureCardOrder(dedupedCards);
     const latestMastery = new Map();
     (Array.isArray(saved.reviewEvents) ? saved.reviewEvents : []).forEach((event) => { if (event.cardId && event.rating) latestMastery.set(event.cardId, event.rating === 'Easy' ? 'tooEasy' : event.rating === 'Good' ? 'familiar' : event.rating === 'Hard' ? 'fuzzy' : 'forgot'); });
-    cards.forEach((card) => { if (!card.mastery && latestMastery.has(card.id)) card.mastery = latestMastery.get(card.id); });
+    dedupedCards.forEach((card) => { if (!card.mastery && latestMastery.has(card.id)) card.mastery = latestMastery.get(card.id); });
     return {
       ...structuredClone(base), ...saved,
-      folders: Array.isArray(saved.folders) && saved.folders.length ? saved.folders : structuredClone(sampleFolders),
-      documents,
-      cards,
+      folders: dedupedFolders,
+      documents: dedupedDocs,
+      cards: dedupedCards,
       reviewLog: saved.reviewLog || {},
       reviewEvents: Array.isArray(saved.reviewEvents) ? saved.reviewEvents : [],
       schemaVersion: 3,
@@ -31,7 +38,14 @@ function hydrate(raw) {
       market: { ...(base.market || { conflicts: [], decks: {} }), ...(saved.market || {}), conflicts: Array.isArray(saved.market?.conflicts) ? saved.market.conflicts : [], decks: saved.market?.decks && typeof saved.market.decks === 'object' ? saved.market.decks : {} },
       groups: [...new Set([...(saved.groups || []), ...cards.map((card) => card.folder)])],
       activeDocId: documents.some((doc) => doc.id === saved.activeDocId) ? saved.activeDocId : documents[0]?.id,
-      favorites: Array.isArray(saved.favorites) ? saved.favorites : []
+      favorites: Array.isArray(saved.favorites) ? saved.favorites : [],
+      syncMeta: {
+        deviceId: typeof saved.syncMeta?.deviceId === 'string' ? saved.syncMeta.deviceId : '',
+        serverDeviceId: typeof saved.syncMeta?.serverDeviceId === 'string' ? saved.syncMeta.serverDeviceId : '',
+        lastSyncAt: typeof saved.syncMeta?.lastSyncAt === 'string' ? saved.syncMeta.lastSyncAt : null,
+        versions: saved.syncMeta?.versions && typeof saved.syncMeta.versions === 'object' ? saved.syncMeta.versions : {},
+        userId: typeof saved.syncMeta?.userId === 'string' ? saved.syncMeta.userId : '',
+      },
     };
   } catch {
     return structuredClone(base);
@@ -107,6 +121,8 @@ function save() {
     }
     schedulePersistentSave();
     scheduleIDBSave();
+    // Debounced cloud sync push (only runs when authenticated & online)
+    try { scheduleCloudSyncPush(); } catch (e) {}
   } catch {
     toast('数据序列化失败，请导出备份。');
   }

@@ -361,6 +361,15 @@ function marketProfileSummary() {
   return { name: marketUser?.nickname || profile.name || marketUser?.username || 'Knowledge Learner', avatar: profile.avatar || marketUser?.avatar || '' };
 }
 async function logoutMarket() {
+  toast('正在同步数据到云端…');
+  try {
+    await Promise.race([
+      fullCloudSync(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+    ]);
+  } catch (e) {
+    console.warn('[LOGOUT] Cloud sync failed (non-fatal):', e.message);
+  }
   await returnToMarketLogin();
 }
 function openPasswordChangeDialog() {
@@ -643,15 +652,19 @@ async function submitMarketAuth(event) {
   const password = $('#marketPassword')?.value || '';
   const isRegister = form?.classList.contains('is-register-mode');
   const invitationCode = $('#marketInvitationCode')?.value.trim() || '';
-  if (!serverAddr || !username || !password || (isRegister && !invitationCode)) {
+  let validationError = '';
+  if (!serverAddr) validationError = '请输入服务器地址。';
+  else if (!username) validationError = '请输入账户名。';
+  else if (!password) validationError = '请输入密码。';
+  else if (username.length < 3) validationError = '账户名至少需要 3 个字符。';
+  else if (username.length > 80) validationError = '账户名不能超过 80 个字符。';
+  else if (password.length < 8) validationError = '密码至少需要 8 个字符。';
+  else if (password.length > 200) validationError = '密码不能超过 200 个字符。';
+  else if (isRegister && !invitationCode) validationError = '请输入邀请码。';
+  if (validationError) {
     const errorBox = $('#marketLoginError');
-    let hint = '请填写所有必填字段。';
-    if (!serverAddr) hint = '请输入服务器地址。';
-    else if (!username) hint = '请输入账户名。';
-    else if (!password) hint = '请输入密码。';
-    else if (isRegister && !invitationCode) hint = '请输入邀请码。';
-    if (errorBox) { errorBox.textContent = hint; errorBox.classList.add('is-visible'); }
-    window.marketLoginCharacters?.triggerError?.();
+    if (errorBox) { errorBox.textContent = validationError; errorBox.classList.add('is-visible'); }
+    window.marketLoginCharacters?.triggerError?.(validationError);
     return;
   }
   // Update marketApiBase from the server address field
@@ -683,6 +696,12 @@ async function submitMarketAuth(event) {
     marketUnlocked = true;
     setAppAuthLock(false);
     renderRailUserAvatar();
+    // Check if the user account changed — reset local data to prevent
+    // cross-account data leakage. Must run BEFORE fullCloudSync.
+    const currentUserId = marketUser?.id || marketUser?.username || '';
+    if (currentUserId) checkAndHandleUserChange(currentUserId);
+    // Trigger full cloud sync after login — pull server data then push local state
+    try { fullCloudSync().catch((e) => console.warn("[MARKET-AUTH] Cloud sync failed (non-fatal):", e.message)); } catch(e) { console.warn("[MARKET-AUTH] Cloud sync trigger failed:", e.message); }
     try { await fetchServerProfile(); } catch(e) { console.warn("[MARKET-AUTH] fetchServerProfile failed (non-fatal):", e.message); }
     if (status) status.textContent = '服务器认证成功 · 已进入牌组市场';
     $('#marketAuthForm')?.classList.add('is-authenticated');
@@ -719,7 +738,11 @@ async function submitMarketAuth(event) {
       errorBox.textContent = cnMsg;
       errorBox.classList.add('is-visible');
     }
-    window.marketLoginCharacters?.triggerError?.();
+    window.marketLoginCharacters?.triggerError?.(cnMsg);
+    // Re-render the market view so the login form becomes visible again.
+    // Without this, the empty bootstrap placeholder div stays shown after
+    // a failed auto-login, leaving the user with a blank white screen.
+    renderMarket();
   } finally {
     if (submit) submit.disabled = false;
   }
@@ -1399,6 +1422,18 @@ async function fetchServerProfile() {
 function showOnboarding() {
   const modal = $('#onboardingModal');
   if (!modal) return;
+  // Set up Escape prevention and reopen guard (only once per modal element)
+  if (!modal.dataset.escGuard) {
+    modal.dataset.escGuard = 'true';
+    // Prevent Escape key from closing the dialog — profile setup is required
+    modal.addEventListener('cancel', (e) => e.preventDefault());
+    // If the dialog is closed any other way while profile is still incomplete, reopen it
+    modal.addEventListener('close', () => {
+      if (marketUser?.needsProfileCompletion) {
+        setTimeout(() => { if (marketUser?.needsProfileCompletion) modal.showModal(); }, 100);
+      }
+    });
+  }
   const nicknameInput = $('#onboardingNickname');
   const bioInput = $('#onboardingBio');
   if (nicknameInput) nicknameInput.value = marketUser?.username || '';
@@ -1412,20 +1447,20 @@ function showOnboarding() {
   if (nicknameInput) nicknameInput.focus();
 }
 
-function handleOnboardingAvatar(event) {
+async function handleOnboardingAvatar(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   if (file.size > 2 * 1024 * 1024) return toast('头像不能超过 2 MB。');
-  const reader = new FileReader();
-  reader.onload = () => {
-    const dataUrl = String(reader.result || '');
+  try {
+    const dataUrl = await compressAvatar(file);
     const img = $('#onboardingAvatarImage');
     const fallback = $('#onboardingAvatarFallback');
     if (img && fallback) { img.src = dataUrl; img.hidden = false; fallback.hidden = true; }
     const form = $('#onboardingForm');
     if (form) form.dataset.avatar = dataUrl;
-  };
-  reader.readAsDataURL(file);
+  } catch (err) {
+    toast('头像处理失败：' + (err.message || '未知错误'));
+  }
 }
 
 async function submitOnboarding(event) {

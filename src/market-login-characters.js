@@ -140,11 +140,11 @@
     setTimeout(() => { character.value = false; update(); schedule(character); }, 150);
   }
   function schedule(character) { setTimeout(() => blink(character), Math.random() * 4000 + 3000); }
-  function triggerError() {
+  function triggerError(msg) {
     clearTimeout(errorTimer);
     isLoginError = true;
     error.classList.add('is-visible');
-    error.textContent = '请输入完整的服务器密钥、账户名和密码。';
+    error.textContent = msg || '请输入完整的服务器地址、账户名和密码。';
     scene.classList.remove('is-error');
     void scene.offsetHeight;
     scene.classList.add('is-error');
@@ -157,7 +157,7 @@
   password.addEventListener('focus', () => { isPasswordFocused = true; update(); });
   password.addEventListener('blur', () => { isPasswordFocused = false; update(); });
   password.addEventListener('input', update);
-  form.addEventListener('submit', () => { if (!serverKey.value.trim() || !username.value.trim() || !password.value) triggerError(); });
+  form.addEventListener('submit', () => { if (!serverKey.value.trim() || !username.value.trim() || !password.value) { if (!error.classList.contains('is-visible')) triggerError(); } });
   schedule({ get value() { return purpleBlinking; }, set value(value) { purpleBlinking = value; } });
   schedule({ get value() { return blackBlinking; }, set value(value) { blackBlinking = value; } });
   window.marketLoginCharacters = { triggerError };

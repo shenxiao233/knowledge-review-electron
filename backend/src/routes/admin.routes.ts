@@ -113,21 +113,12 @@ export default async function adminRoutes(
       if (adminCount <= 1) return fail(reply, 400, 'Cannot delete the last admin account');
     }
 
-    // Check for related data that prevents deletion
-    const [ownedDecks, syncObjects, contributions, reviews, favorites] = await Promise.all([
-      prisma.deck.count({ where: { ownerId: id } }),
-      prisma.syncObject.count({ where: { userId: id } }),
-      prisma.cardContribution.count({ where: { contributorId: id } }),
-      prisma.deckReview.count({ where: { userId: id } }),
-      prisma.deckFavorite.count({ where: { userId: id } }),
-    ]);
-
-    if (ownedDecks > 0) {
-      return fail(reply, 409, `Cannot delete user with ${ownedDecks} owned deck(s); transfer or delete decks first`);
-    }
-
-    // Clean up related data before deletion
+    // Delete all associated data before user deletion.
+    // Deleting decks first triggers cascade deletion of: DeckVersion, DeckDownload,
+    // DeckFavorite, DeckReview, and CardContribution for those decks.
+    // Then delete remaining user-specific records (on other users' decks, etc.).
     await prisma.$transaction([
+      prisma.deck.deleteMany({ where: { ownerId: id } }),
       prisma.deckFavorite.deleteMany({ where: { userId: id } }),
       prisma.deckReview.deleteMany({ where: { userId: id } }),
       prisma.syncObjectHistory.deleteMany({ where: { syncObject: { userId: id } } }),
@@ -137,7 +128,7 @@ export default async function adminRoutes(
       prisma.auditLog.deleteMany({ where: { userId: id } }),
     ]);
 
-    // Delete contributions (card contributions to other decks)
+    // Delete contributions the user made to other users' decks
     await prisma.cardContribution.deleteMany({ where: { contributorId: id } });
 
     await prisma.user.delete({ where: { id } });

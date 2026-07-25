@@ -216,24 +216,37 @@ function reviewStateSnapshot(group = state.reviewPlan?.group || 'all') {
 function reviewGroupStats(group) {
   return reviewStateSnapshot(group);
 }
+// --- Review group picker (paginated "更多" page) ---
+let reviewGroupPickerPage = 1;
+const reviewGroupPickerPageSize = 6;
+let reviewGroupPickerActive = false;
+function reviewBookCardHTML(group, selected) {
+  const stats = reviewGroupStats(group);
+  const isSelected = group === selected;
+  const actionLabel = isSelected ? '学习中' : '学习此书';
+  return `<article class="review-book-card ${isSelected ? 'is-selected' : ''}"><div class="review-book-cover"><span>KNOWLEDGE</span><strong>${esc(group)}</strong><small>SPACED REVIEW</small></div><div class="review-book-body"><div class="review-book-actions"><button type="button" class="review-book-more" data-review-group-menu="${esc(group)}" aria-label="${esc(group)}更多操作" aria-expanded="false"><svg><use href="#i-more-vertical"></use></svg></button><div class="review-book-menu" data-review-menu="${esc(group)}"><button type="button" data-review-group-action="rename" data-review-group="${esc(group)}">重命名</button><button type="button" data-review-group-action="relearn" data-review-group="${esc(group)}">重学此卡组</button><button type="button" class="danger" data-review-group-action="delete" data-review-group="${esc(group)}">删除卡组</button></div></div><div class="review-book-title-row"><h3>${esc(group)}</h3><span class="review-book-type">卡组</span></div><p>已完成 ${stats.done} / ${stats.planned} 张</p><div class="review-book-progress"><i style="width:${stats.percent}%"></i></div><div class="review-book-meta"><span>待学习 ${stats.due} 张</span><button type="button" class="review-book-start ${isSelected ? 'is-selected' : ''}" data-review-start="${esc(group)}">${actionLabel}</button></div></div></article>`;
+}
 function renderReviewHome() {
   if (!els.reviewHome || !els.reviewStudy) return;
-  els.reviewHome.hidden = reviewStudyActive;
+  els.reviewHome.hidden = reviewStudyActive || reviewGroupPickerActive;
+  const picker = $('#reviewGroupPicker');
+  if (picker) picker.hidden = !reviewGroupPickerActive;
   els.reviewStudy.hidden = !reviewStudyActive;
   if (reviewStudyActive) {
+    return;
+  }
+  if (reviewGroupPickerActive) {
+    renderReviewGroupPicker();
     return;
   }
   const groups = reviewGroups();
   const selected = state.reviewPlan?.group || 'all';
   const current = reviewGroupStats(selected);
   const currentLabel = reviewGroupLabel(selected);
-  const groupCards = groups.map((group) => {
-    const stats = reviewGroupStats(group);
-    const isSelected = group === selected;
-    const actionLabel = isSelected ? '学习中' : '学习此书';
-    return `<article class="review-book-card ${isSelected ? 'is-selected' : ''}"><div class="review-book-cover"><span>KNOWLEDGE</span><strong>${esc(group)}</strong><small>SPACED REVIEW</small></div><div class="review-book-body"><div class="review-book-actions"><button type="button" class="review-book-more" data-review-group-menu="${esc(group)}" aria-label="${esc(group)}更多操作" aria-expanded="false"><svg><use href="#i-more-vertical"></use></svg></button><div class="review-book-menu" data-review-menu="${esc(group)}"><button type="button" data-review-group-action="rename" data-review-group="${esc(group)}">重命名</button><button type="button" data-review-group-action="relearn" data-review-group="${esc(group)}">重学此卡组</button><button type="button" class="danger" data-review-group-action="delete" data-review-group="${esc(group)}">删除卡组</button></div></div><div class="review-book-title-row"><h3>${esc(group)}</h3><span class="review-book-type">卡组</span></div><p>已完成 ${stats.done} / ${stats.planned} 张</p><div class="review-book-progress"><i style="width:${stats.percent}%"></i></div><div class="review-book-meta"><span>待学习 ${stats.due} 张</span><button type="button" class="review-book-start ${isSelected ? 'is-selected' : ''}" data-review-start="${esc(group)}">${actionLabel}</button></div></div></article>`;
-  }).join('');
-  els.reviewHome.innerHTML = `<section class="review-welcome"><div><span class="review-eyebrow">LEARNING CENTER</span><h1>今天也来复习一点</h1><p>选择一个卡组，按当前学习计划完成今天的复习。</p></div><div class="review-welcome-stat"><strong>${current.done}</strong><span>今日已复习</span></div></section><section class="review-feature-card"><div class="review-feature-cover"><span>NOTION CARD</span><strong>${esc(currentLabel)}</strong><small>FSRS LEARNING PLAN</small></div><div class="review-feature-content"><div class="review-feature-heading"><div><span class="review-eyebrow">CURRENT PLAN</span><h2>${esc(currentLabel)}</h2></div><span class="review-feature-chip">${current.due ? '今日待学习' : '计划已完成'}</span></div><div class="review-feature-stats"><div><strong>${current.due}</strong><span>待学习</span></div><div><strong>${current.done}</strong><span>已完成</span></div><div><strong>${current.cards.length}</strong><span>卡片总数</span></div></div><div class="review-feature-progress"><div><span>今日完成度</span><b>${current.done} / ${current.planned}</b></div><div class="review-feature-line"><i style="width:${current.percent}%"></i></div></div><button type="button" class="review-start-button" data-review-start="${esc(selected)}">${current.due ? '开始学习' : '查看学习计划'}<kbd>Enter</kbd></button></div></section><section class="review-books-section"><div class="review-section-heading"><div><span class="review-eyebrow">MY CARD GROUPS</span><h2>我的卡组</h2></div><span>${groups.length} 个卡组</span></div><div class="review-book-grid">${groupCards || '<div class="review-home-empty">还没有卡组，先去卡片库创建一组卡片。</div>'}</div></section>`;
+  const displayGroups = groups.slice(0, 4);
+  const groupCards = displayGroups.map((group) => reviewBookCardHTML(group, selected)).join('');
+  const moreBtn = groups.length > 4 ? `<button type="button" class="review-more-groups-btn" data-review-more-groups>更多</button>` : '';
+  els.reviewHome.innerHTML = `<section class="review-welcome"><div><span class="review-eyebrow">LEARNING CENTER</span><h1>今天也来复习一点</h1><p>选择一个卡组，按当前学习计划完成今天的复习。</p></div><div class="review-welcome-stat"><strong>${current.done}</strong><span>今日已复习</span></div></section><section class="review-feature-card"><div class="review-feature-cover"><span>NOTION CARD</span><strong>${esc(currentLabel)}</strong><small>FSRS LEARNING PLAN</small></div><div class="review-feature-content"><div class="review-feature-heading"><div><span class="review-eyebrow">CURRENT PLAN</span><h2>${esc(currentLabel)}</h2></div><span class="review-feature-chip">${current.due ? '今日待学习' : '计划已完成'}</span></div><div class="review-feature-stats"><div><strong>${current.due}</strong><span>待学习</span></div><div><strong>${current.done}</strong><span>已完成</span></div><div><strong>${current.cards.length}</strong><span>卡片总数</span></div></div><div class="review-feature-progress"><div><span>今日完成度</span><b>${current.done} / ${current.planned}</b></div><div class="review-feature-line"><i style="width:${current.percent}%"></i></div></div><button type="button" class="review-start-button" data-review-start="${esc(selected)}">${current.due ? '开始学习' : '查看学习计划'}<kbd>Enter</kbd></button></div></section><section class="review-books-section"><div class="review-section-heading"><div><span class="review-eyebrow">MY CARD GROUPS</span><h2>我的卡组</h2></div><div class="review-section-actions"><span>${groups.length} 个卡组</span>${moreBtn}</div></div><div class="review-book-grid">${groupCards || '<div class="review-home-empty">还没有卡组，先去卡片库创建一组卡片。</div>'}</div></section>`;
 }
 function handleReviewHomeClick(event) {
   const menuButton = event.target.closest('[data-review-group-menu]');
@@ -257,12 +270,62 @@ function handleReviewHomeClick(event) {
     if (action.dataset.reviewGroupAction === 'relearn') return relearnCardGroup(group);
     if (action.dataset.reviewGroupAction === 'delete') return deleteCardGroup(group);
   }
+  const moreBtn = event.target.closest('[data-review-more-groups]');
+  if (moreBtn) { showReviewGroupPicker(); return; }
   const button = event.target.closest('[data-review-start]');
   if (button) startReviewStudy(button.dataset.reviewStart);
 }
 function closeReviewBookMenus() {
   $$('.review-book-menu.open').forEach((menu) => menu.classList.remove('open'));
   $$('.review-book-more[aria-expanded="true"]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+}
+function showReviewGroupPicker() {
+  reviewGroupPickerActive = true;
+  reviewGroupPickerPage = 1;
+  renderReviewHome();
+}
+function hideReviewGroupPicker() {
+  reviewGroupPickerActive = false;
+  renderReviewHome();
+}
+function renderReviewGroupPicker() {
+  const pickerEl = $('#reviewGroupPicker');
+  if (!pickerEl) return;
+  const groups = reviewGroups();
+  const selected = state.reviewPlan?.group || 'all';
+  const totalPages = Math.max(1, Math.ceil(groups.length / reviewGroupPickerPageSize));
+  if (reviewGroupPickerPage > totalPages) reviewGroupPickerPage = totalPages;
+  if (reviewGroupPickerPage < 1) reviewGroupPickerPage = 1;
+  const startIdx = (reviewGroupPickerPage - 1) * reviewGroupPickerPageSize;
+  const pageGroups = groups.slice(startIdx, startIdx + reviewGroupPickerPageSize);
+  const groupCards = pageGroups.map((group) => reviewBookCardHTML(group, selected)).join('');
+  pickerEl.innerHTML = `<div class="review-group-picker-header"><button type="button" class="review-group-picker-back" data-review-picker-back><svg viewBox="0 0 1024 1024" aria-hidden="true"><path d="M224 480h640a32 32 0 1 1 0 64H224a32 32 0 0 1 0-64z" fill="currentColor"/><path d="m237.248 512 265.408 265.344a32 32 0 0 1-45.312 45.312l-288-288a32 32 0 0 1 0-45.312l288-288a32 32 0 1 1 45.312 45.312L237.248 512z" fill="currentColor"/></svg><span>返回</span></button><div><span class="review-eyebrow">ALL CARD GROUPS</span><h2>全部卡组</h2></div><span>${groups.length} 个卡组</span></div><div class="review-book-grid">${groupCards || '<div class="review-home-empty">还没有卡组，先去卡片库创建一组卡片。</div>'}</div><div class="review-group-picker-pagination" ${totalPages <= 1 ? 'hidden' : ''}><span>第 ${reviewGroupPickerPage} / ${totalPages} 页 · 共 ${groups.length} 个卡组</span><div><button type="button" data-review-picker-page="${reviewGroupPickerPage - 1}" ${reviewGroupPickerPage <= 1 ? 'disabled' : ''}>上一页</button><button type="button" data-review-picker-page="${reviewGroupPickerPage + 1}" ${reviewGroupPickerPage >= totalPages ? 'disabled' : ''}>下一页</button></div></div>`;
+  pickerEl.onclick = (event) => {
+    const backBtn = event.target.closest('[data-review-picker-back]');
+    if (backBtn) { hideReviewGroupPicker(); return; }
+    const pageBtn = event.target.closest('[data-review-picker-page]');
+    if (pageBtn && !pageBtn.disabled) { reviewGroupPickerPage = Number(pageBtn.dataset.reviewPickerPage); renderReviewGroupPicker(); return; }
+    const menuButton = event.target.closest('[data-review-group-menu]');
+    if (menuButton) {
+      event.stopPropagation();
+      const menu = menuButton.parentElement?.querySelector(`[data-review-menu="${CSS.escape(menuButton.dataset.reviewGroupMenu)}"]`);
+      const open = menu && !menu.classList.contains('open');
+      closeReviewBookMenus();
+      if (menu && open) { menu.classList.add('open'); menuButton.setAttribute('aria-expanded', 'true'); }
+      return;
+    }
+    const action = event.target.closest('[data-review-group-action]');
+    if (action) {
+      event.stopPropagation();
+      closeReviewBookMenus();
+      const group = action.dataset.reviewGroup;
+      if (action.dataset.reviewGroupAction === 'rename') return openRenameGroup(group);
+      if (action.dataset.reviewGroupAction === 'relearn') return relearnCardGroup(group);
+      if (action.dataset.reviewGroupAction === 'delete') return deleteCardGroup(group);
+    }
+    const startBtn = event.target.closest('[data-review-start]');
+    if (startBtn) { hideReviewGroupPicker(); startReviewStudy(startBtn.dataset.reviewStart); }
+  };
 }
 function startReviewStudy(group = state.reviewPlan?.group || 'all') {
   const selected = ['all', ...reviewGroups()].includes(group) ? group : 'all';
@@ -274,6 +337,7 @@ function startReviewStudy(group = state.reviewPlan?.group || 'all') {
 }
 function exitReviewStudy() {
   reviewStudyActive = false;
+  reviewGroupPickerActive = false;
   closeReviewHistory();
   renderReviewHome();
 }

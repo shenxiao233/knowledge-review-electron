@@ -6,7 +6,7 @@
  *           openMessages, renderMessages
  */
 let profileDeckPage = 1;
-const profileDeckPageSize = 8;
+const profileDeckPageSize = 4;
 function safeFormatDate(value) {
   if (!value) return '未知';
   const d = value instanceof Date ? value : new Date(value);
@@ -119,13 +119,12 @@ async function saveProfile(event) {
     toast('个人资料已保存。');
   }
 }
-function handleProfileAvatar(event) {
+async function handleProfileAvatar(event) {
   const file = event.target.files?.[0];
   if (!file) return;
   if (file.size > 2 * 1024 * 1024) return toast('头像不能超过 2 MB。');
-  const reader = new FileReader();
-  reader.onload = async () => {
-    const dataUrl = String(reader.result || '');
+  try {
+    const dataUrl = await compressAvatar(file);
     profileData().avatar = dataUrl;
     save();
     renderProfile();
@@ -142,8 +141,9 @@ function handleProfileAvatar(event) {
         toast('头像已保存在本地，但服务器同步失败。');
       }
     }
-  };
-  reader.readAsDataURL(file);
+  } catch (err) {
+    toast('头像处理失败：' + (err.message || '未知错误'));
+  }
 }
 // Keep profile actions wired to the market without replacing the local deck source.
 function handleProfileDeckAction(event) {

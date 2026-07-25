@@ -264,8 +264,10 @@ input:focus, textarea:focus, select:focus { border-color: #9ac7b7; box-shadow: 0
 
 /* Yuque-style document workspace */
 .library-view.active { grid-template-columns: 260px minmax(0, 1fr); }
-.library-sidebar { background: #faf9f7; }
+.library-sidebar { background: #faf9f7; overflow: hidden; }
 .library-sidebar > .pane-title { display: none; }
+.library-sidebar .tree { flex: 1; min-height: 0; overflow-y: auto; scrollbar-width: none; -ms-overflow-style: none; }
+.library-sidebar .tree::-webkit-scrollbar { width: 0; display: none; }
 .document-workbench { grid-template-rows: 50px 42px 1fr; }
 .doc-topbar { padding: 0 22px; background: #fff; }
 .crumb { gap: 9px; font-size: 13px; }
@@ -1507,6 +1509,22 @@ html::-webkit-scrollbar, body::-webkit-scrollbar, *::-webkit-scrollbar { width: 
 .review-book-start.is-selected:hover { border-color: #208d74; background: #208d74; }
 .review-book-card.is-selected { border-color: #9bcab2; box-shadow: 0 14px 30px rgba(38, 159, 131, .12); }
 .review-home-empty { grid-column: 1 / -1; padding: 36px; border: 1px dashed #cfe0d7; border-radius: 12px; background: rgba(255,255,255,.62); color: #8d9b93; text-align: center; }
+.review-section-actions { display: flex; align-items: center; gap: 10px; }
+.review-more-groups-btn { height: 28px; padding: 0 14px; border: 1px solid #d0e6dc; border-radius: 999px; background: #f0faf6; color: #2a9d7e; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s; }
+.review-more-groups-btn:hover { background: #e2f5ee; border-color: #b9dfd0; }
+.review-group-picker { max-width: 1240px; margin: 0 auto; padding: 20px 0 40px; }
+.review-group-picker[hidden] { display: none !important; }
+.review-group-picker-header { display: flex; align-items: center; gap: 16px; margin-bottom: 20px; padding: 0 4px; }
+.review-group-picker-header h2 { font-size: 22px; font-weight: 800; color: #1a2b25; margin: 2px 0 0; }
+.review-group-picker-back { display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border: 1px solid #e0e0e0; border-radius: 8px; background: #fff; color: #555; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; }
+.review-group-picker-back:hover { background: #f8f8f8; }
+.review-group-picker-back svg { width: 16px; height: 16px; }
+.review-group-picker-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; padding: 12px 4px; }
+.review-group-picker-pagination span { font-size: 12px; color: #8d9b93; }
+.review-group-picker-pagination div { display: flex; gap: 8px; }
+.review-group-picker-pagination button { height: 30px; padding: 0 14px; border: 1px solid #d0e6dc; border-radius: 8px; background: #f0faf6; color: #2a9d7e; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s; }
+.review-group-picker-pagination button:hover:not(:disabled) { background: #e2f5ee; }
+.review-group-picker-pagination button:disabled { opacity: .4; cursor: not-allowed; }
 .review-study[hidden], .review-home[hidden] { display: none !important; }
 .review-study-toolbar { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: 12px; margin: 0 0 14px; color: #7c8e84; font-size: 12px; }
 .review-back-button { position: relative; width: 130px; height: 35px; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 10px; background: #fff; color: #111; font-size: 13px; font-weight: 700; }
@@ -4189,3 +4207,27 @@ select option { color: #34413b; background: #fff; }
 .msg-item-date { font-size: 11px; color: #a0aaa3; }
 .msg-item-question { font-size: 13px; color: #374151; line-height: 1.5; word-break: break-word; }
 .msg-item-note { font-size: 12px; color: #6b7280; margin-top: 4px; padding-top: 4px; border-top: 1px solid #eef2ee; }
+
+/* ─── Exit Confirmation Dialog ─── */
+.exit-dialog-overlay { position: fixed; inset: 0; z-index: 99998; display: flex; align-items: center; justify-content: center; background: rgba(45,51,48,.32); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+.exit-dialog-overlay[hidden] { display: none; }
+.exit-dialog-card { width: min(380px, 90vw); background: var(--bg); border-radius: 18px; box-shadow: 0 24px 64px rgba(0,0,0,.18), 0 2px 8px rgba(0,0,0,.06); padding: 30px 28px 22px; display: flex; flex-direction: column; align-items: center; text-align: center; animation: exit-dialog-pop .22s cubic-bezier(.2,.8,.2,1); }
+@keyframes exit-dialog-pop { from { transform: scale(.9) translateY(8px); opacity: 0; } to { transform: scale(1) translateY(0); opacity: 1; } }
+.exit-dialog-icon { width: 50px; height: 50px; border-radius: 50%; background: #fef0ed; color: #e85d3a; display: flex; align-items: center; justify-content: center; margin-bottom: 18px; }
+.exit-dialog-icon svg { width: 24px; height: 24px; }
+.exit-dialog-title { margin: 0 0 8px; font-size: 17px; font-weight: 700; color: var(--text); }
+.exit-dialog-message { margin: 0 0 4px; font-size: 14px; color: var(--text); line-height: 1.5; }
+.exit-dialog-hint { margin: 0 0 26px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.exit-dialog-actions { display: flex; gap: 10px; width: 100%; }
+.exit-dialog-actions button { flex: 1; height: 40px; border-radius: 11px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s, transform .1s; border: none; }
+.exit-dialog-cancel { background: transparent; color: var(--text); border: 1.5px solid #d9d6d0; }
+.exit-dialog-cancel:hover { background: #f4f3f0; border-color: #c4c0b9; }
+.exit-dialog-cancel:active { transform: scale(.97); }
+.exit-dialog-confirm { background: var(--green); color: #fff; }
+.exit-dialog-confirm:hover { background: #286a52; }
+.exit-dialog-confirm:active { transform: scale(.97); }
+.exit-dialog-confirm:disabled { opacity: .55; cursor: not-allowed; transform: none; }
+.exit-dialog-overlay.is-syncing .exit-dialog-actions { gap: 0; }
+.exit-dialog-overlay.is-syncing .exit-dialog-cancel { display: none; }
+.exit-dialog-overlay.is-syncing .exit-dialog-confirm { flex: 1; opacity: .55; pointer-events: none; }
+.exit-dialog-overlay.is-syncing .exit-dialog-hint { color: var(--green); font-weight: 600; }

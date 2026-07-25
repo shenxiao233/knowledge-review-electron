@@ -87,6 +87,12 @@ contextBridge.exposeInMainWorld('reviewBridge', {
   windowControls: {
     minimize: () => ipcRenderer.invoke('window:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('window:toggleMaximize'),
-    close: () => ipcRenderer.invoke('window:close')
+    close: () => ipcRenderer.invoke('window:close'),
+    onShowExitConfirm: (callback) => {
+      const listener = () => callback();
+      ipcRenderer.on('window:showExitConfirm', listener);
+      return () => ipcRenderer.removeListener('window:showExitConfirm', listener);
+    },
+    confirmExit: () => ipcRenderer.invoke('window:confirmExit')
   }
 });

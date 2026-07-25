@@ -29,7 +29,7 @@ import invitationRoutes from './routes/invitation.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import collabRoutes from './routes/collab.routes.js';
 
-const app = Fastify({ logger: true, bodyLimit: 2 * 1024 * 1024, trustProxy: config.trustProxy });
+const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024, trustProxy: config.trustProxy });
 
 await fsp.mkdir(config.storageDir, { recursive: true });
 

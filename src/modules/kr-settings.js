@@ -157,6 +157,14 @@ async function init() {
   safeCall('refresh', refresh);
   safeCall('view', () => view('market'));
 
+  // Phase 5: Cloud sync — pull server data then push local state.
+  // Only runs if already authenticated (auto-login). Non-blocking.
+  try {
+    if (marketUnlocked && marketToken) {
+      fullCloudSync().catch((e) => console.warn('[INIT] Cloud sync failed:', e.message));
+    }
+  } catch (e) { console.warn('[INIT] Cloud sync trigger failed:', e.message); }
+
 }
 function ensureStampSetting() {
   const toggle = $('#showStampsToggle');

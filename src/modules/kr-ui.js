@@ -513,3 +513,86 @@ function ensureStoragePanel() {
   syncWebDavForm();
 }
 
+/* ─── Exit Confirmation Dialog ─── */
+(function setupExitDialog() {
+  // Register the IPC listener immediately — element lookups are deferred
+  // to when the dialog is shown, because the dialog HTML appears after
+  // the script tags in index.html and won't exist at IIFE execution time.
+  let exitInProgress = false;
+
+  function showDialog() {
+    if (exitInProgress) return;
+    const overlay = document.getElementById('exitDialogOverlay');
+    const confirmBtn = document.getElementById('exitConfirmButton');
+    const cancelBtn = document.getElementById('exitCancelButton');
+    const hint = document.getElementById('exitDialogHint');
+    if (!overlay || !confirmBtn || !cancelBtn || !hint) {
+      console.warn('[EXIT] Dialog elements not found, falling back to direct close.');
+      window.reviewBridge?.windowControls?.confirmExit?.();
+      return;
+    }
+
+    // Start cloud sync immediately when the dialog appears — sync runs
+    // in parallel while the user reads the dialog and decides.
+    const syncPromise = (typeof fullCloudSync === 'function')
+      ? Promise.race([
+          fullCloudSync(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+        ]).catch((e) => console.warn('[EXIT] Sync failed:', e.message))
+      : Promise.resolve();
+
+    // Show "syncing" hint while sync is running
+    let syncDone = false;
+    syncPromise.then(() => { syncDone = true; }).catch(() => { syncDone = true; });
+
+    overlay.classList.add('is-syncing');
+    hint.textContent = '正在同步数据到云端…';
+    confirmBtn.textContent = '等待同步完成…';
+    confirmBtn.disabled = true;
+    cancelBtn.style.display = '';
+    overlay.hidden = false;
+
+    function hideDialog() {
+      if (exitInProgress) return;
+      overlay.hidden = true;
+      document.removeEventListener('keydown', onEsc);
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', hideDialog);
+    }
+
+    async function onConfirm() {
+      if (exitInProgress) return;
+      exitInProgress = true;
+      confirmBtn.disabled = true;
+      cancelBtn.style.display = 'none';
+      hint.textContent = syncDone ? '同步完成，正在退出…' : '等待同步完成…';
+      confirmBtn.textContent = '正在退出…';
+
+      try { await syncPromise; } catch (e) {}
+      try { await window.reviewBridge?.windowControls?.confirmExit?.(); } catch (e) {}
+    }
+
+    function onEsc(e) {
+      if (e.key === 'Escape' && !exitInProgress) hideDialog();
+    }
+
+    // Once sync finishes, enable the confirm button
+    syncPromise.then(() => {
+      if (exitInProgress) return;
+      overlay.classList.remove('is-syncing');
+      hint.textContent = '数据已同步，可以安全退出。';
+      confirmBtn.textContent = '确定退出';
+      confirmBtn.disabled = false;
+    });
+
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', hideDialog);
+    document.addEventListener('keydown', onEsc);
+  }
+
+  window.reviewBridge?.windowControls?.onShowExitConfirm?.(showDialog);
+})();
+
+
+
+

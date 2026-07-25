@@ -60,9 +60,14 @@ const updateBackupRoot = path.join(app.getPath('appData'), 'KnowledgeReview-back
 let updateCheckPromise = null;
 let updateDownloaded = false;
 let updateInstallStarted = false;
+let isQuitting = false;
 app.setPath('userData', runtimeDataPath);
 app.setPath('sessionData', path.join(runtimeDataPath, 'session'));
 app.setPath('logs', path.join(runtimeDataPath, 'logs'));
+
+// Mark as quitting when the app is about to quit (auto-update, OS shutdown, etc.)
+// so the per-window close handler skips the exit confirmation dialog.
+app.on('before-quit', () => { isQuitting = true; });
 
 async function migrateLegacyRuntimeData() {
   const markerPath = path.join(runtimeDataPath, '.legacy-migration-complete');
@@ -227,6 +232,15 @@ const createWindow = () => {
   });
 
   win.setMenuBarVisibility(false);
+
+  // Exit confirmation: intercept window close and ask the renderer to show
+  // a custom-styled dialog. Skipped when the app is already quitting
+  // (e.g., update install, app.quit(), OS shutdown).
+  win.on('close', (e) => {
+    if (isQuitting) return;
+    e.preventDefault();
+    win.webContents.send('window:showExitConfirm');
+  });
 
   // Block window.open() — redirect to external browser instead
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -862,6 +876,10 @@ ipcMain.handle('window:toggleMaximize', (event) => {
   return win.isMaximized();
 });
 ipcMain.handle('window:close', (event) => BrowserWindow.fromWebContents(event.sender)?.close());
+ipcMain.handle('window:confirmExit', (event) => {
+  isQuitting = true;
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
 ipcMain.handle('shell:openExternal', async (_event, url) => {
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return { ok: false };
   await shell.openExternal(url);
