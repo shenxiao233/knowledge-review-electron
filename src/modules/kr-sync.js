@@ -181,6 +181,10 @@ function resetLocalStateForNewUser(userId) {
     userId: userId,
   };
 
+  // 3b. Reload WebDAV backup config for the new user account so each account
+  //     keeps its own 坚果云 backup settings (per-user storage in main.js).
+  try { loadWebDavConfig(); } catch (e) { /* non-fatal */ }
+
   // 4. Flag: seed sample data after cloud pull confirms no existing data
   pendingNewUserSeeding = true;
 
@@ -294,7 +298,25 @@ function mergeDocumentFromServer(localDoc, serverDoc) {
 function mergeSettingsFromServer(serverSettingsData) {
   if (!serverSettingsData) return;
   if (serverSettingsData.settings) {
+    // Save pre-merge local values so we can restore them if the server carries
+    // invalid/null/NaN values for numeric settings. Previously, a null dailyLimit
+    // from the server would overwrite the local value, then Number() || 50 would
+    // silently reset it to the default — losing the user's custom setting.
+    const pre = {
+      dailyLimit: state.settings.dailyLimit,
+      dailyNewLimit: state.settings.dailyNewLimit,
+      desiredRetention: state.settings.desiredRetention,
+    };
     state.settings = { ...state.settings, ...serverSettingsData.settings };
+    // Only accept the merged value if it's a valid positive number; otherwise
+    // fall back to the pre-merge local value (and only use the hard-coded default
+    // if even the local value is invalid).
+    const mergedDailyLimit = Number(state.settings.dailyLimit);
+    state.settings.dailyLimit = (Number.isFinite(mergedDailyLimit) && mergedDailyLimit > 0) ? mergedDailyLimit : (Number(pre.dailyLimit) || 50);
+    const mergedDailyNewLimit = Number(state.settings.dailyNewLimit);
+    state.settings.dailyNewLimit = (Number.isFinite(mergedDailyNewLimit) && mergedDailyNewLimit >= 0) ? mergedDailyNewLimit : (Number(pre.dailyNewLimit) || 10);
+    const mergedDesiredRetention = Number(state.settings.desiredRetention);
+    state.settings.desiredRetention = (Number.isFinite(mergedDesiredRetention) && mergedDesiredRetention >= 0.8 && mergedDesiredRetention <= 0.99) ? mergedDesiredRetention : (Number(pre.desiredRetention) || 0.9);
   }
   if (Array.isArray(serverSettingsData.groups)) {
     const localGroups = new Set(state.groups || []);
@@ -593,9 +615,9 @@ async function pullFromCloud() {
       } else if (obj.objectType === 'SETTINGS' && obj.data) {
         // SETTINGS merge combines local + server data — result may differ from server.
         // Only mark for re-push if the merge actually changed local data.
-        const beforeJson = JSON.stringify({ groups: state.groups, folders: state.folders, reviewEvents: state.reviewEvents, favorites: state.favorites, profile: state.profile, reviewPlan: state.reviewPlan });
+        const beforeJson = JSON.stringify({ settings: state.settings, groups: state.groups, folders: state.folders, reviewEvents: state.reviewEvents, favorites: state.favorites, profile: state.profile, reviewPlan: state.reviewPlan });
         mergeSettingsFromServer(obj.data);
-        const afterJson = JSON.stringify({ groups: state.groups, folders: state.folders, reviewEvents: state.reviewEvents, favorites: state.favorites, profile: state.profile, reviewPlan: state.reviewPlan });
+        const afterJson = JSON.stringify({ settings: state.settings, groups: state.groups, folders: state.folders, reviewEvents: state.reviewEvents, favorites: state.favorites, profile: state.profile, reviewPlan: state.reviewPlan });
         setSyncVersion('SETTINGS', obj.objectId, obj.objectVersion);
         if (beforeJson !== afterJson) {
           cloudSyncPushedSigs.delete(sigKey('SETTINGS', obj.objectId));

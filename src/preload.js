@@ -78,7 +78,7 @@ contextBridge.exposeInMainWorld('reviewBridge', {
   },
   saveExportFile: (payload) => ipcRenderer.invoke('dialog:saveExport', payload),
   webdav: {
-    getConfig: () => ipcRenderer.invoke('webdav:getConfig'),
+    getConfig: (userId) => ipcRenderer.invoke('webdav:getConfig', { userId }),
     saveConfig: (payload) => ipcRenderer.invoke('webdav:saveConfig', payload),
     test: (payload) => ipcRenderer.invoke('webdav:test', payload),
     push: (payload) => ipcRenderer.invoke('webdav:push', payload)

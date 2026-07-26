@@ -42,6 +42,17 @@ function marketDecksForDisplay() {
   const decks = marketDecks.filter(marketDeckMatches);
   return decks.sort((a, b) => marketSort === 'popular' ? b.downloads - a.downloads : marketSort === 'cards' ? b.cards - a.cards : String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')));
 }
+// Wraps a promise with a hard timeout. If the promise doesn't settle within
+// `ms` milliseconds, rejects with a timeout error. Used to ensure login/register
+// requests can't hang the cat loader indefinitely (Bug 3+4 fix).
+function withMarketTimeout(promise, ms = 5000, message = '连接服务器超时，请检查服务器是否正常运行。') {
+  let handle;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { handle = setTimeout(() => reject(new Error(message)), ms); })
+  ]).finally(() => clearTimeout(handle));
+}
+
 async function marketApi(path, options = {}) {
   const isV2 = String(path).startsWith('/v2/');
   const apiBase = isV2 ? marketApiBase.replace(/\/api\/v1$/, '/api/v2') : marketApiBase;
@@ -76,14 +87,26 @@ async function marketApi(path, options = {}) {
         }
         return body;
       }
+      // IPC returned status 0 — main process network failure (e.g. server unreachable,
+      // DNS error, connection refused). Throw immediately with the IPC error message
+      // instead of falling through to direct fetch, which would double the wait time
+      // (15s IPC timeout + 12s direct fetch = 27s). This was the root cause of Bug 4
+      // (auto-login hangs, cat loader stays forever).
+      if (ipcResult && ipcResult.status === 0) {
+        const reason = ipcResult.error || ipcResult.message || '无法连接到服务器，请检查服务器地址和网络。';
+        throw new Error(reason);
+      }
     }
   } catch (ipcError) {
     // If IPC result was received and it was an error, re-throw immediately
     if (ipcResult && ipcResult.status > 0) throw ipcError;
+    // If IPC returned a definitive failure (status 0), re-throw instead of falling back
+    if (ipcResult && ipcResult.status === 0) throw ipcError;
     console.warn("[MARKET-API] IPC proxy failed, falling back to direct fetch:", ipcError.message);
   }
 
-  // Fallback to direct fetch
+  // Fallback to direct fetch — ONLY when IPC is unavailable (reviewBridge not exposed).
+  // When IPC was available, any failure (including status 0) has already thrown above.
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
@@ -327,7 +350,7 @@ async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
   if (remember) remember.checked = true;
   if (!marketAutoLoginTried && saved.username && saved.password) {
     marketAutoLoginTried = true;
-    // Safety timeout: if auto-login doesn't complete within 8 seconds
+    // Safety timeout: if auto-login doesn't complete within 5 seconds
     // (e.g. network hangs), clear the bootstrap flag so the login form becomes visible.
     const bootstrapTimeout = setTimeout(() => {
       if (marketAuthBootstrapping) {
@@ -335,7 +358,7 @@ async function loadSavedMarketCredentials({ autoLogin = true } = {}) {
         marketAuthBootstrapping = false;
         renderMarket();
       }
-    }, 8000);
+    }, 5000);
     // Fire form.requestSubmit() synchronously — the submit handler is already bound
     // by bind() in init(). This starts the HTTP login request immediately, so it
     // overlaps with remaining init() Phase 4 work (loadDoc, syncSettings, refresh, view).
@@ -753,11 +776,10 @@ async function submitMarketAuth(event) {
     if (loaderText) loaderText.textContent = isRegister ? '正在注册…' : '正在验证身份…';
     renderMarket();
   }
-  // Clear the auto-login safety timeout — the request is now in-flight.
-  if (form?.dataset.bootstrapTimeout) {
-    clearTimeout(Number(form.dataset.bootstrapTimeout));
-    delete form.dataset.bootstrapTimeout;
-  }
+  // NOTE: Do NOT clear the auto-login safety timeout here. Previously the code
+  // cleared form.dataset.bootstrapTimeout before the HTTP request started, which
+  // removed the only safety net when the request hung (Bug 4). The safety timeout
+  // is now cleared in the finally block below, AFTER the request completes or times out.
   // Update marketApiBase from the server address field
   const newBase = parseMarketApiBase(serverAddr);
   if (newBase) {
@@ -771,10 +793,10 @@ async function submitMarketAuth(event) {
   if (status) status.textContent = '正在连接服务器验证…';
   try {
     if (isRegister) {
-      const validation = await marketApi('/v2/invitations/validate', { method: 'POST', body: JSON.stringify({ code: invitationCode }) });
+      const validation = await withMarketTimeout(marketApi('/v2/invitations/validate', { method: 'POST', body: JSON.stringify({ code: invitationCode }) }), 5000);
       if (!validation?.valid) throw new Error(validation?.reason || '邀请码无效或已失效。');
     }
-    const result = await marketApi(isRegister ? '/v2/auth/register' : '/auth/login', { method: 'POST', body: JSON.stringify(isRegister ? { invitationCode, username, password } : { username, password }) });
+    const result = await withMarketTimeout(marketApi(isRegister ? '/v2/auth/register' : '/auth/login', { method: 'POST', body: JSON.stringify(isRegister ? { invitationCode, username, password } : { username, password }) }), 5000);
     marketToken = result.token || '';
     marketUser = result.user || null;
     if (!marketToken) throw new Error('服务器没有返回有效登录令牌');
@@ -841,17 +863,19 @@ async function submitMarketAuth(event) {
     setAppAuthLock(true);
     if (status) status.textContent = '服务器认证失败';
     const errorBox = $('#marketLoginError');
+    const rawMsg = error instanceof Error ? error.message : '无法连接牌组市场服务器';
+    let cnMsg = rawMsg;
+    cnMsg = cnMsg.replace(/Invalid market credentials/i, '服务器地址、账户名或密码不正确，请检查后重试。');
+    cnMsg = cnMsg.replace(/Invalid server key/i, '服务器地址不正确，请检查后重试。');
+    cnMsg = cnMsg.replace(/Username already taken/i, '该账户名已被注册，请更换其他账户名。');
+    cnMsg = cnMsg.replace(/Invalid invitation code/i, '邀请码无效或已失效。');
+    cnMsg = cnMsg.replace(/Self-registration is disabled/i, '当前服务器未开放自助注册。');
+    cnMsg = cnMsg.replace(/Invalid registration data/i, '注册信息格式不正确，请检查账户名和密码长度。');
+    cnMsg = cnMsg.replace(/Failed to fetch|fetch failed/i, '无法连接到服务器，请检查服务器地址和网络。');
+    cnMsg = cnMsg.replace(/ECONNREFUSED|ENOTFOUND|ECONNRESET|EHOSTUNREACH|ENETUNREACH|ETIMEDOUT/i, '无法连接到服务器，请检查服务器地址和网络。');
+    cnMsg = cnMsg.replace(/timeout|AbortError|aborted/i, '连接服务器超时，请检查服务器是否正常运行。');
+    cnMsg = cnMsg.replace(/The operation was aborted/i, '连接服务器超时，请检查服务器是否正常运行。');
     if (errorBox) {
-      const rawMsg = error instanceof Error ? error.message : '无法连接牌组市场服务器';
-      let cnMsg = rawMsg;
-      cnMsg = cnMsg.replace(/Invalid market credentials/i, '服务器地址、账户名或密码不正确，请检查后重试。');
-      cnMsg = cnMsg.replace(/Invalid server key/i, '服务器地址不正确，请检查后重试。');
-      cnMsg = cnMsg.replace(/Username already taken/i, '该账户名已被注册，请更换其他账户名。');
-      cnMsg = cnMsg.replace(/Invalid invitation code/i, '邀请码无效或已失效。');
-      cnMsg = cnMsg.replace(/Self-registration is disabled/i, '当前服务器未开放自助注册。');
-      cnMsg = cnMsg.replace(/Invalid registration data/i, '注册信息格式不正确，请检查账户名和密码长度。');
-      cnMsg = cnMsg.replace(/Failed to fetch/i, '无法连接到服务器，请检查服务器地址和网络。');
-      cnMsg = cnMsg.replace(/timeout|AbortError/i, '连接服务器超时，请检查服务器是否正常运行。');
       errorBox.textContent = cnMsg;
       errorBox.classList.add('is-visible');
     }
@@ -861,6 +885,13 @@ async function submitMarketAuth(event) {
     renderMarket();
   } finally {
     if (submit) submit.disabled = false;
+    // Clear the auto-login safety timeout now that the request has completed
+    // (success or failure). This prevents it from firing after we've already
+    // handled the result in the try/catch blocks above.
+    if (form?.dataset.bootstrapTimeout) {
+      clearTimeout(Number(form.dataset.bootstrapTimeout));
+      delete form.dataset.bootstrapTimeout;
+    }
   }
 }
 function profileData() { return state.profile || (state.profile = structuredClone(base.profile)); }

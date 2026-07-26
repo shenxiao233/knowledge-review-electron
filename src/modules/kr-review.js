@@ -199,8 +199,8 @@ function formatInterval(days) { if (days < 1) return `${Math.max(1, Math.round(d
 function syncSettings() {
   els.desiredRetention.value = state.settings.desiredRetention;
   els.desiredRetentionValue.textContent = `${Math.round(state.settings.desiredRetention * 100)}%`;
-  els.dailyLimit.value = state.settings.dailyLimit;
-  els.dailyNewLimit.value = state.settings.dailyNewLimit;
+  els.dailyLimit.value = state.settings.dailyLimit || 50;
+  els.dailyNewLimit.value = state.settings.dailyNewLimit || 10;
   const priority = ['new', 'review', 'mixed'].includes(state.settings.reviewPriority) ? state.settings.reviewPriority : 'mixed';
   const descriptions = {
     new: '优先安排尚未学习的新词，适合建立新的知识基础。',

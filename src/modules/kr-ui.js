@@ -453,7 +453,11 @@ function syncWebDavForm() {
 
 function webdavFormPayload() {
   const password = $('#webdavPassword');
-  return { url: $('#webdavUrl')?.value.trim(), remoteFolder: $('#webdavRemoteFolder')?.value.trim(), username: $('#webdavUsername')?.value.trim(), password: password?.dataset.savedMask ? '' : (password?.value || ''), enabled: $('#webdavEnabled')?.checked === true, autoBackup: $('#webdavAutoBackup')?.checked === true };
+  return { userId: currentUserId(), url: $('#webdavUrl')?.value.trim(), remoteFolder: $('#webdavRemoteFolder')?.value.trim(), username: $('#webdavUsername')?.value.trim(), password: password?.dataset.savedMask ? '' : (password?.value || ''), enabled: $('#webdavEnabled')?.checked === true, autoBackup: $('#webdavAutoBackup')?.checked === true };
+}
+
+function currentUserId() {
+  return state?.syncMeta?.userId || marketUser?.id || marketUser?.username || '';
 }
 
 function backupSnapshot() {
@@ -466,7 +470,7 @@ function pushWebDavState(trigger = 'automatic') {
   if (!webdavConfig.enabled || !window.reviewBridge?.webdav?.push) return Promise.resolve({ ok: false, skipped: true });
   webdavPushPromise = webdavPushPromise.catch(() => {}).then(async () => {
     updateStorageStatus('正在备份到坚果云...');
-    const result = await window.reviewBridge.webdav.push({ content: backupSnapshot(), updatedAt: new Date().toISOString(), trigger });
+    const result = await window.reviewBridge.webdav.push({ userId: currentUserId(), content: backupSnapshot(), updatedAt: new Date().toISOString(), trigger });
     if (result?.backupHistory) webdavConfig = { ...webdavConfig, ...result, backupHistory: result.backupHistory, lastBackupAt: result.lastBackupAt || result.updatedAt || webdavConfig.lastBackupAt };
     if (result?.ok) { webdavLastBackupAt = result.updatedAt || new Date().toISOString(); updateStorageStatus(`最近备份：${new Date(webdavLastBackupAt).toLocaleString('zh-CN')}`); }
     else updateStorageStatus(result?.error ? `备份失败：${result.error}` : '等待下一次自动备份');
@@ -485,8 +489,9 @@ function startWebDavPolling() {
 
 async function loadWebDavConfig() {
   if (!window.reviewBridge?.webdav?.getConfig) return;
-  const result = await window.reviewBridge.webdav.getConfig();
+  const result = await window.reviewBridge.webdav.getConfig(currentUserId());
   if (result?.ok) { webdavConfig = result; updateStorageStatus(); syncWebDavForm(); startWebDavPolling(); }
+  else { webdavConfig = { enabled: false, autoBackup: false, backupHistory: [] }; syncWebDavForm(); updateStorageStatus(); }
 }
 
 async function saveWebDavConfig() {

@@ -7,9 +7,16 @@
  *           restoreLatexForStorage, formatBytes
  */
 function cache() {
-  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'pushSelectedButton', 'dedupCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileDeckPagination', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { if (!els[key]) els[key] = document.getElementById(key); });
-  if (!els.reviewPriority) els.reviewPriority = document.querySelector('input[name="reviewPriority"]:checked');
-  if (!els.reviewPriorityDescription) els.reviewPriorityDescription = document.getElementById('reviewPriorityDescription');
+  // Always re-fetch elements that exist in the DOM. The old "if (!els[key])" guard
+  // caused stale references after ensureFSRSSettingsPanel() rebuilt #algorithmPanel's
+  // innerHTML — els.dailyLimit kept pointing at the destroyed element, so the input
+  // event listener (attached in bind()) went to a detached node and user edits to
+  // "每日复习上限" never triggered the settings() save handler. (Bug 1 root cause.)
+  ['noteEditor', 'outlineList', 'heatmap', 'heatmapPrev', 'heatmapNext', 'heatmapMonthLabel', 'cardGroupSelect', 'cardTypeSelect', 'answerChoices', 'todayCount', 'questionCard', 'reviewProgressText', 'remainingText', 'progressRing', 'nextButton', 'cardModal', 'cardForm', 'createModal', 'createForm', 'exportModal', 'cardList', 'folderFilter', 'tagFilter', 'cardTypeFilter', 'cardStatusFilter', 'cardSearchInput', 'cardSummary', 'cardGroupRail', 'bulkSelectionBar', 'selectedCardCount', 'bulkDeleteCardsButton', 'pushSelectedButton', 'dedupCardsButton', 'cardLoadMore', 'cardPageWheel', 'cardWheelRail', 'cardWheelLabel', 'cardSortSelect', 'marketGrid', 'marketSearchInput', 'marketSortSelect', 'marketAuthForm', 'marketDetailModal', 'marketDetailBody', 'marketDownloadButton', 'marketUploadModal', 'marketUploadForm', 'marketUploadDeckId', 'marketUploadGroup', 'marketUploadName', 'marketUploadDescription', 'marketUploadChangelog', 'profileDeckList', 'profileDeckPagination', 'profileAvatarButton', 'profileAvatarImage', 'profileAvatarFallback', 'profileAvatarInput', 'profileEditModal', 'profileEditForm', 'profileDisplayName', 'profileProfileHint', 'profileDeckCount', 'profileCardCount', 'profilePublishedCount', 'toast', 'desiredRetention', 'desiredRetentionValue', 'dailyLimit', 'dailyNewLimit', 'intervalPreview', 'showStampsToggle', 'reviewGroupSelect', 'reviewOrderButton', 'reviewOrderMenu', 'reviewHistory', 'reviewHistoryMeta', 'reviewHistoryButton', 'reviewHistoryCount', 'reviewHistoryPopover', 'reviewPlanList', 'reviewPlanMeta', 'reviewHome', 'reviewStudy', 'reviewStudyBack', 'reviewStudyGroupLabel', 'updateStatus', 'updateProgress', 'updateProgressBar', 'updateProgressMeta', 'updateCheckButton', 'updateInstallButton', 'appVersion', 'dataPath'].forEach((key) => { const el = document.getElementById(key); if (el) els[key] = el; });
+  const rp = document.querySelector('input[name="reviewPriority"]:checked');
+  if (rp) els.reviewPriority = rp;
+  const rpd = document.getElementById('reviewPriorityDescription');
+  if (rpd) els.reviewPriorityDescription = rpd;
 }
 /* ensureAccountSecurityPanel removed - password change moved to market account menu */
 
@@ -164,9 +171,19 @@ async function init() {
 
   cardSortDirection = ['asc', 'desc', 'reviews-asc', 'reviews-desc'].includes(state.settings?.cardSortDirection) ? state.settings.cardSortDirection : 'asc';
 
+  // Yield to the event loop between heavy synchronous DOM operations so the
+  // cat-loader CSS animation (visible during auto-login) can keep ticking.
+  // Without these yields, loadDoc + syncSettings + refresh (13 renderers) +
+  // view('market') block the main thread for hundreds of milliseconds,
+  // freezing the animation even though it's compositor-driven.
+  const yieldToEventLoop = () => new Promise((r) => setTimeout(r, 0));
+  await yieldToEventLoop();
   safeCall('loadDoc', loadDoc);
+  await yieldToEventLoop();
   safeCall('syncSettings', syncSettings);
+  await yieldToEventLoop();
   safeCall('refresh', refresh);
+  await yieldToEventLoop();
   safeCall('view', () => view('market'));
 
   // Phase 5: Cloud sync — pull server data then push local state.
@@ -288,6 +305,7 @@ const REFRESH_MAP = {
   market: () => safeRender('renderMarket', renderMarket),
   profile: () => safeRender('renderProfile', renderProfile),
   badges: () => safeRender('badges', badges),
+  settings: () => safeRender('syncSettings', syncSettings),
 };
 function refresh(parts) {
   if (!parts || typeof parts !== 'object') {

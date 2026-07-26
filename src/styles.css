@@ -3616,13 +3616,13 @@ select option { color: #34413b; background: #fff; }
 .market-auth-bootstrap .wrapper { width: fit-content; height: fit-content; display: flex; flex-direction: column; justify-content: center; align-items: center; }
 .market-auth-bootstrap .catContainer { width: 100%; height: fit-content; display: flex; align-items: center; justify-content: center; position: relative; }
 .market-auth-bootstrap .catbody { width: 80px; }
-.market-auth-bootstrap .tail { position: absolute; width: 17px; top: 50%; animation: cat-tail 0.5s ease-in infinite alternate-reverse; transform-origin: top; }
+.market-auth-bootstrap .tail { position: absolute; width: 17px; top: 50%; animation: cat-tail 0.5s ease-in infinite alternate-reverse; transform-origin: top; will-change: transform; }
 @keyframes cat-tail { 0% { transform: rotateZ(60deg); } 50% { transform: rotateZ(0deg); } 100% { transform: rotateZ(-20deg); } }
 .market-auth-bootstrap .wall { width: 300px; }
 .market-auth-bootstrap .text { display: flex; flex-direction: column; width: 50px; position: absolute; margin: 0px 0px 100px 120px; }
-.market-auth-bootstrap .zzz { color: black; font-weight: 700; font-size: 15px; animation: cat-zzz 2s linear infinite; }
-.market-auth-bootstrap .bigzzz { color: black; font-weight: 700; font-size: 25px; margin-left: 10px; animation: cat-zzz 2.3s linear infinite; }
-@keyframes cat-zzz { 0% { color: transparent; } 50% { color: black; } 100% { color: transparent; } }
+.market-auth-bootstrap .zzz { color: black; font-weight: 700; font-size: 15px; animation: cat-zzz 2s linear infinite; will-change: opacity; }
+.market-auth-bootstrap .bigzzz { color: black; font-weight: 700; font-size: 25px; margin-left: 10px; animation: cat-zzz 2.3s linear infinite; will-change: opacity; }
+@keyframes cat-zzz { 0% { opacity: 0; } 50% { opacity: 1; } 100% { opacity: 0; } }
 .market-auth-bootstrap .loader-text { margin-top: 16px; font-size: 14px; font-weight: 600; color: #5a6b62; letter-spacing: 0.5px; }
 
 .settings-account-section { margin-top: 24px; padding: 22px; border: 1px solid #dce8e1; border-radius: 12px; background: #fbfdfc; }

@@ -603,9 +603,12 @@ function webDavUrl(relativePath = '', config = {}) {
   return new URL(suffix, base).toString();
 }
 
-async function readWebDavCredentials() {
+async function readWebDavCredentials(userId) {
+  const credPath = userId
+    ? path.join(runtimeDataPath, `webdav-credentials.${userId}.json`)
+    : webDavCredentialsPath;
   try {
-    const saved = JSON.parse(await fs.readFile(webDavCredentialsPath, 'utf8'));
+    const saved = JSON.parse(await fs.readFile(credPath, 'utf8'));
     if (!saved?.password) return { username: saved?.username || '', password: '' };
     if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法读取 WebDAV 密码。');
     return { username: saved.username || '', password: safeStorage.decryptString(Buffer.from(saved.password, 'base64')) };
@@ -615,16 +618,19 @@ async function readWebDavCredentials() {
   }
 }
 
-async function writeWebDavCredentials(username, password) {
+async function writeWebDavCredentials(userId, username, password) {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('系统加密存储不可用，无法保存 WebDAV 密码。');
+  const credPath = userId
+    ? path.join(runtimeDataPath, `webdav-credentials.${userId}.json`)
+    : webDavCredentialsPath;
   const encrypted = safeStorage.encryptString(String(password || '')).toString('base64');
-  const tempPath = `${webDavCredentialsPath}.tmp`;
+  const tempPath = `${credPath}.tmp`;
   await fs.writeFile(tempPath, JSON.stringify({ username: String(username || ''), password: encrypted }, null, 2), 'utf8');
   try {
-    await fs.rename(tempPath, webDavCredentialsPath);
+    await fs.rename(tempPath, credPath);
   } catch {
-    await fs.rm(webDavCredentialsPath, { force: true });
-    await fs.rename(tempPath, webDavCredentialsPath);
+    await fs.rm(credPath, { force: true });
+    await fs.rename(tempPath, credPath);
   }
 }
 
@@ -658,25 +664,38 @@ function requestWebDav(url, options = {}) {
 
 function isSuccessStatus(status) { return status >= 200 && status < 300; }
 
-async function getWebDavConfig() {
+async function getWebDavConfig(userId) {
   const config = await readAppConfig();
-  const credentials = await readWebDavCredentials();
-  const lastBackupAt = config.webdav?.lastBackupAt || config.webdav?.lastSyncAt || '';
-  const savedHistory = Array.isArray(config.webdav?.backupHistory)
-    ? config.webdav.backupHistory.slice(0, 20)
+  let webdav = null;
+  if (userId && config.webdavUsers && config.webdavUsers[userId]) {
+    webdav = config.webdavUsers[userId];
+  } else if (config.webdav) {
+    webdav = config.webdav;
+    if (userId) {
+      if (!config.webdavUsers) config.webdavUsers = {};
+      if (!config.webdavUsers[userId]) {
+        config.webdavUsers[userId] = config.webdav;
+        await writeAppConfig(config);
+      }
+    }
+  }
+  const credentials = await readWebDavCredentials(userId);
+  const lastBackupAt = webdav?.lastBackupAt || webdav?.lastSyncAt || '';
+  const savedHistory = Array.isArray(webdav?.backupHistory)
+    ? webdav.backupHistory.slice(0, 20)
     : [];
   const backupHistory = savedHistory.length || !lastBackupAt
     ? savedHistory
     : [{ id: 'legacy-last-backup', at: lastBackupAt, status: 'success', trigger: 'automatic', message: '历史备份记录', size: 0 }];
   return {
-    url: config.webdav?.url || defaultWebDavUrl,
-    remoteFolder: config.webdav?.remoteFolder || defaultWebDavFolder,
-    username: config.webdav?.username || credentials.username || '',
-    enabled: config.webdav?.enabled === true,
-    autoBackup: config.webdav?.autoBackup !== undefined ? config.webdav.autoBackup === true : config.webdav?.autoSync === true,
+    url: webdav?.url || defaultWebDavUrl,
+    remoteFolder: webdav?.remoteFolder || defaultWebDavFolder,
+    username: webdav?.username || credentials.username || '',
+    enabled: webdav?.enabled === true,
+    autoBackup: webdav?.autoBackup !== undefined ? webdav.autoBackup === true : webdav?.autoSync === true,
     hasPassword: Boolean(credentials.password),
     lastBackupAt,
-    lastError: config.webdav?.lastError || '',
+    lastError: webdav?.lastError || '',
     backupHistory
   };
 }
@@ -718,9 +737,9 @@ async function pushWebDavState(config, credentials, content, updatedAt) {
   return { ok: true, updatedAt: updatedAt || new Date().toISOString() };
 }
 
-async function recordWebDavBackup({ status, trigger, message, size = 0, at = new Date().toISOString() }) {
+async function recordWebDavBackup(userId, { status, trigger, message, size = 0, at = new Date().toISOString() }) {
   const current = await readAppConfig();
-  const webdav = current.webdav || {};
+  const webdav = (userId && current.webdavUsers?.[userId]) || current.webdav || {};
   const history = Array.isArray(webdav.backupHistory) ? webdav.backupHistory : [];
   const entry = {
     id: `backup-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
@@ -736,13 +755,20 @@ async function recordWebDavBackup({ status, trigger, message, size = 0, at = new
     lastError: entry.status === 'success' ? '' : entry.message,
     backupHistory: [entry, ...history].slice(0, 20)
   };
-  await writeAppConfig({ ...current, webdav: nextWebDav });
+  if (userId) {
+    if (!current.webdavUsers) current.webdavUsers = {};
+    current.webdavUsers[userId] = nextWebDav;
+    await writeAppConfig(current);
+  } else {
+    await writeAppConfig({ ...current, webdav: nextWebDav });
+  }
   return nextWebDav;
 }
 
-ipcMain.handle('webdav:getConfig', async () => {
+ipcMain.handle('webdav:getConfig', async (_event, payload) => {
   try {
-    const config = await getWebDavConfig();
+    const userId = payload?.userId || '';
+    const config = await getWebDavConfig(userId);
     return { ok: true, ...config, url: normalizeWebDavUrl(config.url) };
   } catch (error) {
     return { ok: false, error: error.message || '无法读取 WebDAV 配置。' };
@@ -751,29 +777,34 @@ ipcMain.handle('webdav:getConfig', async () => {
 
 ipcMain.handle('webdav:saveConfig', async (_event, payload) => {
   try {
+    const userId = payload?.userId || '';
     const current = await readAppConfig();
-    const existingCredentials = await readWebDavCredentials();
+    const existingCredentials = await readWebDavCredentials(userId);
     const url = normalizeWebDavUrl(payload?.url || defaultWebDavUrl);
     const remoteFolder = String(payload?.remoteFolder || defaultWebDavFolder).trim().replace(/^\/+|\/+$/g, '') || defaultWebDavFolder;
     const username = String(payload?.username || '').trim();
     const password = String(payload?.password || '');
     if (!username) return { ok: false, error: '请填写坚果云账号或邮箱。' };
     if (!password && !existingCredentials.password) return { ok: false, error: '请填写应用密码。' };
-    if (password) await writeWebDavCredentials(username, password);
-    else if (username !== existingCredentials.username) await writeWebDavCredentials(username, existingCredentials.password);
-    await writeAppConfig({
-      ...current,
-      webdav: {
-        ...(current.webdav || {}),
-        url,
-        remoteFolder,
-        username,
-        enabled: payload?.enabled === true,
-        autoBackup: payload?.autoBackup !== false,
-        lastError: ''
-      }
-    });
-    return { ok: true, ...(await getWebDavConfig()) };
+    if (password) await writeWebDavCredentials(userId, username, password);
+    else if (username !== existingCredentials.username) await writeWebDavCredentials(userId, username, existingCredentials.password);
+    const nextWebDav = {
+      url,
+      remoteFolder,
+      username,
+      enabled: payload?.enabled === true,
+      autoBackup: payload?.autoBackup !== false,
+      lastError: ''
+    };
+    if (userId) {
+      if (!current.webdavUsers) current.webdavUsers = {};
+      const existing = current.webdavUsers[userId] || current.webdav || {};
+      current.webdavUsers[userId] = { ...existing, ...nextWebDav };
+    } else {
+      current.webdav = { ...(current.webdav || {}), ...nextWebDav };
+    }
+    await writeAppConfig(current);
+    return { ok: true, ...(await getWebDavConfig(userId)) };
   } catch (error) {
     return { ok: false, error: error.message || '无法保存 WebDAV 配置。' };
   }
@@ -781,8 +812,9 @@ ipcMain.handle('webdav:saveConfig', async (_event, payload) => {
 
 ipcMain.handle('webdav:test', async (_event, payload) => {
   try {
-    const savedConfig = await getWebDavConfig();
-    const savedCredentials = await readWebDavCredentials();
+    const userId = payload?.userId || '';
+    const savedConfig = await getWebDavConfig(userId);
+    const savedCredentials = await readWebDavCredentials(userId);
     const config = {
       url: normalizeWebDavUrl(payload?.url || savedConfig.url || defaultWebDavUrl),
       remoteFolder: String(payload?.remoteFolder || savedConfig.remoteFolder || defaultWebDavFolder).trim().replace(/^\/+|\/+$/g, '') || defaultWebDavFolder
@@ -793,19 +825,17 @@ ipcMain.handle('webdav:test', async (_event, payload) => {
     };
     if (!credentials.username || !credentials.password) return { ok: false, error: '请填写坚果云账号和应用密码。' };
     await ensureWebDavDirectory(config, credentials);
-    await writeWebDavCredentials(credentials.username, credentials.password);
+    await writeWebDavCredentials(userId, credentials.username, credentials.password);
     const current = await readAppConfig();
-    await writeAppConfig({
-      ...current,
-      webdav: {
-        ...(current.webdav || {}),
-        url: config.url,
-        remoteFolder: config.remoteFolder,
-        username: credentials.username,
-        lastError: ''
-      }
-    });
-    return { ok: true, message: 'WebDAV 连接成功，备份目录可用。', ...(await getWebDavConfig()) };
+    if (userId) {
+      if (!current.webdavUsers) current.webdavUsers = {};
+      const existing = current.webdavUsers[userId] || current.webdav || {};
+      current.webdavUsers[userId] = { ...existing, url: config.url, remoteFolder: config.remoteFolder, username: credentials.username, lastError: '' };
+    } else {
+      current.webdav = { ...(current.webdav || {}), url: config.url, remoteFolder: config.remoteFolder, username: credentials.username, lastError: '' };
+    }
+    await writeAppConfig(current);
+    return { ok: true, message: 'WebDAV 连接成功，备份目录可用。', ...(await getWebDavConfig(userId)) };
   } catch (error) {
     return { ok: false, error: error.message || 'WebDAV 连接失败。' };
   }
@@ -813,16 +843,17 @@ ipcMain.handle('webdav:test', async (_event, payload) => {
 
 ipcMain.handle('webdav:push', async (_event, payload) => {
   const trigger = payload?.trigger === 'manual' ? 'manual' : 'automatic';
+  const userId = payload?.userId || '';
   const attemptedAt = new Date().toISOString();
   try {
-    const config = await getWebDavConfig();
-    const credentials = await readWebDavCredentials();
+    const config = await getWebDavConfig(userId);
+    const credentials = await readWebDavCredentials(userId);
     if (!config.enabled || !config.username || !credentials.password) return { ok: false, skipped: true, error: 'WebDAV 尚未配置。' };
     if (typeof payload?.content !== 'string') return { ok: false, error: '同步数据为空。' };
     await ensureWebDavDirectory(config, credentials);
     const result = await pushWebDavState(config, credentials, payload.content, payload.updatedAt || attemptedAt);
     if (result.ok) {
-      const webdav = await recordWebDavBackup({
+      const webdav = await recordWebDavBackup(userId, {
         status: 'success',
         trigger,
         at: result.updatedAt,
@@ -834,7 +865,7 @@ ipcMain.handle('webdav:push', async (_event, payload) => {
     return result;
   } catch (error) {
     const message = error.message || '无法上传 WebDAV 数据。';
-    const webdav = await recordWebDavBackup({ status: 'failed', trigger, at: attemptedAt, message });
+    const webdav = await recordWebDavBackup(userId, { status: 'failed', trigger, at: attemptedAt, message });
     return { ok: false, error: message, lastBackupAt: webdav.lastBackupAt, backupHistory: webdav.backupHistory };
   }
 });
