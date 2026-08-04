@@ -8,6 +8,7 @@ export interface SyncRequest {
   objectVersion: number;
   data?: any;
   metadata?: any;
+  operation?: string;
   deviceId: string;
 }
 
@@ -16,6 +17,8 @@ export interface SyncResponse {
   objectId: string;
   serverVersion: number;
   data?: any;
+  metadata?: any;
+  deleted?: boolean;
   conflict: boolean;
   resolution?: string;
 }
@@ -31,6 +34,7 @@ export class SyncService {
       objectVersion: z.number().int().positive(),
       data: z.any().optional(),
       metadata: z.any().optional(),
+      operation: z.enum(['upsert', 'delete']).optional(),
       deviceId: z.string().min(1).max(50),
     }).parse(request);
 
@@ -45,6 +49,35 @@ export class SyncService {
           },
         },
       });
+
+      const requestIsDelete = validated.operation === 'delete';
+
+      // A deletion is authoritative. Keep a tombstone instead of physically
+      // removing the row so other devices can observe the deletion.
+      if (requestIsDelete && existing) {
+        if (this.isDeletedMetadata(existing.metadata)) {
+          return {
+            objectType: validated.objectType,
+            objectId: validated.objectId,
+            serverVersion: existing.objectVersion,
+            data: null,
+            metadata: existing.metadata,
+            deleted: true,
+            conflict: false,
+          };
+        }
+        return this.deleteExistingSyncObject(tx, existing, validated.deviceId);
+      }
+
+      if (requestIsDelete) {
+        return this.createDeletedSyncObject(
+          tx,
+          userId,
+          validated.objectType,
+          validated.objectId,
+          validated.deviceId,
+        );
+      }
 
       if (!existing) {
         // CREATE: JsonNull is acceptable for a brand-new record (no prior data to wipe).
@@ -77,6 +110,20 @@ export class SyncService {
         };
       }
 
+      if (this.isDeletedMetadata(existing.metadata)) {
+        // Never let an offline device recreate an object deleted elsewhere.
+        return {
+          objectType: validated.objectType,
+          objectId: validated.objectId,
+          serverVersion: existing.objectVersion,
+          data: null,
+          metadata: existing.metadata,
+          deleted: true,
+          conflict: true,
+          resolution: 'SERVER_WINS',
+        };
+      }
+
       // Client is behind the server — return current server data so the client can merge.
       if (validated.objectVersion < existing.objectVersion) {
         return {
@@ -84,6 +131,7 @@ export class SyncService {
           objectId: validated.objectId,
           serverVersion: existing.objectVersion,
           data: existing.data,
+          metadata: existing.metadata,
           conflict: true,
           resolution: 'SERVER_WINS',
         };
@@ -162,6 +210,7 @@ export class SyncService {
         objectVersion: obj.objectVersion,
         data: obj.data,
         metadata: obj.metadata,
+        deleted: this.isDeletedMetadata(obj.metadata),
         updatedAt: obj.updatedAt,
       })),
       syncTime: new Date(),
@@ -204,15 +253,124 @@ export class SyncService {
    * Delete a sync object
    */
   async deleteSyncObject(userId: string, objectType: string, objectId: string) {
-    await prisma.syncObject.delete({
-      where: {
-        userId_objectType_objectId: {
-          userId,
-          objectType: objectType as any,
-          objectId,
+    return prisma.$transaction(async (tx) => {
+      const existing = await tx.syncObject.findUnique({
+        where: {
+          userId_objectType_objectId: {
+            userId,
+            objectType: objectType as any,
+            objectId,
+          },
         },
+      });
+      if (!existing) {
+        await this.createDeletedSyncObject(
+          tx,
+          userId,
+          objectType as any,
+          objectId,
+          'server-delete',
+        );
+        return { deleted: true };
+      }
+      await this.deleteExistingSyncObject(tx, existing, 'server-delete');
+      return { deleted: true };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  private isDeletedMetadata(metadata: unknown): boolean {
+    return Boolean(
+      metadata &&
+        typeof metadata === 'object' &&
+        !Array.isArray(metadata) &&
+        (metadata as Record<string, unknown>).deleted === true,
+    );
+  }
+
+  private async deleteExistingSyncObject(
+    tx: Prisma.TransactionClient,
+    existing: {
+      id: string;
+      objectType: any;
+      objectId: string;
+      objectVersion: number;
+    },
+    modifiedBy: string,
+  ) {
+    const newVersion = existing.objectVersion + 1;
+    const metadata = {
+      deleted: true,
+      deletedAt: new Date().toISOString(),
+      deletedBy: modifiedBy,
+    };
+    await tx.syncObject.update({
+      where: { id: existing.id },
+      data: {
+        objectVersion: newVersion,
+        data: Prisma.JsonNull,
+        metadata,
+        lastModifiedBy: modifiedBy,
       },
     });
+    await tx.syncObjectHistory.create({
+      data: {
+        syncObjectId: existing.id,
+        version: newVersion,
+        data: Prisma.JsonNull,
+        modifiedBy,
+      },
+    });
+    return {
+      objectType: existing.objectType,
+      objectId: existing.objectId,
+      serverVersion: newVersion,
+      data: null,
+      metadata,
+      deleted: true,
+      conflict: false,
+    };
+  }
+
+  private async createDeletedSyncObject(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    objectType: any,
+    objectId: string,
+    modifiedBy: string,
+  ) {
+    const metadata = {
+      deleted: true,
+      deletedAt: new Date().toISOString(),
+      deletedBy: modifiedBy,
+    };
+    const created = await tx.syncObject.create({
+      data: {
+        userId,
+        objectType,
+        objectId,
+        objectVersion: 1,
+        data: Prisma.JsonNull,
+        metadata,
+        lastModifiedBy: modifiedBy,
+      },
+    });
+    await tx.syncObjectHistory.create({
+      data: {
+        syncObjectId: created.id,
+        version: 1,
+        data: Prisma.JsonNull,
+        modifiedBy,
+      },
+    });
+    return {
+      objectType,
+      objectId,
+      serverVersion: 1,
+      data: null,
+      metadata,
+      deleted: true,
+      conflict: false,
+    };
   }
 
   /**

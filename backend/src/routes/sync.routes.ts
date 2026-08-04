@@ -72,8 +72,11 @@ export default async function syncRoutes(
         objectId: z.string().min(1).max(100),
       }).safeParse(request.params);
       if (!params.success) return fail(reply, 400, '参数无效');
-      await syncService.deleteSyncObject(auth(request).id, params.data.objectType, params.data.objectId);
-      return { deleted: true };
+      return syncService.deleteSyncObject(
+        auth(request).id,
+        params.data.objectType,
+        params.data.objectId,
+      );
     } catch (error: any) {
       const msg = error?.issues?.[0]?.message || error?.message || '操作失败';
       return fail(reply, 400, msg);

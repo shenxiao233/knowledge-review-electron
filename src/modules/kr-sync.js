@@ -236,6 +236,36 @@ function setSyncVersion(objectType, objectId, version) {
   state.syncMeta.versions[sigKey(objectType, objectId)] = Number(version) || 0;
 }
 
+function isRemoteDeletion(obj) {
+  if (!obj || typeof obj !== 'object') return false;
+  if (Object.prototype.hasOwnProperty.call(obj, 'data') && obj.data == null) return true;
+  if (obj.deleted === true || obj.isDeleted === true || obj.is_deleted === true || obj.removed === true) return true;
+  const metadata = obj.metadata;
+  if (metadata && typeof metadata === 'object' && metadata.deleted === true) return true;
+  return Boolean(obj.deletedAt || obj.deleted_at || ['delete', 'deleted', 'remove'].includes(String(obj.operation || obj.action || obj.status).toLowerCase()));
+}
+
+function removeRemoteObject(obj) {
+  const objectType = obj?.objectType;
+  const objectId = obj?.objectId;
+  if (!objectType || !objectId) return false;
+  let removed = false;
+  if (objectType === 'CARD') {
+    const before = state.cards.length;
+    state.cards = (state.cards || []).filter((card) => card.id !== objectId);
+    removed = before !== state.cards.length;
+    if (state.selectedCardId === objectId) state.selectedCardId = state.cards[0]?.id || '';
+  } else if (objectType === 'DOCUMENT') {
+    const before = state.documents.length;
+    state.documents = (state.documents || []).filter((doc) => doc.id !== objectId);
+    removed = before !== state.documents.length;
+    if (state.activeDocId === objectId) state.activeDocId = state.documents[0]?.id || '';
+  }
+  cloudSyncPushedSigs.delete(sigKey(objectType, objectId));
+  setSyncVersion(objectType, objectId, obj.objectVersion);
+  return removed;
+}
+
 function getLastSyncAt() { return state.syncMeta?.lastSyncAt || null; }
 function setLastSyncAt(isoString) {
   if (!state.syncMeta) state.syncMeta = {};
@@ -450,7 +480,14 @@ async function pushToCloud() {
       });
       const responses = result?.responses || [];
       for (const resp of responses) {
-        if (resp.conflict && resp.resolution === 'SERVER_WINS' && resp.data) {
+        if (resp.conflict && isRemoteDeletion(resp)) {
+          if (removeRemoteObject(resp)) {
+            cloudSyncSuppressPush = true;
+            try { save(); } finally { cloudSyncSuppressPush = false; }
+            refreshDirty();
+          }
+          pushSuccessCount++;
+        } else if (resp.conflict && resp.resolution === 'SERVER_WINS' && resp.data) {
           conflictsToMerge.push({
             objectType: resp.objectType,
             objectId: resp.objectId,
@@ -571,7 +608,20 @@ async function pullFromCloud() {
 
     for (const obj of objects) {
       const localVersion = getSyncVersion(obj.objectType, obj.objectId);
-      // Skip if we already have this version or newer
+
+      // Deletions are authoritative. Apply them even when a stale local
+      // review counter happens to be greater than the server object version.
+      if (isRemoteDeletion(obj)) {
+        if (removeRemoteObject(obj)) changed = true;
+        else {
+          // Keep the tombstone version even if this device had no local copy.
+          cloudSyncPushedSigs.delete(sigKey(obj.objectType, obj.objectId));
+          setSyncVersion(obj.objectType, obj.objectId, obj.objectVersion);
+        }
+        continue;
+      }
+
+      // Skip if we already have this version or newer.
       if (localVersion >= obj.objectVersion) continue;
 
       if (obj.objectType === 'CARD' && obj.data) {
