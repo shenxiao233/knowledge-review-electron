@@ -101,7 +101,6 @@ model User {
   cardContributions CardContribution[]
 
   @@index([status, createdAt])
-  @@index([uid])
 }
 
 model MarketCategory {
@@ -154,7 +153,6 @@ model DeckVersion {
   createdAt    DateTime @default(now())
 
   @@unique([deckId, version])
-  @@index([deckId, version])
   @@index([deckId, status, version])
 }
 
@@ -240,7 +238,8 @@ model RefreshToken {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
-  @@index([tokenHash])
+  @@unique([tokenHash])
+  @@index([expiresAt])
 }
 
 model InvitationCode {
@@ -258,7 +257,6 @@ model InvitationCode {
   createdAt   DateTime             @default(now())
 
   @@index([status, expiresAt])
-  @@index([code])
 }
 
 model SyncObject {
@@ -291,7 +289,6 @@ model SyncObjectHistory {
   createdAt    DateTime @default(now())
 
   @@unique([syncObjectId, version])
-  @@index([syncObjectId, version])
   @@index([createdAt])
 }
 

@@ -11,6 +11,14 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-768m}
+    cpus: ${POSTGRES_CPU_LIMIT:-0.75}
+    pids_limit: ${POSTGRES_PIDS_LIMIT:-128}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-market}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -59,6 +67,14 @@ services:
   api:
     build: .
     restart: unless-stopped
+    mem_limit: ${API_MEMORY_LIMIT:-512m}
+    cpus: ${API_CPU_LIMIT:-0.75}
+    pids_limit: ${API_PIDS_LIMIT:-128}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file:
       - .env.prod
     environment:

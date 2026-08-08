@@ -7,7 +7,7 @@ import multipart from '@fastify/multipart';
 import { Redis } from 'ioredis';
 import fsp from 'node:fs/promises';
 import { z } from 'zod';
-import { config, maxUploadBytes } from './config.js';
+import { config, maxJsonBodyBytes, maxUploadBytes } from './config.js';
 import { RateLimiter } from './plugins/rate-limit.js';
 import { AuthService } from './services/auth.service.js';
 import { DeckService } from './services/deck.service.js';
@@ -33,7 +33,11 @@ import invitationRoutes from './routes/invitation.routes.js';
 import syncRoutes from './routes/sync.routes.js';
 import collabRoutes from './routes/collab.routes.js';
 
-const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024, trustProxy: config.trustProxy });
+const app = Fastify({
+  logger: { level: config.logLevel },
+  bodyLimit: maxJsonBodyBytes,
+  trustProxy: config.trustProxy,
+});
 
 const requestStartTimes = new WeakMap<object, bigint>();
 app.addHook('onRequest', (request, _reply, done) => {
@@ -62,12 +66,22 @@ await app.register(cors, {
   },
 });
 
-// Enable gzip/deflate compression for all responses — critical for sync data
-// over high-latency connections (JSON compresses 70-80%).
-await app.register(compress, { threshold: 1024 });
+// Nginx performs response compression in production. Avoid compressing the
+// same JSON twice and leave the CPU for database/sync work. Direct/local
+// deployments can opt back in with FASTIFY_COMPRESSION=true.
+if (config.nodeEnv !== 'production' || process.env.FASTIFY_COMPRESSION === 'true') {
+  await app.register(compress, { threshold: 1024 });
+}
 
 await app.register(jwt, { secret: config.jwtSecret });
-await app.register(multipart, { limits: { fileSize: maxUploadBytes, files: 1 } });
+await app.register(multipart, {
+  limits: {
+    fileSize: maxUploadBytes,
+    files: 1,
+    fields: 4,
+    parts: 6,
+  },
+});
 
 let redis: Redis | null = null;
 if (config.redisUrl) {
@@ -86,6 +100,7 @@ const invitationService = new InvitationService();
 const syncService = new SyncService();
 const collabService = new CollabService();
 syncService.startHistoryMaintenance();
+authService.startMaintenance();
 
 auditService.startPeriodicArchival();
 
@@ -132,6 +147,7 @@ app.log.info(`Server on ${config.host}:${config.port}`);
 process.once('SIGTERM', async () => {
   auditService.stopPeriodicArchival();
   syncService.stopHistoryMaintenance();
+  authService.stopMaintenance();
   await app.close();
   if (redis) await redis.quit();
   await prisma.$disconnect();

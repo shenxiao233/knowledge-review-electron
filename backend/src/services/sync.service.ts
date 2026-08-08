@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
-import { config } from '../config.js';
+import { ClientInputError } from '../utils/errors.js';
+import { config, maxSyncBatchBytes, maxSyncObjectBytes } from '../config.js';
 import { metrics } from '../observability/metrics.js';
 
 export interface SyncRequest {
@@ -36,6 +37,27 @@ const syncRequestSchema = z.object({
 });
 
 type ValidatedSyncRequest = z.infer<typeof syncRequestSchema>;
+
+type SyncCursor = {
+  highWaterAt: string;
+  lastUpdatedAt: string;
+  lastId: string;
+};
+
+type FullSyncOptions = {
+  cursor?: string;
+  lastSyncAt?: Date;
+  limit?: number;
+};
+
+type BatchSyncResult = {
+  responses: SyncResponse[];
+  errors: Array<{
+    objectType: string;
+    objectId: string;
+    message: string;
+  }>;
+};
 
 export class SyncService {
   private historyCleanupTimer: NodeJS.Timeout | null = null;
@@ -76,10 +98,53 @@ export class SyncService {
         AND ranked.version_rank > ${keepVersions}
         AND ranked."createdAt" < ${cutoff}
     `;
-    if (deleted > 0) {
-      console.info(`[SyncService] Removed ${deleted} old sync history rows`);
+    let tombstones = 0;
+    if (config.syncTombstoneCleanupEnabled) {
+      tombstones = await this.cleanupTombstones();
     }
-    return { deleted, cutoff, keepVersions };
+    if (deleted > 0 || tombstones > 0) {
+      console.info(
+        `[SyncService] Removed ${deleted} old sync history rows and ${tombstones} tombstones`,
+      );
+    }
+    return { deleted, tombstones, cutoff, keepVersions };
+  }
+
+  /**
+   * Tombstones are intentionally retained for a long period so an offline
+   * device cannot resurrect an object deleted on another device. This method
+   * is opt-in through SYNC_TOMBSTONE_CLEANUP_ENABLED.
+   */
+  async cleanupTombstones() {
+    const cutoff = new Date(
+      Date.now() - config.syncTombstoneRetentionDays * 24 * 60 * 60 * 1000,
+    );
+    return prisma.$executeRaw`
+      DELETE FROM "SyncObject"
+      WHERE "metadata"->>'deleted' = 'true'
+        AND ("metadata"->>'deletedAt')::timestamptz < ${cutoff}
+    `;
+  }
+
+  private validateRequest(request: SyncRequest): ValidatedSyncRequest {
+    const validated = syncRequestSchema.parse(request);
+    const dataBytes = this.jsonBytes(validated.data);
+    const metadataBytes = this.jsonBytes(validated.metadata);
+    if (dataBytes > maxSyncObjectBytes) {
+      throw new ClientInputError(
+        `Sync object data exceeds the ${Math.floor(maxSyncObjectBytes / 1024)} KB limit`,
+      );
+    }
+    if (metadataBytes > Math.min(maxSyncObjectBytes, 128 * 1024)) {
+      throw new ClientInputError('Sync object metadata exceeds the size limit');
+    }
+    return validated;
+  }
+
+  private jsonBytes(value: unknown) {
+    if (value === undefined) return 0;
+    const serialized = JSON.stringify(value);
+    return serialized === undefined ? 0 : Buffer.byteLength(serialized, 'utf8');
   }
 
   /**
@@ -90,7 +155,7 @@ export class SyncService {
     request: SyncRequest,
     transaction?: Prisma.TransactionClient,
   ): Promise<SyncResponse> {
-    const validated = syncRequestSchema.parse(request);
+    const validated = this.validateRequest(request);
     if (transaction) {
       return this.syncObjectInTransaction(transaction, userId, validated);
     }
@@ -99,6 +164,8 @@ export class SyncService {
       (tx) => this.syncObjectInTransaction(tx, userId, validated),
       {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 3000,
+        timeout: 10000,
       },
     );
   }
@@ -256,47 +323,95 @@ export class SyncService {
   /**
    * Batch sync multiple objects
    */
-  async batchSync(userId: string, requests: SyncRequest[]): Promise<SyncResponse[]> {
-    if (requests.length === 0) return [];
-
-    // Validate the complete batch before opening a transaction so malformed
-    // input cannot leave a partially processed batch.
-    const validatedRequests = requests.map((request) => syncRequestSchema.parse(request));
-    const startedAt = process.hrtime.bigint();
-    let failed = false;
-    try {
-      return await prisma.$transaction(async (tx) => {
-        const responses: SyncResponse[] = [];
-        for (const request of validatedRequests) {
-          responses.push(await this.syncObjectInTransaction(tx, userId, request));
-        }
-        return responses;
-      }, {
-        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-        maxWait: 5000,
-        timeout: 30000,
-      });
-    } catch (error) {
-      failed = true;
-      throw error;
-    } finally {
-      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-      metrics.recordSyncBatch(requests.length, durationMs, failed);
+  async batchSync(userId: string, requests: SyncRequest[]): Promise<BatchSyncResult> {
+    if (requests.length === 0) return { responses: [], errors: [] };
+    if (requests.length > config.syncBatchMax) {
+      throw new ClientInputError(
+        `Batch size exceeds the ${config.syncBatchMax}-item limit`,
+      );
     }
+    if (this.jsonBytes(requests) > maxSyncBatchBytes) {
+      throw new ClientInputError('Sync batch exceeds the configured size limit');
+    }
+
+    // Validate the complete batch before opening any transaction. Each object
+    // is then committed independently, so one malformed/contended object no
+    // longer rolls back all other review results in the same HTTP request.
+    const validatedRequests = requests.map((request) => this.validateRequest(request));
+    const startedAt = process.hrtime.bigint();
+    const responses: SyncResponse[] = [];
+    const errors: BatchSyncResult['errors'] = [];
+    for (const request of validatedRequests) {
+      try {
+        responses.push(await prisma.$transaction(
+          (tx) => this.syncObjectInTransaction(tx, userId, request),
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            maxWait: 3000,
+            timeout: 10000,
+          },
+        ));
+      } catch (error: any) {
+        errors.push({
+          objectType: request.objectType,
+          objectId: request.objectId,
+          message: error?.code === 'P2034'
+            ? 'Sync transaction was busy. Please retry.'
+            : 'Sync object could not be saved. Please retry.',
+        });
+      }
+    }
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    metrics.recordSyncBatch(requests.length, durationMs, errors.length > 0);
+    return { responses, errors };
   }
 
   /**
    * Get all sync objects for a user (full sync)
    */
-  async getFullSync(userId: string, lastSyncAt?: Date) {
-    const where: any = { userId };
-    if (lastSyncAt) {
-      where.updatedAt = { gte: lastSyncAt };
+  async getFullSync(userId: string, options: FullSyncOptions = {}) {
+    const limit = Math.min(
+      Math.max(1, Math.floor(options.limit ?? config.syncPageSize)),
+      config.syncPageMax,
+    );
+    const highWaterAt = new Date();
+    const cursor = options.cursor
+      ? this.decodeCursor(options.cursor)
+      : null;
+    const legacyLastSyncAt = cursor ? null : options.lastSyncAt ?? null;
+    const pageHighWaterAt = cursor
+      ? new Date(cursor.highWaterAt)
+      : highWaterAt;
+    const where: any = {
+      userId,
+      updatedAt: { lte: pageHighWaterAt },
+    };
+
+    if (cursor) {
+      const lastUpdatedAt = new Date(cursor.lastUpdatedAt);
+      where.OR = [
+        { updatedAt: { gt: lastUpdatedAt, lte: pageHighWaterAt } },
+        {
+          updatedAt: lastUpdatedAt,
+          id: { gt: cursor.lastId },
+        },
+      ];
+    } else if (legacyLastSyncAt) {
+      where.updatedAt = { gte: legacyLastSyncAt, lte: pageHighWaterAt };
     }
 
-    const objects = await prisma.syncObject.findMany({
+    const rows = await prisma.syncObject.findMany({
       where,
-      orderBy: { updatedAt: 'desc' },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: limit + 1,
+    });
+    const hasMore = rows.length > limit;
+    const objects = hasMore ? rows.slice(0, limit) : rows;
+    const last = objects.at(-1);
+    const nextCursor = this.encodeCursor({
+      highWaterAt: pageHighWaterAt.toISOString(),
+      lastUpdatedAt: (last?.updatedAt ?? (cursor ? new Date(cursor.lastUpdatedAt) : pageHighWaterAt)).toISOString(),
+      lastId: last?.id ?? cursor?.lastId ?? '\uffff',
     });
 
     return {
@@ -309,7 +424,11 @@ export class SyncService {
         deleted: this.isDeletedMetadata(obj.metadata),
         updatedAt: obj.updatedAt,
       })),
-      syncTime: new Date(),
+      hasMore,
+      nextCursor,
+      // Kept for older clients. New clients persist nextCursor instead of
+      // treating a wall-clock timestamp as a durable sync position.
+      syncTime: pageHighWaterAt.toISOString(),
     };
   }
 
@@ -371,7 +490,11 @@ export class SyncService {
       }
       await this.deleteExistingSyncObject(tx, existing, 'server-delete');
       return { deleted: true };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 3000,
+      timeout: 10000,
+    });
   }
 
   private isProgressSync(metadata: unknown): boolean {
@@ -381,6 +504,37 @@ export class SyncService {
         !Array.isArray(metadata) &&
         (metadata as Record<string, unknown>).syncMode === 'progress',
     );
+  }
+
+  private encodeCursor(cursor: SyncCursor) {
+    return Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url');
+  }
+
+  private decodeCursor(value: string): SyncCursor {
+    if (!value || value.length > 512) {
+      throw new ClientInputError('Sync cursor is invalid');
+    }
+    try {
+      const parsed = JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as Partial<SyncCursor>;
+      const highWaterAt = new Date(parsed.highWaterAt || '');
+      const lastUpdatedAt = new Date(parsed.lastUpdatedAt || '');
+      if (
+        !parsed.lastId ||
+        parsed.lastId.length > 100 ||
+        Number.isNaN(highWaterAt.getTime()) ||
+        Number.isNaN(lastUpdatedAt.getTime()) ||
+        lastUpdatedAt > highWaterAt
+      ) {
+        throw new Error('invalid cursor');
+      }
+      return {
+        highWaterAt: highWaterAt.toISOString(),
+        lastUpdatedAt: lastUpdatedAt.toISOString(),
+        lastId: parsed.lastId,
+      };
+    } catch {
+      throw new ClientInputError('Sync cursor is invalid');
+    }
   }
 
   private mergeProgressData(existingData: unknown, progressData: unknown) {

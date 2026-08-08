@@ -174,6 +174,10 @@ export default async function adminRoutes(
       where: { id },
       data: { passwordHash, passwordChangedAt: new Date() },
     });
+    await prisma.refreshToken.updateMany({
+      where: { userId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
     await invalidateAuthCache(id);
 
     await prisma.auditLog.create({

@@ -17,7 +17,21 @@ import { RateLimiter } from '../plugins/rate-limit.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 
 export class DeckService {
+  private activeUploads = 0;
+
   constructor(private rateLimiter: RateLimiter) {}
+
+  tryAcquireUploadSlot() {
+    const limit = Math.max(1, Math.floor(config.uploadConcurrency));
+    if (this.activeUploads >= limit) return null;
+    this.activeUploads += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.activeUploads = Math.max(0, this.activeUploads - 1);
+    };
+  }
   
   async ensureCategory(name: string, createdById: string) {
     const normalized = normalizeCategoryName(name);

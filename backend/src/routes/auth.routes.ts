@@ -29,6 +29,24 @@ export default async function authRoutes(app: FastifyInstance, opts: { authServi
     return authService.login(request, reply);
   });
 
+  // Rotate a refresh token and issue a fresh access token. The access token
+  // remains short-lived/configurable without forcing the client to re-login.
+  app.post('/api/v2/auth/refresh', async (request, reply) => {
+    const body = z.object({
+      refreshToken: z.string().min(20).max(200),
+    }).safeParse(request.body);
+    if (!body.success) return fail(reply, 401, 'Invalid refresh token');
+    return authService.refresh(body.data.refreshToken, reply);
+  });
+
+  app.post('/api/v2/auth/logout', async (request) => {
+    const body = z.object({
+      refreshToken: z.string().min(20).max(200).optional(),
+    }).safeParse(request.body || {});
+    if (!body.success || !body.data.refreshToken) return { revoked: false };
+    return authService.revokeRefreshToken(body.data.refreshToken);
+  });
+
   // Lazy-load avatars so authentication and profile responses stay small.
   app.get('/api/v2/users/:id/avatar', async (request, reply) => {
     const params = z.object({ id: z.string().uuid() }).safeParse(request.params);

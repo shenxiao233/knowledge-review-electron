@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { Redis } from 'ioredis';
 import { fail } from '../utils/response.js';
+import { config } from '../config.js';
 
 type RateLimitBucket = { count: number; resetAt: number };
 
@@ -49,6 +50,11 @@ export class RateLimiter {
     
     const bucket = this.buckets.get(key);
     if (!bucket || bucket.resetAt <= now) {
+      while (this.buckets.size >= config.rateLimitMaxBuckets) {
+        const oldest = this.buckets.keys().next().value as string | undefined;
+        if (!oldest) break;
+        this.buckets.delete(oldest);
+      }
       this.buckets.set(key, { count: 1, resetAt: now + windowMs });
       reply.header('X-RateLimit-Limit', String(max));
       reply.header('X-RateLimit-Remaining', String(Math.max(0, max - 1)));

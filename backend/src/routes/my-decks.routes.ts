@@ -55,27 +55,33 @@ export default async function myDecksRoutes(
       config.uploadRateLimitWindowSeconds * 1000
     )) return;
 
-    const parts = request.parts();
-    let metadata: { title?: string; description?: string; category?: string } = {};
-    let upload: Awaited<ReturnType<typeof deckService.readUpload>> | null = null;
-
-    for await (const part of parts) {
-      if (part.type === 'field' && part.fieldname === 'metadata') {
-        try {
-          metadata = JSON.parse(String(part.value));
-        } catch {
-          throw new ClientInputError('metadata must contain valid JSON');
-        }
-      }
-      if (part.type === 'file' && part.fieldname === 'package') {
-        upload = await deckService.readUpload(part);
-      }
+    const releaseUploadSlot = deckService.tryAcquireUploadSlot();
+    if (!releaseUploadSlot) {
+      return fail(reply, 429, 'Another deck upload is already being processed');
     }
 
-    if (!upload) return fail(reply, 400, 'A deck ZIP file is required');
-
     try {
-      const checked = deckService.inspectPackage(upload.tempPath);
+      const parts = request.parts();
+      let metadata: { title?: string; description?: string; category?: string } = {};
+      let upload: Awaited<ReturnType<typeof deckService.readUpload>> | null = null;
+
+      for await (const part of parts) {
+        if (part.type === 'field' && part.fieldname === 'metadata') {
+          try {
+            metadata = JSON.parse(String(part.value));
+          } catch {
+            throw new ClientInputError('metadata must contain valid JSON');
+          }
+        }
+        if (part.type === 'file' && part.fieldname === 'package') {
+          upload = await deckService.readUpload(part);
+        }
+      }
+
+      if (!upload) return fail(reply, 400, 'A deck ZIP file is required');
+
+      try {
+        const checked = deckService.inspectPackage(upload.tempPath);
       const data = z.object({
         id: z.string().uuid().optional(),
         title: z.string().min(1).max(160).optional(),
@@ -130,8 +136,11 @@ export default async function myDecksRoutes(
         await prisma.deck.delete({ where: { id: deck.id } }).catch(() => undefined);
         throw error;
       }
+      } finally {
+        await fsp.rm(upload!.tempPath, { force: true });
+      }
     } finally {
-      await fsp.rm(upload!.tempPath, { force: true });
+      releaseUploadSlot();
     }
   });
 
@@ -149,32 +158,41 @@ export default async function myDecksRoutes(
       config.uploadRateLimitWindowSeconds * 1000
     )) return;
 
-    const parts = request.parts();
-    let upload: Awaited<ReturnType<typeof deckService.readUpload>> | null = null;
-    for await (const part of parts) {
-      if (part.type === 'file' && part.fieldname === 'package') {
-        upload = await deckService.readUpload(part);
-      }
+    const releaseUploadSlot = deckService.tryAcquireUploadSlot();
+    if (!releaseUploadSlot) {
+      return fail(reply, 429, 'Another deck upload is already being processed');
     }
 
-    if (!upload) return fail(reply, 400, 'A deck ZIP file is required');
-
     try {
-      const checked = deckService.inspectPackage(upload.tempPath);
-      const result = await deckService.saveVersion(
-        deck.id,
-        checked.manifest.version as number,
-        upload,
-        { ...checked.manifest, category: '' }
-      );
-      return reply.code(201).send({
-        id: deck.id,
-        version: result.version,
-        sha256: result.sha256,
-        status: deck.status,
-      });
+      const parts = request.parts();
+      let upload: Awaited<ReturnType<typeof deckService.readUpload>> | null = null;
+      for await (const part of parts) {
+        if (part.type === 'file' && part.fieldname === 'package') {
+          upload = await deckService.readUpload(part);
+        }
+      }
+
+      if (!upload) return fail(reply, 400, 'A deck ZIP file is required');
+
+      try {
+        const checked = deckService.inspectPackage(upload.tempPath);
+        const result = await deckService.saveVersion(
+          deck.id,
+          checked.manifest.version as number,
+          upload,
+          { ...checked.manifest, category: '' }
+        );
+        return reply.code(201).send({
+          id: deck.id,
+          version: result.version,
+          sha256: result.sha256,
+          status: deck.status,
+        });
+      } finally {
+        await fsp.rm(upload!.tempPath, { force: true });
+      }
     } finally {
-      await fsp.rm(upload!.tempPath, { force: true });
+      releaseUploadSlot();
     }
   });
 

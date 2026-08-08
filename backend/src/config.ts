@@ -28,6 +28,8 @@ export const config = {
   // Security
   jwtSecret: process.env.JWT_SECRET || '',
   marketAccessKey: process.env.MARKET_ACCESS_KEY || '',
+  jwtAccessTtl: process.env.JWT_ACCESS_TTL || '12h',
+  refreshTokenTtlDays: num(process.env.REFRESH_TOKEN_TTL_DAYS, 30, 'REFRESH_TOKEN_TTL_DAYS'),
   
   // Storage
   storageDir: path.resolve(process.env.STORAGE_DIR || './storage'),
@@ -35,6 +37,18 @@ export const config = {
   maxArchiveEntries: num(process.env.MAX_ARCHIVE_ENTRIES, 10000, 'MAX_ARCHIVE_ENTRIES'),
   maxUncompressedMb: num(process.env.MAX_UNCOMPRESSED_MB, 1024, 'MAX_UNCOMPRESSED_MB'),
   maxArchiveEntryMb: num(process.env.MAX_ARCHIVE_ENTRY_MB, 100, 'MAX_ARCHIVE_ENTRY_MB'),
+  uploadConcurrency: num(process.env.UPLOAD_CONCURRENCY, 1, 'UPLOAD_CONCURRENCY'),
+  uploadQueueMax: num(process.env.UPLOAD_QUEUE_MAX, 2, 'UPLOAD_QUEUE_MAX'),
+
+  // JSON and sync payload limits. Multipart deck uploads have their own
+  // larger limit above; regular API requests should stay small so a single
+  // request cannot occupy the Node.js heap for an excessive amount of time.
+  maxJsonBodyMb: num(process.env.MAX_JSON_BODY_MB, 8, 'MAX_JSON_BODY_MB'),
+  syncPageSize: num(process.env.SYNC_PAGE_SIZE, 250, 'SYNC_PAGE_SIZE'),
+  syncPageMax: num(process.env.SYNC_PAGE_MAX, 500, 'SYNC_PAGE_MAX'),
+  syncBatchMax: num(process.env.SYNC_BATCH_MAX, 50, 'SYNC_BATCH_MAX'),
+  syncObjectMaxKb: num(process.env.SYNC_OBJECT_MAX_KB, 1024, 'SYNC_OBJECT_MAX_KB'),
+  syncBatchMaxMb: num(process.env.SYNC_BATCH_MAX_MB, 4, 'SYNC_BATCH_MAX_MB'),
   
   // Rate limiting
   // Relaxed defaults still protect the endpoints from accidental or automated abuse.
@@ -66,6 +80,8 @@ export const config = {
   syncHistoryKeepVersions: num(process.env.SYNC_HISTORY_KEEP_VERSIONS, 5, 'SYNC_HISTORY_KEEP_VERSIONS'),
   syncHistoryCleanupIntervalHours: num(process.env.SYNC_HISTORY_CLEANUP_INTERVAL_HOURS, 6, 'SYNC_HISTORY_CLEANUP_INTERVAL_HOURS'),
   syncHistoryCleanupEnabled: process.env.SYNC_HISTORY_CLEANUP_ENABLED === 'true',
+  syncTombstoneRetentionDays: num(process.env.SYNC_TOMBSTONE_RETENTION_DAYS, 90, 'SYNC_TOMBSTONE_RETENTION_DAYS'),
+  syncTombstoneCleanupEnabled: process.env.SYNC_TOMBSTONE_CLEANUP_ENABLED === 'true',
   
   // Proxy
   trustProxy: process.env.TRUST_PROXY === 'true',
@@ -73,6 +89,11 @@ export const config = {
   // Invitation validation rate limit
   invitationValidateRateLimitMax: num(process.env.INVITATION_VALIDATE_RATE_LIMIT_MAX, 30, 'INVITATION_VALIDATE_RATE_LIMIT_MAX'),
   invitationValidateRateLimitWindowSeconds: num(process.env.INVITATION_VALIDATE_RATE_LIMIT_WINDOW_SECONDS, 60, 'INVITATION_VALIDATE_RATE_LIMIT_WINDOW_SECONDS'),
+
+  // Process and cache resource controls
+  rateLimitMaxBuckets: num(process.env.RATE_LIMIT_MAX_BUCKETS, 10000, 'RATE_LIMIT_MAX_BUCKETS'),
+  authCacheMaxEntries: num(process.env.AUTH_CACHE_MAX_ENTRIES, 10000, 'AUTH_CACHE_MAX_ENTRIES'),
+  logLevel: process.env.LOG_LEVEL || (process.env.NODE_ENV === 'production' ? 'warn' : 'info'),
   
   // API
   apiVersion: '0.3.1-phase3',
@@ -86,3 +107,6 @@ if (!config.jwtSecret || config.jwtSecret.length < 32) {
 export const maxUploadBytes = config.maxUploadMb * 1024 * 1024;
 export const maxUncompressedBytes = config.maxUncompressedMb * 1024 * 1024;
 export const maxArchiveEntryBytes = config.maxArchiveEntryMb * 1024 * 1024;
+export const maxJsonBodyBytes = config.maxJsonBodyMb * 1024 * 1024;
+export const maxSyncObjectBytes = config.syncObjectMaxKb * 1024;
+export const maxSyncBatchBytes = config.syncBatchMaxMb * 1024 * 1024;

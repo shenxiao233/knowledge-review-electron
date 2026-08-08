@@ -3,6 +3,7 @@ import type { UserRole } from '@prisma/client';
 import type { Redis } from 'ioredis';
 import { prisma } from '../lib/prisma.js';
 import { fail } from '../utils/response.js';
+import { config } from '../config.js';
 
 export type AuthRequest = FastifyRequest & { 
   user: { id: string; username: string; role: UserRole; iat?: number }
@@ -50,7 +51,16 @@ export async function invalidateAuthCache(userId: string) {
 }
 
 function memoryCacheUser(key: string, user: CachedUser) {
+  while (memoryCache.size >= config.authCacheMaxEntries && !memoryCache.has(key)) {
+    const oldest = memoryCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    memoryCache.delete(oldest);
+  }
   memoryCache.set(key, { user, expiresAt: Date.now() + MEMORY_CACHE_MS });
+}
+
+export async function primeAuthCache(user: CachedUser) {
+  await cacheUser(user);
 }
 
 async function getCachedUser(userId: string): Promise<CachedUser | null> {
