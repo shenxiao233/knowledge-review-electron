@@ -18,6 +18,9 @@ import { SyncService } from './services/sync.service.js';
 import { CollabService } from './services/collab.service.js';
 import { ClientInputError } from './utils/errors.js';
 import { fail } from './utils/response.js';
+import { metrics } from './observability/metrics.js';
+import { configureAuthCache } from './middleware/auth.js';
+import { prisma } from './lib/prisma.js';
 
 import healthRoutes from './routes/health.routes.js';
 import authRoutes from './routes/auth.routes.js';
@@ -31,6 +34,21 @@ import syncRoutes from './routes/sync.routes.js';
 import collabRoutes from './routes/collab.routes.js';
 
 const app = Fastify({ logger: true, bodyLimit: 10 * 1024 * 1024, trustProxy: config.trustProxy });
+
+const requestStartTimes = new WeakMap<object, bigint>();
+app.addHook('onRequest', (request, _reply, done) => {
+  requestStartTimes.set(request, process.hrtime.bigint());
+  done();
+});
+app.addHook('onResponse', (request, reply, done) => {
+  const startedAt = requestStartTimes.get(request);
+  if (startedAt !== undefined) {
+    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    const route = request.routeOptions?.url || request.url.split('?')[0];
+    metrics.recordHttp(route, reply.statusCode, durationMs);
+  }
+  done();
+});
 
 await fsp.mkdir(config.storageDir, { recursive: true });
 
@@ -59,6 +77,7 @@ if (config.redisUrl) {
 }
 
 const rateLimiter = new RateLimiter(redis);
+configureAuthCache(redis);
 const authService = new AuthService(app, rateLimiter);
 const deckService = new DeckService(rateLimiter);
 const auditService = new AuditService();
@@ -66,6 +85,7 @@ const userService = new UserService();
 const invitationService = new InvitationService();
 const syncService = new SyncService();
 const collabService = new CollabService();
+syncService.startHistoryMaintenance();
 
 auditService.startPeriodicArchival();
 
@@ -111,6 +131,8 @@ app.log.info(`Server on ${config.host}:${config.port}`);
 
 process.once('SIGTERM', async () => {
   auditService.stopPeriodicArchival();
+  syncService.stopHistoryMaintenance();
   await app.close();
   if (redis) await redis.quit();
+  await prisma.$disconnect();
 });

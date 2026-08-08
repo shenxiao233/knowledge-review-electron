@@ -292,6 +292,7 @@ model SyncObjectHistory {
 
   @@unique([syncObjectId, version])
   @@index([syncObjectId, version])
+  @@index([createdAt])
 }
 
 model CardContribution {

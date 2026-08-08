@@ -62,6 +62,10 @@ export const config = {
   deckChangeTracking: process.env.DECK_CHANGE_TRACKING === 'true',
   auditRetentionDays: num(process.env.AUDIT_RETENTION_DAYS, 30, 'AUDIT_RETENTION_DAYS'),
   auditArchiveIntervalHours: num(process.env.AUDIT_ARCHIVE_INTERVAL_HOURS, 24, 'AUDIT_ARCHIVE_INTERVAL_HOURS'),
+  syncHistoryRetentionDays: num(process.env.SYNC_HISTORY_RETENTION_DAYS, 30, 'SYNC_HISTORY_RETENTION_DAYS'),
+  syncHistoryKeepVersions: num(process.env.SYNC_HISTORY_KEEP_VERSIONS, 5, 'SYNC_HISTORY_KEEP_VERSIONS'),
+  syncHistoryCleanupIntervalHours: num(process.env.SYNC_HISTORY_CLEANUP_INTERVAL_HOURS, 6, 'SYNC_HISTORY_CLEANUP_INTERVAL_HOURS'),
+  syncHistoryCleanupEnabled: process.env.SYNC_HISTORY_CLEANUP_ENABLED === 'true',
   
   // Proxy
   trustProxy: process.env.TRUST_PROXY === 'true',

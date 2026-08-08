@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma.js';
 import { z } from 'zod';
+import { config } from '../config.js';
+import { metrics } from '../observability/metrics.js';
 
 export interface SyncRequest {
   objectType: string;
@@ -36,6 +38,50 @@ const syncRequestSchema = z.object({
 type ValidatedSyncRequest = z.infer<typeof syncRequestSchema>;
 
 export class SyncService {
+  private historyCleanupTimer: NodeJS.Timeout | null = null;
+
+  startHistoryMaintenance() {
+    if (!config.syncHistoryCleanupEnabled || this.historyCleanupTimer) return;
+    const intervalMs = config.syncHistoryCleanupIntervalHours * 3600 * 1000;
+    this.historyCleanupTimer = setInterval(() => {
+      void this.cleanupHistory();
+    }, intervalMs);
+    this.historyCleanupTimer.unref();
+    setTimeout(() => { void this.cleanupHistory(); }, 60_000).unref();
+  }
+
+  stopHistoryMaintenance() {
+    if (!this.historyCleanupTimer) return;
+    clearInterval(this.historyCleanupTimer);
+    this.historyCleanupTimer = null;
+  }
+
+  async cleanupHistory() {
+    const cutoff = new Date(Date.now() - config.syncHistoryRetentionDays * 24 * 60 * 60 * 1000);
+    const keepVersions = Math.max(1, Math.floor(config.syncHistoryKeepVersions));
+    const deleted = await prisma.$executeRaw`
+      WITH ranked AS (
+        SELECT
+          id,
+          "createdAt",
+          ROW_NUMBER() OVER (
+            PARTITION BY "syncObjectId"
+            ORDER BY version DESC
+          ) AS version_rank
+        FROM "SyncObjectHistory"
+      )
+      DELETE FROM "SyncObjectHistory" history
+      USING ranked
+      WHERE history.id = ranked.id
+        AND ranked.version_rank > ${keepVersions}
+        AND ranked."createdAt" < ${cutoff}
+    `;
+    if (deleted > 0) {
+      console.info(`[SyncService] Removed ${deleted} old sync history rows`);
+    }
+    return { deleted, cutoff, keepVersions };
+  }
+
   /**
    * Sync a single object to the server
    */
@@ -63,6 +109,7 @@ export class SyncService {
     validated: ValidatedSyncRequest,
   ): Promise<SyncResponse> {
     const syncData = validated.data === undefined ? Prisma.JsonNull : validated.data;
+    const progressSync = this.isProgressSync(validated.metadata);
       const existing = await tx.syncObject.findUnique({
         where: {
           userId_objectType_objectId: {
@@ -116,14 +163,16 @@ export class SyncService {
           },
         });
 
-        await tx.syncObjectHistory.create({
-          data: {
-            syncObjectId: created.id,
-            version: 1,
-            data: syncData,
-            modifiedBy: validated.deviceId,
-          },
-        });
+        if (!progressSync && validated.objectType !== 'SETTINGS') {
+          await tx.syncObjectHistory.create({
+            data: {
+              syncObjectId: created.id,
+              version: 1,
+              data: syncData,
+              modifiedBy: validated.deviceId,
+            },
+          });
+        }
 
         return {
           objectType: validated.objectType,
@@ -166,13 +215,16 @@ export class SyncService {
       // BUG-C3 fix: only overwrite `data` when the client actually provided it.
       // A metadata-only update (data omitted) must NOT wipe the existing object data
       // with Prisma.JsonNull.
+      const nextData = progressSync
+        ? this.mergeProgressData(existing.data, validated.data)
+        : validated.data;
       const updateFields: any = {
         objectVersion: newVersion,
-        metadata: validated.metadata,
+        metadata: progressSync ? existing.metadata : validated.metadata,
         lastModifiedBy: validated.deviceId,
       };
       if (validated.data !== undefined) {
-        updateFields.data = validated.data;
+        updateFields.data = nextData;
       }
 
       await tx.syncObject.update({
@@ -182,14 +234,16 @@ export class SyncService {
 
       // History record: preserve existing data when the client omitted `data`,
       // so the version snapshot reflects the object's actual state.
-      await tx.syncObjectHistory.create({
-        data: {
-          syncObjectId: existing.id,
-          version: newVersion,
-          data: validated.data !== undefined ? validated.data : existing.data,
-          modifiedBy: validated.deviceId,
-        },
-      });
+      if (!progressSync && validated.objectType !== 'SETTINGS') {
+        await tx.syncObjectHistory.create({
+          data: {
+            syncObjectId: existing.id,
+            version: newVersion,
+            data: nextData === undefined ? existing.data : nextData,
+            modifiedBy: validated.deviceId,
+          },
+        });
+      }
 
       return {
         objectType: validated.objectType,
@@ -208,18 +262,27 @@ export class SyncService {
     // Validate the complete batch before opening a transaction so malformed
     // input cannot leave a partially processed batch.
     const validatedRequests = requests.map((request) => syncRequestSchema.parse(request));
-
-    return prisma.$transaction(async (tx) => {
-      const responses: SyncResponse[] = [];
-      for (const request of validatedRequests) {
-        responses.push(await this.syncObjectInTransaction(tx, userId, request));
-      }
-      return responses;
-    }, {
-      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
-      maxWait: 5000,
-      timeout: 30000,
-    });
+    const startedAt = process.hrtime.bigint();
+    let failed = false;
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const responses: SyncResponse[] = [];
+        for (const request of validatedRequests) {
+          responses.push(await this.syncObjectInTransaction(tx, userId, request));
+        }
+        return responses;
+      }, {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 5000,
+        timeout: 30000,
+      });
+    } catch (error) {
+      failed = true;
+      throw error;
+    } finally {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      metrics.recordSyncBatch(requests.length, durationMs, failed);
+    }
   }
 
   /**
@@ -309,6 +372,32 @@ export class SyncService {
       await this.deleteExistingSyncObject(tx, existing, 'server-delete');
       return { deleted: true };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  private isProgressSync(metadata: unknown): boolean {
+    return Boolean(
+      metadata &&
+        typeof metadata === 'object' &&
+        !Array.isArray(metadata) &&
+        (metadata as Record<string, unknown>).syncMode === 'progress',
+    );
+  }
+
+  private mergeProgressData(existingData: unknown, progressData: unknown) {
+    const current =
+      existingData && typeof existingData === 'object' && !Array.isArray(existingData)
+        ? { ...(existingData as Record<string, unknown>) }
+        : {};
+    if (!progressData || typeof progressData !== 'object' || Array.isArray(progressData)) {
+      return existingData;
+    }
+
+    for (const key of ['dueAt', 'updatedAt', 'reviews', 'mastery', 'suspended', 'fsrs', 'progressReset']) {
+      if (key in (progressData as Record<string, unknown>)) {
+        current[key] = (progressData as Record<string, unknown>)[key];
+      }
+    }
+    return current;
   }
 
   private isDeletedMetadata(metadata: unknown): boolean {

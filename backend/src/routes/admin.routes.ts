@@ -12,12 +12,18 @@ import { deckStoragePath, storageRelative, storedPackagePath } from '../utils/st
 import { normalizeCategoryName, dateFromQuery, sanitizeBigInt } from '../utils/helpers.js';
 import { fail } from '../utils/response.js';
 import { ClientInputError } from '../utils/errors.js';
+import { invalidateAuthCache } from '../middleware/auth.js';
+import { metrics } from '../observability/metrics.js';
 
 export default async function adminRoutes(
   app: FastifyInstance,
   opts: { deckService: DeckService }
 ) {
   const { deckService } = opts;
+
+  app.get('/api/v1/admin/metrics', { preHandler: requireAdmin }, async () => {
+    return metrics.snapshot();
+  });
 
   // GET /api/v1/admin/users - List users (paginated)
   app.get('/api/v1/admin/users', { preHandler: requireAdmin }, async (request) => {
@@ -101,6 +107,7 @@ export default async function adminRoutes(
       data: { enabled: action === 'enable' },
       select: { id: true, username: true, enabled: true },
     });
+    await invalidateAuthCache(id);
 
     await prisma.auditLog.create({
       data: { userId: auth(request).id, action: `admin.user.${action}`, targetId: id },
@@ -143,6 +150,7 @@ export default async function adminRoutes(
     await prisma.cardContribution.deleteMany({ where: { contributorId: id } });
 
     await prisma.user.delete({ where: { id } });
+    await invalidateAuthCache(id);
 
     await prisma.auditLog.create({
       data: { userId: auth(request).id, action: 'admin.user.delete', targetId: id },
@@ -166,6 +174,7 @@ export default async function adminRoutes(
       where: { id },
       data: { passwordHash, passwordChangedAt: new Date() },
     });
+    await invalidateAuthCache(id);
 
     await prisma.auditLog.create({
       data: { userId: auth(request).id, action: 'admin.user.reset-password', targetId: id },

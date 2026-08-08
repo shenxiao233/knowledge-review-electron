@@ -8,6 +8,7 @@ import { RateLimiter } from '../plugins/rate-limit.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 import { InvitationService } from './invitation.service.js';
 import { publicUser } from '../utils/avatar.js';
+import { invalidateAuthCache } from '../middleware/auth.js';
 
 export class AuthService {
   private invitationService: InvitationService;
@@ -147,6 +148,7 @@ export class AuthService {
         uid: true,
         nickname: true,
         avatar: true,
+        lastLoginAt: true,
       },
     });
     if (!user) {
@@ -158,14 +160,20 @@ export class AuthService {
       return fail(reply, 401, 'Invalid market credentials');
     }
     
-    await prisma.user.update({ 
-      where: { id: user.id }, 
-      data: { lastLoginAt: new Date() } 
-    });
-    
-    await prisma.auditLog.create({ 
-      data: { userId: user.id, action: 'auth.login' } 
-    });
+    const now = new Date();
+    const shouldTouchLastLogin =
+      !user.lastLoginAt || now.getTime() - user.lastLoginAt.getTime() >= 5 * 60 * 1000;
+    await Promise.all([
+      shouldTouchLastLogin
+        ? prisma.user.update({
+            where: { id: user.id },
+            data: { lastLoginAt: now },
+          })
+        : Promise.resolve(),
+      prisma.auditLog.create({
+        data: { userId: user.id, action: 'auth.login' },
+      }),
+    ]);
     
     const token = await this.app.jwt.sign(
       { 
@@ -224,6 +232,7 @@ export class AuthService {
         passwordChangedAt: new Date()
       } 
     });
+    await invalidateAuthCache(userId);
     
     await prisma.auditLog.create({ 
       data: { userId, action: 'auth.password.change', targetId: userId } 
