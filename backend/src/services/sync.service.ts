@@ -23,23 +23,46 @@ export interface SyncResponse {
   resolution?: string;
 }
 
+const syncRequestSchema = z.object({
+  objectType: z.enum(['DECK', 'DOCUMENT', 'CARD', 'SETTINGS']),
+  objectId: z.string().min(1).max(100),
+  objectVersion: z.number().int().positive(),
+  data: z.any().optional(),
+  metadata: z.any().optional(),
+  operation: z.enum(['upsert', 'delete']).optional(),
+  deviceId: z.string().min(1).max(50),
+});
+
+type ValidatedSyncRequest = z.infer<typeof syncRequestSchema>;
+
 export class SyncService {
   /**
    * Sync a single object to the server
    */
-  async syncObject(userId: string, request: SyncRequest): Promise<SyncResponse> {
-    const validated = z.object({
-      objectType: z.enum(['DECK', 'DOCUMENT', 'CARD', 'SETTINGS']),
-      objectId: z.string().min(1).max(100),
-      objectVersion: z.number().int().positive(),
-      data: z.any().optional(),
-      metadata: z.any().optional(),
-      operation: z.enum(['upsert', 'delete']).optional(),
-      deviceId: z.string().min(1).max(50),
-    }).parse(request);
+  async syncObject(
+    userId: string,
+    request: SyncRequest,
+    transaction?: Prisma.TransactionClient,
+  ): Promise<SyncResponse> {
+    const validated = syncRequestSchema.parse(request);
+    if (transaction) {
+      return this.syncObjectInTransaction(transaction, userId, validated);
+    }
 
+    return prisma.$transaction(
+      (tx) => this.syncObjectInTransaction(tx, userId, validated),
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      },
+    );
+  }
+
+  private async syncObjectInTransaction(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    validated: ValidatedSyncRequest,
+  ): Promise<SyncResponse> {
     const syncData = validated.data === undefined ? Prisma.JsonNull : validated.data;
-    return prisma.$transaction(async (tx) => {
       const existing = await tx.syncObject.findUnique({
         where: {
           userId_objectType_objectId: {
@@ -174,19 +197,29 @@ export class SyncService {
         serverVersion: newVersion,
         conflict: false,
       };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   /**
    * Batch sync multiple objects
    */
   async batchSync(userId: string, requests: SyncRequest[]): Promise<SyncResponse[]> {
-    const responses: SyncResponse[] = [];
-    for (const request of requests) {
-      const response = await this.syncObject(userId, request);
-      responses.push(response);
-    }
-    return responses;
+    if (requests.length === 0) return [];
+
+    // Validate the complete batch before opening a transaction so malformed
+    // input cannot leave a partially processed batch.
+    const validatedRequests = requests.map((request) => syncRequestSchema.parse(request));
+
+    return prisma.$transaction(async (tx) => {
+      const responses: SyncResponse[] = [];
+      for (const request of validatedRequests) {
+        responses.push(await this.syncObjectInTransaction(tx, userId, request));
+      }
+      return responses;
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 5000,
+      timeout: 30000,
+    });
   }
 
   /**

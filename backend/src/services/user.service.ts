@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import type { FastifyRequest, FastifyReply } from 'fastify';
 import { fail } from '../utils/response.js';
+import { publicUser } from '../utils/avatar.js';
 
 export class UserService {
   /**
@@ -63,7 +64,7 @@ export class UserService {
       data: { userId, action: 'user.profile.complete', targetId: userId },
     });
 
-    return user;
+    return publicUser(user);
   }
 
   /**
@@ -100,7 +101,7 @@ export class UserService {
       data: { userId, action: 'user.profile.update', targetId: userId },
     });
 
-    return user;
+    return publicUser(user);
   }
 
   /**
@@ -120,7 +121,7 @@ export class UserService {
     });
 
     if (!user) return null;
-    return user;
+    return publicUser(user);
   }
 
   /**

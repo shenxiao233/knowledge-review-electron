@@ -7,6 +7,7 @@ import { fail } from '../utils/response.js';
 import { RateLimiter } from '../plugins/rate-limit.js';
 import { requestRateLimitKey } from '../utils/helpers.js';
 import { InvitationService } from './invitation.service.js';
+import { publicUser } from '../utils/avatar.js';
 
 export class AuthService {
   private invitationService: InvitationService;
@@ -134,7 +135,20 @@ export class AuthService {
       return fail(reply, 401, 'Invalid market credentials');
     }
     
-    const user = await prisma.user.findUnique({ where: { username } });
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: {
+        id: true,
+        username: true,
+        passwordHash: true,
+        role: true,
+        enabled: true,
+        status: true,
+        uid: true,
+        nickname: true,
+        avatar: true,
+      },
+    });
     if (!user) {
       // Dummy verify to prevent timing-based username enumeration
       await argon2.verify(await this.getDummyHash(), body.data.password);
@@ -164,18 +178,20 @@ export class AuthService {
       { expiresIn: '12h' }
     );
     
-    return { 
-      token, 
-      user: { 
-        id: user.id, 
-        username: user.username, 
-        role: user.role, 
-        status: user.status,
-        uid: user.uid,
-        nickname: user.nickname,
-        avatar: user.avatar,
-        needsProfileCompletion: user.status === 'INCOMPLETE'
-      } 
+    return {
+      token,
+      user: {
+        ...publicUser({
+          id: user.id,
+          username: user.username,
+          role: user.role,
+          status: user.status,
+          uid: user.uid,
+          nickname: user.nickname,
+          avatar: user.avatar,
+        }),
+        needsProfileCompletion: user.status === 'INCOMPLETE',
+      },
     };
   }
   
